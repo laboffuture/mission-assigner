@@ -1,0 +1,25 @@
+{
+  "templates": [
+    {
+      "type": "quiz",
+      "grading_mode": "auto",
+      "time_band": "short",
+      "active": true,
+      "instructions": "A single multiple-choice question with exactly 4 options (a,b,c,d) and exactly one correct answer. The three incorrect options must be plausible — each should reflect a specific misunderstanding a learner might genuinely hold. Never use joke answers, 'none of the above', or obviously absurd options."
+    },
+    {
+      "type": "descriptive",
+      "grading_mode": "llm",
+      "time_band": "medium",
+      "active": false,
+      "instructions": "PLACEHOLDER for the SME. A short written-answer question graded by an LLM against a rubric. Not active yet."
+    },
+    {
+      "type": "project",
+      "grading_mode": "manual",
+      "time_band": "long",
+      "active": false,
+      "instructions": "PLACEHOLDER for the SME. A multi-step build task graded manually. Not active yet."
+    }
+  ]
+}

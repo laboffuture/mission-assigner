@@ -1,0 +1,9 @@
+# Stage 2 mission generation pipeline — Python 3.11+
+mysql-connector-python==9.1.0
+python-docx==1.1.2
+pypdf==5.1.0
+python-dotenv==1.0.1
+openpyxl==3.1.5
+# LLM clients — both installed so LLM_PROVIDER can switch without a reinstall.
+anthropic==0.39.0
+openai==1.54.4

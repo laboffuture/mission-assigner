@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mission Demo</title>
+  <style>
+    :root { --up: #1a7f37; --down: #cf222e; --hold: #9a6700; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-width: 640px; margin: 0 auto; padding: 24px; color: #1c1e21;
+      line-height: 1.45;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 16px; }
+    h2 { font-size: 1.1rem; margin: 20px 0 8px; }
+    .card { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; margin: 12px 0; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d7de; }
+    button { cursor: pointer; background: #1f6feb; color: #fff; border-color: #1f6feb; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.secondary { background: #f6f8fa; color: #1c1e21; border-color: #d0d7de; }
+    .level-badge { font-weight: 600; }
+    .muted { color: #57606a; font-size: 0.9rem; }
+    label.opt { display: block; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; margin: 6px 0; cursor: pointer; }
+    label.opt:hover { background: #f6f8fa; }
+    .result.correct { border-color: var(--up); }
+    .result.incorrect { border-color: var(--down); }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+    .tag.up { background: #dafbe1; color: var(--up); }
+    .tag.down { background: #ffebe9; color: var(--down); }
+    .tag.hold { background: #fff8c5; color: var(--hold); }
+    ul.history { list-style: none; padding: 0; margin: 0; }
+    ul.history li { padding: 6px 10px; border-left: 4px solid #d0d7de; margin: 6px 0; background: #f6f8fa; border-radius: 0 6px 6px 0; }
+    ul.history li.up { border-left-color: var(--up); }
+    ul.history li.down { border-left-color: var(--down); }
+    ul.history li.hold { border-left-color: var(--hold); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Student Mission Demo</h1>
+
+  <div class="card">
+    <div class="row">
+      <label for="student">Student:</label>
+      <select id="student"></select>
+      <span class="level-badge" id="levelBadge"></span>
+    </div>
+  </div>
+
+  <div class="card" id="missionCard">
+    <h2 id="missionTitle">Loading…</h2>
+    <p id="missionBody" class="muted"></p>
+    <div id="options"></div>
+    <button id="submitBtn" disabled>Submit</button>
+  </div>
+
+  <div class="card result hidden" id="resultCard">
+    <h2 id="resultVerdict"></h2>
+    <p>Score band: <strong id="resultBand"></strong></p>
+    <p>Correct answer: <strong id="resultCorrect"></strong></p>
+    <p id="resultLevel"></p>
+    <button id="nextBtn">Next mission</button>
+  </div>
+
+  <h2>Level history</h2>
+  <ul class="history" id="history"><li class="muted">No events yet.</li></ul>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let currentAssignmentId = null;
+    let currentStudentId = null;
+
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      return res.json();
+    }
+
+    function reasonClass(reason) {
+      if (reason === 'pass_level_up') return 'up';
+      // Learning platform: a wrong answer never demotes — it holds the level
+      // and serves another question there.
+      return 'hold';
+    }
+
+    async function loadStudents() {
+      const students = await api('/api/students');
+      const sel = $('student');
+      sel.innerHTML = '';
+      for (const s of students) {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.display_name;
+        opt.dataset.level = s.current_level;
+        sel.appendChild(opt);
+      }
+      currentStudentId = Number(sel.value);
+      updateLevelBadge();
+    }
+
+    function updateLevelBadge() {
+      const sel = $('student');
+      const opt = sel.options[sel.selectedIndex];
+      $('levelBadge').textContent = opt ? `Level ${opt.dataset.level}` : '';
+    }
+
+    async function refreshStudentLevel() {
+      const students = await api('/api/students');
+      const s = students.find((x) => Number(x.id) === currentStudentId);
+      if (s) {
+        const sel = $('student');
+        sel.options[sel.selectedIndex].dataset.level = s.current_level;
+        updateLevelBadge();
+      }
+    }
+
+    async function loadMission() {
+      $('resultCard').classList.add('hidden');
+      $('missionCard').classList.remove('hidden');
+      $('missionTitle').textContent = 'Loading…';
+      $('missionBody').textContent = '';
+      $('options').innerHTML = '';
+      $('submitBtn').disabled = true;
+
+      const data = await api('/api/current/' + currentStudentId);
+      if (data.empty) {
+        $('missionTitle').textContent = 'No missions left at this level';
+        $('missionBody').textContent = 'This student has completed every available mission at their current difficulty.';
+        currentAssignmentId = null;
+        return;
+      }
+      currentAssignmentId = data.assignment_id;
+      $('missionTitle').textContent = `${data.title}  (difficulty ${data.difficulty})`;
+      $('missionBody').textContent = data.body;
+
+      const box = $('options');
+      for (const o of data.options) {
+        const label = document.createElement('label');
+        label.className = 'opt';
+        label.innerHTML = `<input type="radio" name="opt" value="${o.option_key}" />
+          <strong>${o.option_key})</strong> ${o.option_text}`;
+        box.appendChild(label);
+      }
+      box.addEventListener('change', () => { $('submitBtn').disabled = false; }, { once: true });
+    }
+
+    async function submit() {
+      const chosen = document.querySelector('input[name="opt"]:checked');
+      if (!chosen) return;
+      $('submitBtn').disabled = true;
+      const result = await api('/api/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignmentId: currentAssignmentId, selected: chosen.value }),
+      });
+
+      $('missionCard').classList.add('hidden');
+      const card = $('resultCard');
+      card.classList.remove('hidden', 'correct', 'incorrect');
+      card.classList.add(result.correct ? 'correct' : 'incorrect');
+      $('resultVerdict').textContent = result.correct ? '✓ Correct' : '✗ Incorrect';
+      $('resultBand').textContent = result.band;
+      $('resultCorrect').textContent = result.correctAnswer;
+      const cls = reasonClass(result.reason);
+      $('resultLevel').innerHTML =
+        `Level ${result.fromLevel} &rarr; ${result.toLevel} ` +
+        `<span class="tag ${cls}">${result.reason}</span>`;
+
+      await refreshStudentLevel();
+      await loadHistory();
+    }
+
+    async function loadHistory() {
+      const events = await api('/api/history/' + currentStudentId);
+      const ul = $('history');
+      if (!events.length) {
+        ul.innerHTML = '<li class="muted">No events yet.</li>';
+        return;
+      }
+      ul.innerHTML = '';
+      for (const e of events) {
+        const li = document.createElement('li');
+        li.className = reasonClass(e.reason);
+        li.innerHTML = `Level ${e.from_level} &rarr; ${e.to_level} — <strong>${e.reason}</strong>`;
+        ul.appendChild(li);
+      }
+    }
+
+    $('student').addEventListener('change', async () => {
+      currentStudentId = Number($('student').value);
+      updateLevelBadge();
+      await loadMission();
+      await loadHistory();
+    });
+    $('submitBtn').addEventListener('click', submit);
+    $('nextBtn').addEventListener('click', loadMission);
+
+    (async () => {
+      await loadStudents();
+      await loadMission();
+      await loadHistory();
+    })();
+  </script>
+</body>
+</html>

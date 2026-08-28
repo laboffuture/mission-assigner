@@ -1,0 +1,18 @@
+# Secrets
+.env
+
+# SME content drops and generated logs — never committed.
+# The sample document is a deliberate test fixture and IS tracked.
+input/*
+!input/sample-cs.md
+logs/
+runs/
+fixtures/*.sql
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
+
+# Generated review spreadsheets
+review_*.xlsx

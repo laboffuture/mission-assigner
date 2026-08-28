@@ -1,0 +1,32 @@
+# --- Node web app (Stage 1) ---
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# --- Secrets ---
+.env
+**/.env
+!**/.env.example
+
+# --- Python pipeline (Stage 2) ---
+pipeline/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# --- Pipeline runtime (regenerable) ---
+pipeline/logs/
+pipeline/runs/
+review_*.xlsx
+**/review_*.xlsx
+
+# --- Database dumps / fixtures (regenerable, may be large) ---
+backup.sql
+*.dump.sql
+pipeline/fixtures/*.sql
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db

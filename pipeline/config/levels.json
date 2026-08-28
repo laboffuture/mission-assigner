@@ -1,0 +1,10 @@
+{
+  "subject": "Computer Science",
+  "levels": [
+    { "level": 0, "name": "Recall",      "description": "Direct recall of a stated fact or definition." },
+    { "level": 1, "name": "Understand",  "description": "Explain a concept in the learner's own terms." },
+    { "level": 2, "name": "Apply",       "description": "Use a concept to solve a straightforward problem." },
+    { "level": 3, "name": "Analyse",     "description": "Compare approaches or reason about trade-offs." },
+    { "level": 4, "name": "Evaluate",    "description": "Judge correctness, efficiency or edge cases." }
+  ]
+}

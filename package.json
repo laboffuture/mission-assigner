@@ -1,0 +1,23 @@
+{
+  "name": "mission-demo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Student mission automation demo — adaptive difficulty ladder",
+  "scripts": {
+    "db:schema": "tsx src/schema.ts",
+    "db:seed": "tsx src/seed.ts",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
