@@ -50,7 +50,7 @@ it only adds, never drops.
 | key | meaning |
 |-----|---------|
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME` | MySQL connection (same DB as the Node app) |
-| `LLM_PROVIDER` | `anthropic` \| `openai` \| `mock` |
+| `LLM_PROVIDER` | `anthropic` \| `openai` \| `mock` \| `hostile` |
 | `LLM_MODEL` | model id for the chosen provider (ignored by `mock`) |
 | `ANTHROPIC_API_KEY` | required when `LLM_PROVIDER=anthropic` |
 | `OPENAI_API_KEY` | required when `LLM_PROVIDER=openai` |
@@ -61,6 +61,36 @@ lifted verbatim from the chunk, so validation behaves exactly as it would for a
 well-behaved real model. Switch `LLM_PROVIDER` to `anthropic` (or `openai`) and
 set the matching key to generate for real. If the key is missing, `generate`
 fails immediately with a clear message rather than partially processing.
+
+**`hostile` provider:** an adversarial test backend that reproduces the failure
+modes a real model actually exhibits — JSON wrapped in ```` ```json ```` fences,
+truncated output, an invented `source_quote`, and a 429 rate-limit — so the
+pipeline's defences (fence-strip, one repair retry, transient backoff, and the
+quote-in-source rejection) have permanent regression coverage without spending
+tokens.
+
+### Smoke run against the real API
+
+Before trusting the mock, spend a few cents confirming the real model behaves:
+
+```bash
+# in pipeline/.env: LLM_PROVIDER=anthropic and a real ANTHROPIC_API_KEY
+python -m src.main ingest
+python -m src.main generate --limit 2   # only the first 2 chunks
+```
+
+`generate` logs input/output token counts each run, so the smoke run also gives
+you the numbers to extrapolate full-subject cost before approving the key spend.
+
+### Tests
+
+```bash
+python -m pytest -q      # 20 tests, no DB and no API key required
+```
+
+They pin the LLM-boundary behaviour (fences, truncation→repair, invented quotes,
+429 retries), the quote normalization that prevents false rejections, and the
+pure coverage-gap logic.
 
 ---
 

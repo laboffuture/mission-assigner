@@ -7,3 +7,5 @@ openpyxl==3.1.5
 # LLM clients — both installed so LLM_PROVIDER can switch without a reinstall.
 anthropic==0.39.0
 openai==1.54.4
+# Test-only
+pytest==8.3.3

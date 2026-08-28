@@ -61,6 +61,10 @@ def _load_queue() -> list[dict]:
 def cmd_generate(args, queue: list[dict] | None = None):
     if queue is None:
         queue = _load_queue()
+    limit = getattr(args, "limit", None)
+    if limit and limit > 0:
+        queue = queue[:limit]
+        print(f"  --limit {limit}: generating for the first {len(queue)} queued chunk(s) only (smoke run).")
     if not queue:
         print("  Nothing to generate.")
         return {"drafted": [], "failures": []}
@@ -105,6 +109,21 @@ def cmd_import_review(args):
     return import_review.import_review(args.file, dry_run=args.dry_run)
 
 
+def evaluate_coverage(grid: dict, levels: list[dict], tags: list[str], minimum: int = COVERAGE_MIN) -> dict:
+    """Pure function: given a {(level, tag): count} grid, return which cells are
+    gaps (count < minimum). No database access, so it is unit-testable in
+    isolation from DB state. Returns {'gaps': int, 'gap_cells': [(level, tag)],
+    'cells': {(level, tag): count}}."""
+    cells, gap_cells = {}, []
+    for lvl in levels:
+        for tag in tags:
+            c = int(grid.get((lvl["level"], tag), 0))
+            cells[(lvl["level"], tag)] = c
+            if c < minimum:
+                gap_cells.append((lvl["level"], tag))
+    return {"gaps": len(gap_cells), "gap_cells": gap_cells, "cells": cells}
+
+
 def cmd_coverage(args):
     _ensure_schema()
     levels = db.load_levels()["levels"]
@@ -119,31 +138,26 @@ def cmd_coverage(args):
                 WHERE m.status = 'live'
                 GROUP BY m.difficulty, mt.tag"""
         )
-        grid = {}
-        for diff, tag, count in cur.fetchall():
-            grid[(int(diff), tag)] = int(count)
+        grid = {(int(diff), tag): int(count) for diff, tag, count in cur.fetchall()}
         cur.close()
     finally:
         conn.close()
 
+    evln = evaluate_coverage(grid, levels, tags)
     print(f"\nLive mission coverage (cells with < {COVERAGE_MIN} flagged as GAP):\n")
     header = "level \\ tag".ljust(14) + "".join(t[:11].ljust(12) for t in tags)
     print(header)
     print("-" * len(header))
-    gaps = 0
     for lvl in levels:
         row = f"{lvl['level']} {lvl['name'][:9]}".ljust(14)
         for tag in tags:
-            c = grid.get((lvl["level"], tag), 0)
-            cell = f"{c}"
-            if c < COVERAGE_MIN:
-                cell = f"{c}*GAP"
-                gaps += 1
+            c = evln["cells"][(lvl["level"], tag)]
+            cell = f"{c}*GAP" if (lvl["level"], tag) in evln["gap_cells"] else f"{c}"
             row += cell.ljust(12)
         print(row)
     print("-" * len(header))
-    print(f"\n{gaps} gap cell(s) with fewer than {COVERAGE_MIN} live missions.")
-    return {"gaps": gaps}
+    print(f"\n{evln['gaps']} gap cell(s) with fewer than {COVERAGE_MIN} live missions.")
+    return {"gaps": evln["gaps"]}
 
 
 # --- arg parsing -------------------------------------------------------------
@@ -157,7 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
         return sp
 
     add("ingest", "read input/, chunk, hash, report the delta")
-    add("generate", "LLM-draft missions for queued chunks")
+    gen = add("generate", "LLM-draft missions for queued chunks")
+    gen.add_argument("--limit", type=int, default=None,
+                     help="only generate for the first N queued chunks (cheap smoke run)")
     add("validate", "run validation, report pass/fail counts")
     add("import", "write validated drafts to the database")
     add("run", "ingest + generate + validate + import")

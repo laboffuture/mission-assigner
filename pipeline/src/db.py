@@ -86,6 +86,9 @@ MISSIONS_NEW_COLUMNS = {
     "source_chunk_id": "ADD COLUMN source_chunk_id BIGINT UNSIGNED NULL",
     "generated_at": "ADD COLUMN generated_at TIMESTAMP NULL",
     "review_notes": "ADD COLUMN review_notes TEXT NULL",
+    # records WHICH version (content_hash) of the chunk a mission was generated
+    # from, so a repeat import of identical content is a no-op rather than churn.
+    "source_chunk_hash": "ADD COLUMN source_chunk_hash CHAR(64) NULL",
 }
 
 

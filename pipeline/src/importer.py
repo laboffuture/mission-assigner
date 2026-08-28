@@ -29,11 +29,12 @@ def import_validated(dry_run: bool = False) -> dict:
     inserted = 0
     retired = 0
     chunks_touched = 0
+    skipped_noop = 0
 
     files = sorted(VALIDATED_DIR.glob("*.json")) if VALIDATED_DIR.exists() else []
     if not files:
         print("  No validated drafts found (run `validate` first).")
-        return {"inserted": 0, "retired": 0, "chunks": 0}
+        return {"inserted": 0, "retired": 0, "chunks": 0, "skipped_noop": 0}
 
     conn = db.get_connection()
     try:
@@ -44,23 +45,40 @@ def import_validated(dry_run: bool = False) -> dict:
             missions = record.get("missions", [])
             if not missions:
                 continue
-            chunks_touched += 1
 
-            # Retire existing non-retired missions for this chunk (changed-chunk rule).
+            # Incoming content version. Prefer the hash staged with the draft;
+            # fall back to the chunk's current hash in the DB.
+            incoming_hash = record.get("content_hash")
+            if chunk_id is not None and not incoming_hash:
+                cur.execute("SELECT content_hash FROM content_chunks WHERE id = %s", (chunk_id,))
+                r = cur.fetchone()
+                incoming_hash = r[0] if r else None
+
+            # Idempotency + changed-chunk rule: look at existing non-retired
+            # missions for this chunk.
+            #   - identical content already imported -> no-op (skip)
+            #   - different content (or none recorded) -> retire old, insert new
+            #   - no existing missions -> just insert
             if chunk_id is not None:
                 cur.execute(
-                    "SELECT COUNT(*) FROM missions WHERE source_chunk_id = %s AND status <> 'retired'",
+                    "SELECT source_chunk_hash FROM missions WHERE source_chunk_id = %s AND status <> 'retired'",
                     (chunk_id,),
                 )
-                to_retire = cur.fetchone()[0]
-                if to_retire:
-                    print(f"  chunk_id {chunk_id}: retiring {to_retire} existing mission(s) before re-import.")
-                    retired += to_retire
+                existing = [row[0] for row in cur.fetchall()]
+                if existing and incoming_hash and all(h == incoming_hash for h in existing):
+                    print(f"  chunk_id {chunk_id}: identical content already imported; no-op (skipped).")
+                    skipped_noop += 1
+                    continue
+                if existing:
+                    print(f"  chunk_id {chunk_id}: retiring {len(existing)} existing mission(s) before re-import.")
+                    retired += len(existing)
                     if not dry_run:
                         cur.execute(
                             "UPDATE missions SET status = 'retired' WHERE source_chunk_id = %s AND status <> 'retired'",
                             (chunk_id,),
                         )
+
+            chunks_touched += 1
 
             for m in missions:
                 # source_quote is kept in answer_key as provenance so reviewers
@@ -81,9 +99,9 @@ def import_validated(dry_run: bool = False) -> dict:
                     """INSERT INTO missions
                          (version, subject, title, body, mission_type, grading_mode,
                           difficulty, age_min, age_max, time_band, answer_key,
-                          status, source_chunk_id, generated_at)
+                          status, source_chunk_id, source_chunk_hash, generated_at)
                        VALUES
-                         (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, NOW())""",
+                         (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, NOW())""",
                     (
                         subject,
                         m["title"],
@@ -96,6 +114,7 @@ def import_validated(dry_run: bool = False) -> dict:
                         time_band,
                         answer_key,
                         chunk_id,
+                        incoming_hash,
                     ),
                 )
                 mission_id = cur.lastrowid
@@ -118,5 +137,6 @@ def import_validated(dry_run: bool = False) -> dict:
     finally:
         conn.close()
 
-    print(f"  Import: {inserted} draft mission(s) inserted, {retired} retired, across {chunks_touched} chunk(s).")
-    return {"inserted": inserted, "retired": retired, "chunks": chunks_touched}
+    print(f"  Import: {inserted} draft mission(s) inserted, {retired} retired, "
+          f"{skipped_noop} no-op chunk(s), across {chunks_touched} changed/new chunk(s).")
+    return {"inserted": inserted, "retired": retired, "chunks": chunks_touched, "skipped_noop": skipped_noop}
