@@ -159,6 +159,50 @@ class OpenAIClient:
         return text, usage
 
 
+class GoogleClient:
+    """Google Gemini backend. Added to the swappable layer alongside
+    Anthropic/OpenAI; selected with LLM_PROVIDER=google. Fails immediately if the
+    key is missing. Reads GEMINI_API_KEY (falls back to GOOGLE_API_KEY)."""
+
+    def __init__(self, model: str):
+        key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if not key:
+            sys.exit(
+                "FATAL: LLM_PROVIDER=google but GEMINI_API_KEY is not set. "
+                "Set it in pipeline/.env before running generate."
+            )
+        from google import genai
+
+        self.model = model
+        self._genai = genai
+        self.client = genai.Client(api_key=key)
+
+    def draft(self, system, turns, chunk):
+        # Gemini uses role "model" for assistant turns; map our turns across.
+        contents = [
+            {"role": ("model" if t["role"] == "assistant" else "user"),
+             "parts": [{"text": t["content"]}]}
+            for t in turns
+        ]
+        resp = self.client.models.generate_content(
+            model=self.model,
+            contents=contents,
+            config=self._genai.types.GenerateContentConfig(
+                system_instruction=system,
+                temperature=0,
+                max_output_tokens=MAX_TOKENS,
+                response_mime_type="application/json",
+            ),
+        )
+        text = resp.text or ""
+        um = getattr(resp, "usage_metadata", None)
+        usage = {
+            "input_tokens": getattr(um, "prompt_token_count", 0) or 0,
+            "output_tokens": getattr(um, "candidates_token_count", 0) or 0,
+        }
+        return text, usage
+
+
 def _mock_missions(chunk: dict) -> list[dict]:
     """Build well-formed missions whose source_quote is a real sentence lifted
     verbatim from the chunk. Shared by the mock and hostile backends."""
@@ -258,13 +302,15 @@ def get_client():
         return AnthropicClient(model or "claude-opus-4-8")
     if provider == "openai":
         return OpenAIClient(model or "gpt-4o")
+    if provider == "google":
+        return GoogleClient(model or "gemini-2.0-flash")
     if provider == "mock":
         print("  NOTE: LLM_PROVIDER=mock - deterministic test missions, no API calls.")
         return MockClient(model or "mock-1")
     if provider == "hostile":
         print("  NOTE: LLM_PROVIDER=hostile - adversarial test backend, no API calls.")
         return HostileClient(model or "hostile-1")
-    sys.exit(f"FATAL: unknown LLM_PROVIDER '{provider}'. Use anthropic | openai | mock | hostile.")
+    sys.exit(f"FATAL: unknown LLM_PROVIDER '{provider}'. Use anthropic | openai | google | mock | hostile.")
 
 
 # --- prompt ------------------------------------------------------------------

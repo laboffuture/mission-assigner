@@ -27,6 +27,9 @@ backup.sql
 *.dump.sql
 pipeline/fixtures/*.sql
 
+# --- Server run logs (regenerable) ---
+logs-server.txt
+
 # --- OS noise ---
 .DS_Store
 Thumbs.db
