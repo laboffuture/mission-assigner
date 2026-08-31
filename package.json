@@ -6,8 +6,12 @@
   "description": "Student mission automation demo — adaptive difficulty ladder",
   "scripts": {
     "db:schema": "tsx src/schema.ts",
+    "db:migrate": "tsx src/migrate.ts",
     "db:seed": "tsx src/seed.ts",
-    "dev": "tsx watch src/server.ts"
+    "publish": "tsx src/publish.ts",
+    "dev": "tsx watch src/server.ts",
+    "verify": "node verify.mjs",
+    "verify:stage3": "tsx verify-stage3.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

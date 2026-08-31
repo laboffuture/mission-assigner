@@ -3,86 +3,97 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mission Demo</title>
+  <title>Mission Demo — Stage 3</title>
   <style>
-    :root { --up: #1a7f37; --down: #cf222e; --hold: #9a6700; }
+    :root { --up: #1a7f37; --hold: #9a6700; --lock: #8c959f; --xp: #8250df; }
     * { box-sizing: border-box; }
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 640px; margin: 0 auto; padding: 24px; color: #1c1e21;
-      line-height: 1.45;
+      max-width: 720px; margin: 0 auto; padding: 24px; color: #1c1e21; line-height: 1.45;
     }
-    h1 { font-size: 1.4rem; margin: 0 0 16px; }
-    h2 { font-size: 1.1rem; margin: 20px 0 8px; }
+    header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    h1 { font-size: 1.35rem; margin: 0; }
+    h2 { font-size: 1.05rem; margin: 20px 0 8px; }
     .card { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; margin: 12px 0; }
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d7de; }
     button { cursor: pointer; background: #1f6feb; color: #fff; border-color: #1f6feb; }
     button:disabled { opacity: 0.5; cursor: default; }
-    button.secondary { background: #f6f8fa; color: #1c1e21; border-color: #d0d7de; }
-    .level-badge { font-weight: 600; }
     .muted { color: #57606a; font-size: 0.9rem; }
-    label.opt { display: block; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; margin: 6px 0; cursor: pointer; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; background: #eaeef2; color: #57606a; }
+    .xp-counter { font-weight: 700; color: var(--xp); font-size: 1.1rem; }
+    .xp-gain { color: var(--xp); font-weight: 600; }
+    .seg-name { font-weight: 600; }
+
+    ul.slots { list-style: none; padding: 0; margin: 0; }
+    li.slot { border: 1px solid #d0d7de; border-radius: 8px; margin: 8px 0; padding: 12px; }
+    li.slot.locked { background: #f6f8fa; color: var(--lock); border-style: dashed; }
+    li.slot.open { border-color: #1f6feb; }
+    li.slot.submitted { border-color: var(--up); background: #f2fbf4; }
+    .slot-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .slot-title { font-weight: 600; }
+    .lock-ico { font-size: 1rem; }
+    .status-open { color: #1f6feb; font-weight: 600; }
+    .status-submitted { color: var(--up); font-weight: 600; }
+    .status-locked { color: var(--lock); font-weight: 600; }
+
+    label.opt { display: block; padding: 8px 10px; border: 1px solid #d0d7de; border-radius: 6px; margin: 6px 0; cursor: pointer; background: #fff; }
     label.opt:hover { background: #f6f8fa; }
-    .result.correct { border-color: var(--up); }
-    .result.incorrect { border-color: var(--down); }
+    .result { margin-top: 10px; padding: 10px; border-radius: 6px; }
+    .result.correct { background: #dafbe1; }
+    .result.incorrect { background: #fff8c5; }
     .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
     .tag.up { background: #dafbe1; color: var(--up); }
-    .tag.down { background: #ffebe9; color: var(--down); }
     .tag.hold { background: #fff8c5; color: var(--hold); }
     ul.history { list-style: none; padding: 0; margin: 0; }
     ul.history li { padding: 6px 10px; border-left: 4px solid #d0d7de; margin: 6px 0; background: #f6f8fa; border-radius: 0 6px 6px 0; }
     ul.history li.up { border-left-color: var(--up); }
-    ul.history li.down { border-left-color: var(--down); }
     ul.history li.hold { border-left-color: var(--hold); }
     .hidden { display: none; }
   </style>
 </head>
 <body>
-  <h1>Student Mission Demo</h1>
+  <header>
+    <h1>Student Mission Demo <span class="pill">Stage 3</span></h1>
+    <div class="row">
+      <span>XP</span><span class="xp-counter" id="xpCounter">0</span>
+    </div>
+  </header>
 
   <div class="card">
     <div class="row">
       <label for="student">Student:</label>
       <select id="student"></select>
-      <span class="level-badge" id="levelBadge"></span>
+      <span id="levelBadge" class="pill"></span>
+      <span class="muted">Segment:</span> <span class="seg-name" id="segName">—</span>
     </div>
   </div>
 
-  <div class="card" id="missionCard">
-    <h2 id="missionTitle">Loading…</h2>
-    <p id="missionBody" class="muted"></p>
-    <div id="options"></div>
-    <button id="submitBtn" disabled>Submit</button>
-  </div>
-
-  <div class="card result hidden" id="resultCard">
-    <h2 id="resultVerdict"></h2>
-    <p>Score band: <strong id="resultBand"></strong></p>
-    <p>Correct answer: <strong id="resultCorrect"></strong></p>
-    <p id="resultLevel"></p>
-    <button id="nextBtn">Next mission</button>
-  </div>
+  <h2>This week</h2>
+  <div id="weekStatus" class="muted"></div>
+  <ul class="slots" id="slots"><li class="muted">Loading…</li></ul>
 
   <h2>Level history</h2>
   <ul class="history" id="history"><li class="muted">No events yet.</li></ul>
 
   <script>
     const $ = (id) => document.getElementById(id);
-    let currentAssignmentId = null;
     let currentStudentId = null;
+    let openSlotId = null;        // slot currently expanded for answering
+    let openAssignmentId = null;
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
       return res.json();
     }
+    const post = (path, body) => api(path, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
 
     function reasonClass(reason) {
-      if (reason === 'pass_level_up') return 'up';
-      // Learning platform: a wrong answer never demotes — it holds the level
-      // and serves another question there.
-      return 'hold';
+      return reason && reason.includes('pass') ? 'up' : 'hold'; // never a demotion class
     }
 
     async function loadStudents() {
@@ -94,91 +105,139 @@
         opt.value = s.id;
         opt.textContent = s.display_name;
         opt.dataset.level = s.current_level;
+        opt.dataset.xp = s.total_xp ?? 0;
         sel.appendChild(opt);
       }
       currentStudentId = Number(sel.value);
-      updateLevelBadge();
     }
 
-    function updateLevelBadge() {
+    function selectedOpt() {
       const sel = $('student');
-      const opt = sel.options[sel.selectedIndex];
-      $('levelBadge').textContent = opt ? `Level ${opt.dataset.level}` : '';
+      return sel.options[sel.selectedIndex];
     }
 
-    async function refreshStudentLevel() {
+    async function refreshHeader() {
       const students = await api('/api/students');
       const s = students.find((x) => Number(x.id) === currentStudentId);
       if (s) {
-        const sel = $('student');
-        sel.options[sel.selectedIndex].dataset.level = s.current_level;
-        updateLevelBadge();
+        selectedOpt().dataset.level = s.current_level;
+        selectedOpt().dataset.xp = s.total_xp ?? 0;
       }
+      $('levelBadge').textContent = `Level ${selectedOpt().dataset.level}`;
+      $('xpCounter').textContent = selectedOpt().dataset.xp;
+      const seg = await api('/api/segment/' + currentStudentId);
+      $('segName').textContent = seg.segment ? seg.segment.name : 'Unassigned';
     }
 
-    async function loadMission() {
-      $('resultCard').classList.add('hidden');
-      $('missionCard').classList.remove('hidden');
-      $('missionTitle').textContent = 'Loading…';
-      $('missionBody').textContent = '';
-      $('options').innerHTML = '';
-      $('submitBtn').disabled = true;
-
-      const data = await api('/api/current/' + currentStudentId);
-      if (data.empty) {
-        $('missionTitle').textContent = 'No missions left at this level';
-        $('missionBody').textContent = 'This student has completed every available mission at their current difficulty.';
-        currentAssignmentId = null;
+    async function loadWeek() {
+      openSlotId = null; openAssignmentId = null;
+      const ul = $('slots');
+      const week = await api('/api/week/' + currentStudentId);
+      if (week.empty) {
+        $('weekStatus').textContent = 'No week published for this student yet.';
+        ul.innerHTML = '<li class="muted">Run `npm run publish -- ' + currentStudentId + '` to publish a week.</li>';
         return;
       }
-      currentAssignmentId = data.assignment_id;
-      $('missionTitle').textContent = `${data.title}  (difficulty ${data.difficulty})`;
-      $('missionBody').textContent = data.body;
-
-      const box = $('options');
-      for (const o of data.options) {
-        const label = document.createElement('label');
-        label.className = 'opt';
-        label.innerHTML = `<input type="radio" name="opt" value="${o.option_key}" />
-          <strong>${o.option_key})</strong> ${o.option_text}`;
-        box.appendChild(label);
+      $('weekStatus').textContent = `Week of ${String(week.week_start).slice(0, 10)} — status: ${week.status}`;
+      ul.innerHTML = '';
+      for (const slot of week.slots) {
+        ul.appendChild(renderSlot(slot));
       }
-      box.addEventListener('change', () => { $('submitBtn').disabled = false; }, { once: true });
     }
 
-    async function submit() {
-      const chosen = document.querySelector('input[name="opt"]:checked');
+    function renderSlot(slot) {
+      const li = document.createElement('li');
+      li.className = 'slot ' + slot.status;
+
+      const head = document.createElement('div');
+      head.className = 'slot-head';
+      const left = document.createElement('div');
+      left.innerHTML =
+        `<span class="slot-title">${slot.day_label}</span> ` +
+        `<span class="pill">${slot.mission_type}</span> ` +
+        `<span class="pill">${slot.time_band}</span>`;
+      const right = document.createElement('div');
+      if (slot.status === 'locked') {
+        right.innerHTML = `<span class="lock-ico">🔒</span> <span class="status-locked">locked</span>`;
+      } else if (slot.status === 'submitted') {
+        right.innerHTML = `<span class="status-submitted">✓ submitted</span>`;
+      } else {
+        right.innerHTML = `<span class="status-open">open</span>`;
+      }
+      head.appendChild(left); head.appendChild(right);
+      li.appendChild(head);
+
+      // Locked: metadata only — NEVER the question (server enforces this too).
+      if (slot.status === 'locked') return li;
+
+      // Open/submitted: show a button to open (loads question + awards attempt XP).
+      if (slot.status === 'open') {
+        const btn = document.createElement('button');
+        btn.textContent = slot.mission ? 'Answer this mission' : 'Open mission';
+        btn.style.marginTop = '8px';
+        btn.onclick = () => openSlot(slot.slot_id);
+        li.appendChild(btn);
+        const target = document.createElement('div');
+        target.id = 'slotbody-' + slot.slot_id;
+        li.appendChild(target);
+      } else {
+        const done = document.createElement('div');
+        done.className = 'muted';
+        done.textContent = 'Completed.';
+        li.appendChild(done);
+      }
+      return li;
+    }
+
+    async function openSlot(slotId) {
+      const target = $('slotbody-' + slotId);
+      target.innerHTML = '<span class="muted">Loading…</span>';
+      const data = await post(`/api/slot/${slotId}/open`);
+      if (data.empty) {
+        target.innerHTML = `<div class="result incorrect">${data.message || 'No mission available — please contact your instructor.'}</div>`;
+        return;
+      }
+      openSlotId = slotId;
+      openAssignmentId = data.assignment_id;
+      if (data.xp && data.xp.awarded) await refreshHeader(); // attempt XP may have landed
+
+      let html = `<p><strong>${data.title}</strong> <span class="pill">difficulty ${data.difficulty}</span></p>`;
+      html += `<p class="muted">${data.body}</p>`;
+      for (const o of data.options) {
+        html += `<label class="opt"><input type="radio" name="opt-${slotId}" value="${o.option_key}" />
+                 <strong>${o.option_key})</strong> ${o.option_text}</label>`;
+      }
+      html += `<button id="submit-${slotId}">Submit</button><div id="res-${slotId}"></div>`;
+      target.innerHTML = html;
+      $('submit-' + slotId).onclick = () => submitSlot(slotId);
+    }
+
+    async function submitSlot(slotId) {
+      const chosen = document.querySelector(`input[name="opt-${slotId}"]:checked`);
       if (!chosen) return;
-      $('submitBtn').disabled = true;
-      const result = await api('/api/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignmentId: currentAssignmentId, selected: chosen.value }),
-      });
+      $('submit-' + slotId).disabled = true;
+      const result = await post('/api/submit', { assignmentId: openAssignmentId, selected: chosen.value });
 
-      $('missionCard').classList.add('hidden');
-      const card = $('resultCard');
-      card.classList.remove('hidden', 'correct', 'incorrect');
-      card.classList.add(result.correct ? 'correct' : 'incorrect');
-      $('resultVerdict').textContent = result.correct ? '✓ Correct' : '✗ Incorrect';
-      $('resultBand').textContent = result.band;
-      $('resultCorrect').textContent = result.correctAnswer;
-      const cls = reasonClass(result.reason);
-      $('resultLevel').innerHTML =
-        `Level ${result.fromLevel} &rarr; ${result.toLevel} ` +
-        `<span class="tag ${cls}">${result.reason}</span>`;
+      const res = $('res-' + slotId);
+      const cls = result.correct ? 'correct' : 'incorrect';
+      const reasonCls = reasonClass(result.reason);
+      const gained = result.xp ? result.xp.pointsEarned : 0;
+      res.className = 'result ' + cls;
+      res.innerHTML =
+        `${result.correct ? '✓ Correct' : '✗ Incorrect'} — correct answer: <strong>${result.correctAnswer}</strong><br>` +
+        `Level ${result.fromLevel} &rarr; ${result.toLevel} <span class="tag ${reasonCls}">${result.reason}</span><br>` +
+        `<span class="xp-gain">+${gained} XP</span> (total ${result.xp ? result.xp.totalXp : '?'})` +
+        (result.assistanceRaised ? `<br><span class="pill">instructor notified — you'll keep going</span>` : '');
 
-      await refreshStudentLevel();
+      await refreshHeader();
+      await loadWeek();
       await loadHistory();
     }
 
     async function loadHistory() {
       const events = await api('/api/history/' + currentStudentId);
       const ul = $('history');
-      if (!events.length) {
-        ul.innerHTML = '<li class="muted">No events yet.</li>';
-        return;
-      }
+      if (!events.length) { ul.innerHTML = '<li class="muted">No events yet.</li>'; return; }
       ul.innerHTML = '';
       for (const e of events) {
         const li = document.createElement('li');
@@ -190,16 +249,15 @@
 
     $('student').addEventListener('change', async () => {
       currentStudentId = Number($('student').value);
-      updateLevelBadge();
-      await loadMission();
+      await refreshHeader();
+      await loadWeek();
       await loadHistory();
     });
-    $('submitBtn').addEventListener('click', submit);
-    $('nextBtn').addEventListener('click', loadMission);
 
     (async () => {
       await loadStudents();
-      await loadMission();
+      await refreshHeader();
+      await loadWeek();
       await loadHistory();
     })();
   </script>

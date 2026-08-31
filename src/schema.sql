@@ -3,6 +3,19 @@
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- Stage 3 tables (dropped here so a full rebuild is clean; recreated by
+-- `npm run db:migrate`, which re-adds them and the students columns).
+DROP TABLE IF EXISTS xp_events;
+DROP TABLE IF EXISTS assistance_events;
+DROP TABLE IF EXISTS week_slots;
+DROP TABLE IF EXISTS student_weeks;
+DROP TABLE IF EXISTS week_template_slots;
+DROP TABLE IF EXISTS week_templates;
+DROP TABLE IF EXISTS xp_rules;
+DROP TABLE IF EXISTS student_courses;
+DROP TABLE IF EXISTS segment_prerequisites;
+DROP TABLE IF EXISTS segments;
+
 DROP TABLE IF EXISTS selection_log;
 DROP TABLE IF EXISTS level_events;
 DROP TABLE IF EXISTS assignments;

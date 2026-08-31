@@ -1,4 +1,5 @@
 import { pool } from './db.js';
+import { applyProgression } from './progression.js';
 
 export const MIN_LEVEL = 0;
 export const MAX_LEVEL = 4;
@@ -12,6 +13,12 @@ export interface GradeResult {
   fromLevel: number;
   toLevel: number;
   reason: string;
+  // Stage 3 additions (ignored by the Stage 1 UI/tests, additive):
+  studentId: number;
+  assignmentId: number;
+  difficulty: number;
+  stallCount: number;
+  assistanceRaised: boolean;
 }
 
 /** Maps a percentage to a score band. */
@@ -19,38 +26,6 @@ export function toBand(pct: number): ScoreBand {
   if (pct >= 85) return 'pass_strong';
   if (pct >= 50) return 'pass';
   return 'fail';
-}
-
-export interface NextLevel {
-  level: number;
-  wrong: number;
-  reason: string;
-}
-
-/**
- * The learning ladder (never demotes — this is a learning platform, not a test):
- *   - pass (band !== 'fail'): level up (capped), reset wrong, 'pass_level_up'
- *   - fail: hold the SAME level and serve another question there;
- *           increment the wrong counter for the audit trail, 'wrong_retry_same_level'
- * Level never decreases.
- */
-export function nextLevel(
-  band: ScoreBand,
-  level: number,
-  consecutiveWrong: number
-): NextLevel {
-  if (band !== 'fail') {
-    return {
-      level: Math.min(level + 1, MAX_LEVEL),
-      wrong: 0,
-      reason: 'pass_level_up',
-    };
-  }
-  return {
-    level,
-    wrong: consecutiveWrong + 1,
-    reason: 'wrong_retry_same_level',
-  };
 }
 
 /**
@@ -70,7 +45,9 @@ function parseAnswerKey(raw: unknown): { correct: string } {
 }
 
 /**
- * Grades an open assignment and applies the adaptive ladder in one transaction.
+ * Grades an open assignment and applies progression (the no-demotion ladder,
+ * from progression.ts) in ONE transaction. Level logic lives in progression.ts;
+ * this function owns grading and the transaction boundary.
  */
 export async function submitAndGrade(
   assignmentId: number,
@@ -86,11 +63,9 @@ export async function submitAndGrade(
               a.status        AS status,
               a.student_id    AS student_id,
               m.answer_key    AS answer_key,
-              s.current_level AS current_level,
-              s.consecutive_wrong AS consecutive_wrong
+              m.difficulty    AS difficulty
          FROM assignments a
          JOIN missions m ON m.id = a.mission_id
-         JOIN students s ON s.id = a.student_id
         WHERE a.id = ?
         FOR UPDATE`,
       [assignmentId]
@@ -104,19 +79,17 @@ export async function submitAndGrade(
       throw new Error(`Assignment ${assignmentId} is not open (status=${row.status})`);
     }
 
-    // 2. Read level/wrong BEFORE updating.
-    const fromLevel = Number(row.current_level);
-    const consecutiveWrong = Number(row.consecutive_wrong);
+    const studentId = Number(row.student_id);
+    const difficulty = Number(row.difficulty);
 
-    // 3. Parse answer_key (string or object).
+    // 2. Parse answer_key (string or object) and grade.
     const answerKey = parseAnswerKey(row.answer_key);
-
-    // 4. Grade.
     const correct = selected === answerKey.correct;
     const pct = correct ? 100 : 0;
     const band = toBand(pct);
 
-    // 5. Update the assignment.
+    // 3. Mark the assignment graded (before progression, so placement can count
+    //    it as a completed mission).
     await conn.query(
       `UPDATE assignments
           SET status = 'graded',
@@ -129,33 +102,23 @@ export async function submitAndGrade(
       [JSON.stringify({ selected }), pct, band, assignmentId]
     );
 
-    // 6. Compute + apply the ladder.
-    const next = nextLevel(band, fromLevel, consecutiveWrong);
-    await conn.query(
-      `UPDATE students
-          SET current_level = ?, consecutive_wrong = ?
-        WHERE id = ?`,
-      [next.level, next.wrong, row.student_id]
-    );
-
-    // 7. Record the level event.
-    await conn.query(
-      `INSERT INTO level_events
-         (student_id, assignment_id, from_level, to_level, reason)
-       VALUES (?, ?, ?, ?, ?)`,
-      [row.student_id, assignmentId, fromLevel, next.level, next.reason]
-    );
+    // 4. Apply the ladder + assistance (same transaction).
+    const prog = await applyProgression(conn, studentId, assignmentId, correct);
 
     await conn.commit();
 
-    // 8. Return the result.
     return {
       correct,
       band,
       correctAnswer: answerKey.correct,
-      fromLevel,
-      toLevel: next.level,
-      reason: next.reason,
+      fromLevel: prog.fromLevel,
+      toLevel: prog.toLevel,
+      reason: prog.reason,
+      studentId,
+      assignmentId,
+      difficulty,
+      stallCount: prog.stallCount,
+      assistanceRaised: prog.assistanceRaised,
     };
   } catch (err) {
     await conn.rollback();
