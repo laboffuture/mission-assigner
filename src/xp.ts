@@ -1,7 +1,7 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
 
-export type XpEventType = 'attempt' | 'submit' | 'correct' | 'streak_bonus';
+export type XpEventType = 'attempt' | 'submit' | 'correct' | 'streak_bonus' | 'feedback';
 
 export interface XpAward {
   awarded: boolean;      // false if skipped (no rule, or already awarded)

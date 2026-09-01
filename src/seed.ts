@@ -40,6 +40,9 @@ async function main() {
     // Wipe in FK-safe order (Stage 3 tables first, then Stage 1).
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     for (const t of [
+      'feedback_responses',
+      'attempt_logs',
+      'feedback_questions',
       'xp_events',
       'assistance_events',
       'week_slots',
@@ -161,11 +164,41 @@ async function main() {
       ['correct', 2, 20],
       ['correct', 3, 30],
       ['correct', 4, 45],
+      // Stage 5 — XP for submitting feedback.
+      // PLACEHOLDER — to be set by SME and management.
+      ['feedback', null, 5],
     ];
     for (const [evt, diff, pts] of xpRules) {
       await conn.query(
         `INSERT INTO xp_rules (event_type, difficulty, points, active) VALUES (?, ?, ?, TRUE)`,
         [evt, diff, pts]
+      );
+    }
+
+    // ---- Feedback questions (Stage 5) -----------------------------------
+    // PLACEHOLDER — to be replaced by SME and management before pilot.
+    // Question text is DATA, configured here (and editable live in the DB),
+    // never hardcoded in the application or the HTML.
+    const feedbackQuestions: Array<{
+      key: string;
+      prompt: string;
+      type: 'scale_1_5' | 'yes_no' | 'single_select' | 'free_text';
+      options: string[] | null;
+      order: number;
+      required: boolean;
+    }> = [
+      { key: 'perceived_difficulty', prompt: 'PLACEHOLDER — How difficult was this mission?', type: 'single_select', options: ['Too easy', 'About right', 'Too hard'], order: 1, required: true },
+      { key: 'time_taken', prompt: 'PLACEHOLDER — How long did this take compared to what you expected?', type: 'single_select', options: ['Less than expected', 'About as expected', 'Longer than expected'], order: 2, required: true },
+      { key: 'clarity', prompt: 'PLACEHOLDER — How clear was the question? (1 = very unclear, 5 = very clear)', type: 'scale_1_5', options: null, order: 3, required: true },
+      { key: 'confidence', prompt: 'PLACEHOLDER — How confident are you in your answer? (1 = not at all, 5 = very)', type: 'scale_1_5', options: null, order: 4, required: true },
+      { key: 'comments', prompt: 'PLACEHOLDER — Any comments? (optional)', type: 'free_text', options: null, order: 5, required: false },
+    ];
+    for (const q of feedbackQuestions) {
+      await conn.query(
+        `INSERT INTO feedback_questions
+           (question_key, prompt, answer_type, options, display_order, required, active)
+         VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
+        [q.key, q.prompt, q.type, q.options ? JSON.stringify(q.options) : null, q.order, q.required]
       );
     }
 
@@ -210,6 +243,7 @@ async function main() {
     console.log(`  mission_tags:    ${tagCount}`);
     console.log(`  segments:        3`);
     console.log(`  xp_rules:        ${xpRules.length}`);
+    console.log(`  feedback_qs:     ${feedbackQuestions.length} (PLACEHOLDERS)`);
     console.log(`  students:        ${students.length}`);
 
     conn.release();

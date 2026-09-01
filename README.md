@@ -12,6 +12,10 @@ stages, all sharing one MySQL database:
 - **Stage 3** — the structure around the loop: **segments**, a **weekly mission
   template** with sequential slot unlocking, **XP**, **cold start**, and a basic
   **assistance** path for students who stall.
+- **Stage 5** — **feedback capture and tracking**: five (configurable) questions
+  after every mission, XP for feedback, an audit trail (`attempt_logs`), student
+  and instructor tracking views, and an aggregated **mission-quality report** for
+  the SME. Feedback can (optionally) **gate** the next slot's unlock.
 
 ## Stack
 
@@ -46,12 +50,13 @@ npm install
 ```bash
 npm run db:schema    # base tables (Stage 1)
 npm run db:migrate   # ADDITIVE Stage 3 migration: new tables + students columns
-npm run db:seed      # 75 missions, 3 segments, week template, xp rules, 3 students
+npm run db:migrate5  # ADDITIVE Stage 5 migration: feedback/tracking tables + assignments columns
+npm run db:seed      # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students
 ```
 
-`db:migrate` is additive and idempotent — it only ever adds tables/columns and
-is safe to run repeatedly against live data. Run it after `db:schema` and before
-`db:seed`.
+`db:migrate` and `db:migrate5` are additive and idempotent — they only ever add
+tables/columns and are safe to run repeatedly against live data. Run them in
+order after `db:schema` and before `db:seed`.
 
 ### 5. Run
 
@@ -69,6 +74,7 @@ XP is in the header, and the student's segment is shown.
 |---------|---------|
 | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME`/`PORT` | connection + server port |
 | `COLD_START_STRATEGY` | how a brand-new student is placed — see below |
+| `FEEDBACK_GATES_UNLOCK` | whether feedback is required before the next slot unlocks — see below |
 
 ### `COLD_START_STRATEGY`
 
@@ -84,17 +90,44 @@ scattered through the code.
   level. Placement also ends after 5 missions. Level still never decreases; XP is
   awarded normally throughout.
 
+### `FEEDBACK_GATES_UNLOCK`
+
+Resolved in exactly one place (`src/config.ts::feedbackGatesUnlock`).
+
+- **`TRUE`** (default) — after a mission is graded, the next slot stays **locked**
+  until the student submits feedback for it; it unlocks the moment feedback is
+  saved. This keeps feedback-completion high — which the mission-quality report
+  depends on. Without gating, completion sits around 30% and the aggregate quality
+  signal becomes worthless.
+- **`FALSE`** — the next slot unlocks immediately (Stage 3 behaviour) and feedback
+  is optional.
+
+The **weekly slot is never gated** either way, and never gates anything itself.
+
 ## Commands
 
 | command | purpose |
 |---------|---------|
 | `npm run db:schema` | (re)create base tables (Stage 1) |
 | `npm run db:migrate` | additive Stage 3 migration (tables + students columns) |
-| `npm run db:seed` | seed missions, segments, week template, xp rules, students |
+| `npm run db:migrate5` | additive Stage 5 migration (feedback/tracking tables + assignments columns) |
+| `npm run db:seed` | seed missions, segments, week template, xp rules, feedback questions, students |
 | `npm run publish -- <studentId\|all> [YYYY-MM-DD]` | publish a week (idempotent; runs on a schedule in production) |
 | `npm run dev` | start the server |
 | `npm run verify` | Stage 1 acceptance harness |
 | `npm run verify:stage3` | Stage 3 acceptance harness (14 criteria) |
+| `npm run verify:stage5` | Stage 5 acceptance harness (17 criteria) |
+| `npm run verify:all` | run **all four** suites (Stage 1 + 2 + 3 + 5) in one pass |
+
+> **Feedback gating is injectable per test.** `FEEDBACK_GATES_UNLOCK` is read
+> through `src/config.ts::feedbackGatesUnlock()` (never at import time) and backed
+> by a settings object. Each harness sets its own value — Stage 3 turns gating
+> **off** (its slots must unlock immediately on submit), Stage 5 turns it **on** —
+> both in-process and, for HTTP-driven checks, on the server via the guarded
+> `POST /api/test/feedback-gating` hook. So `npm run verify:all` runs the entire
+> suite green in a single pass with no env change or restart. The hook only works
+> when the server is started with `ENABLE_TEST_HOOKS=1`, so it is never exposed in
+> production.
 
 ## How Stage 3 works
 
@@ -124,8 +157,35 @@ scattered through the code.
   `stall_count == 3` it raises **one** `assistance_events` row (with the last 3
   failures) and resets the counter; the student still gets their next mission.
 - **Slot unlock** (`src/slotUnlock.ts`) — after grading, marks the slot
-  submitted, opens and fills the next locked non-weekly slot, or completes the
-  week.
+  submitted, then (unless feedback gates it) opens and fills the next locked
+  non-weekly slot, or completes the week.
+
+## How Stage 5 works
+
+- **Feedback questions** (`feedback_questions` table, `src/feedback.ts`) — the
+  five post-mission questions are **data**, configured in the DB and editable
+  live; nothing is hardcoded in the app or HTML. Seeded as clearly-marked
+  PLACEHOLDERS for the SME/management to replace. `getQuestions()` returns the
+  active set (cached for the process lifetime; a restart picks up edits).
+- **Feedback capture** (`src/feedback.ts::submitFeedback`) — only after the
+  mission is graded; validates every answer by type; requires all `required`
+  questions; commits **all responses in one transaction** (never partial);
+  marks the assignment complete; awards `feedback` XP **once** (guarded).
+  Historical responses keep a **denormalised `question_key`** so they stay
+  interpretable after a question is edited or retired.
+- **Tracking** (`src/tracking.ts`) — `logAttempt` writes the audit trail
+  (`attempt_logs`: opened / viewed / submitted / graded / feedback_submitted);
+  `getStudentProgress`, `getSubmissionLog`, and the SME `getMissionQuality`
+  report read from it.
+- **Streaks** (`src/streaks.ts`) — consecutive submission days, **computed** from
+  `attempt_logs` (never stored as a mutable counter). Today counts only if the
+  student has submitted today; otherwise the count starts from yesterday so an
+  in-progress day doesn't break a streak.
+- **Mission-quality report** (`src/tracking.ts::getMissionQuality`) — for each
+  mission with ≥5 graded attempts: pass rate, **observed difficulty** (derived
+  from pass rate), median perceived difficulty and time-to-submit from feedback,
+  and a **MISMATCH** flag when observed vs tagged difficulty differ by ≥2. This
+  is what tells the SME which missions are mis-tagged. View it at **`/quality`**.
 
 ## API
 
@@ -140,12 +200,32 @@ scattered through the code.
 | GET  | `/api/segment/:studentId` | the student's segment and why they were placed |
 | GET  | `/api/assistance` | open assistance events (instructor view) |
 | GET  | `/api/history/:studentId` | last 5 level events |
+| GET  | `/api/feedback/questions` | active feedback questions (type + options) |
+| POST | `/api/feedback/:assignmentId` | submit answers; returns XP; releases the gated next slot |
+| GET  | `/api/progress/:studentId` | student progress panel (own data only) |
+| GET  | `/api/submissions/:studentId` | paginated submission log (own data only) |
+| GET  | `/api/mission-quality` | SME report across all qualifying missions |
+| GET  | `/api/mission-quality/:missionId` | single mission detail |
+| GET  | `/api/attempts/:assignmentId` | attempt-log audit trail for one assignment |
+| GET  | `/quality` | the SME mission-quality view (internal, not for students) |
+
+A student may only read their **own** progress and submissions: the caller
+identity comes from an `X-Student-Id` header (the LTI launch token later), and a
+mismatch with the path student is refused with `403`.
 
 ## Safety guarantees
 
 1. **Level never decreases** — there is no code path that reduces `current_level`.
 2. **Locked-slot content is never returned** — enforced in the SQL, not the UI.
-3. **XP is never double-awarded** for the same `(assignment, event_type)`.
+3. **XP is never double-awarded** for the same `(assignment, event_type)` —
+   including `feedback` XP.
 4. **XP writes are transactional** with the total update.
 5. **All SQL is parameterised.**
 6. **Assistance never blocks** a student from receiving their next mission.
+7. **Feedback question text is never hardcoded** — it lives in `feedback_questions`
+   and the UI renders from the API.
+8. **Partial feedback is never saved** — all answers commit together or none do.
+9. **Historical feedback stays interpretable** after a question is edited or
+   retired, via the denormalised `question_key`.
+10. **Streaks are computed, never stored** as a mutable counter.
+11. **A student can only access their own** progress and submissions.

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mission Quality Report — SME</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; max-width: 1000px; margin: 0 auto; padding: 24px; color: #1c1e21; }
+    header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    h1 { font-size: 1.3rem; margin: 0; }
+    a { color: #1f6feb; }
+    .muted { color: #57606a; font-size: 0.9rem; }
+    .note { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-top: 12px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eaeef2; }
+    th { color: #57606a; font-weight: 600; position: sticky; top: 0; background: #fff; }
+    tr.mismatch { background: #fff5f5; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+    .badge.mismatch { background: #ffdcdc; color: #cf222e; }
+    .badge.ok { background: #dafbe1; color: #1a7f37; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Mission Quality Report <span class="muted">— SME / internal</span></h1>
+    <a href="/">← back to student view</a>
+  </header>
+
+  <div class="note">
+    Missions with at least <strong>5 graded attempts</strong>. <strong>Observed difficulty</strong>
+    is derived from the pass rate; a <span class="badge mismatch">MISMATCH</span> is flagged when it
+    differs from the tagged difficulty by 2 or more — those rows are likely mis-tagged and worth an SME review.
+  </div>
+
+  <div id="status" class="muted">Loading…</div>
+  <table id="tbl" class="hidden">
+    <thead>
+      <tr>
+        <th>Mission</th>
+        <th class="num">Tagged</th>
+        <th class="num">Observed</th>
+        <th class="num">Attempts</th>
+        <th class="num">Pass rate</th>
+        <th>Median perceived</th>
+        <th class="num">Median time</th>
+        <th>Flag</th>
+      </tr>
+    </thead>
+    <tbody id="body"></tbody>
+  </table>
+
+  <script>
+    function fmtSeconds(s) {
+      if (s == null) return '—';
+      s = Number(s);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
+    }
+    (async () => {
+      let rows;
+      try {
+        rows = await (await fetch('/api/mission-quality')).json();
+      } catch (e) {
+        document.getElementById('status').textContent = 'Failed to load report.';
+        return;
+      }
+      const status = document.getElementById('status');
+      if (!Array.isArray(rows) || rows.length === 0) {
+        status.textContent = 'No missions yet have 5+ graded attempts. Complete more missions to populate this report.';
+        return;
+      }
+      const mismatches = rows.filter((r) => r.mismatch).length;
+      status.innerHTML = `${rows.length} mission(s) with enough data — <strong>${mismatches}</strong> flagged as mis-tagged.`;
+      const body = document.getElementById('body');
+      body.innerHTML = rows.map((r) => `
+        <tr class="${r.mismatch ? 'mismatch' : ''}">
+          <td>${r.title} <span class="muted">#${r.mission_id}</span></td>
+          <td class="num">${r.tagged_difficulty}</td>
+          <td class="num">${r.observed_difficulty}</td>
+          <td class="num">${r.attempts}</td>
+          <td class="num">${Math.round(r.pass_rate * 100)}%</td>
+          <td>${r.median_perceived_difficulty ?? '—'}</td>
+          <td class="num">${fmtSeconds(r.median_time_to_submit_seconds)}</td>
+          <td>${r.mismatch ? '<span class="badge mismatch">MISMATCH</span>' : '<span class="badge ok">ok</span>'}</td>
+        </tr>`).join('');
+      document.getElementById('tbl').classList.remove('hidden');
+    })();
+  </script>
+</body>
+</html>

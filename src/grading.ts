@@ -1,5 +1,6 @@
 import { pool } from './db.js';
 import { applyProgression } from './progression.js';
+import { logAttempt } from './tracking.js';
 
 export const MIN_LEVEL = 0;
 export const MAX_LEVEL = 4;
@@ -19,6 +20,7 @@ export interface GradeResult {
   difficulty: number;
   stallCount: number;
   assistanceRaised: boolean;
+  timeToSubmitSeconds: number | null;
 }
 
 /** Maps a percentage to a score band. */
@@ -62,6 +64,8 @@ export async function submitAndGrade(
       `SELECT a.id            AS assignment_id,
               a.status        AS status,
               a.student_id    AS student_id,
+              a.opened_at     AS opened_at,
+              a.assigned_at   AS assigned_at,
               m.answer_key    AS answer_key,
               m.difficulty    AS difficulty
          FROM assignments a
@@ -88,6 +92,18 @@ export async function submitAndGrade(
     const pct = correct ? 100 : 0;
     const band = toBand(pct);
 
+    // time_to_submit_seconds: from when the student opened the mission (or, if
+    // it was never explicitly opened, from when it was assigned) to now. Computed
+    // in SQL (TIMESTAMPDIFF) so it stays in the DB's own timezone — computing it
+    // in JS against a driver-returned Date skews it by the local UTC offset.
+    // Stored for later difficulty calibration (see the mission-quality report).
+    const [[tt]] = await conn.query<any[]>(
+      `SELECT TIMESTAMPDIFF(SECOND, COALESCE(opened_at, assigned_at), NOW()) AS secs
+         FROM assignments WHERE id = ?`,
+      [assignmentId]
+    );
+    const timeToSubmitSeconds = Math.max(0, Number(tt.secs ?? 0));
+
     // 3. Mark the assignment graded (before progression, so placement can count
     //    it as a completed mission).
     await conn.query(
@@ -97,10 +113,15 @@ export async function submitAndGrade(
               score_pct = ?,
               score_band = ?,
               submitted_at = NOW(),
-              graded_at = NOW()
+              graded_at = NOW(),
+              time_to_submit_seconds = ?
         WHERE id = ?`,
-      [JSON.stringify({ selected }), pct, band, assignmentId]
+      [JSON.stringify({ selected }), pct, band, timeToSubmitSeconds, assignmentId]
     );
+
+    // Audit trail: the submission and the grade (atomic with the grade itself).
+    await logAttempt(assignmentId, studentId, 'submitted', { selected }, conn);
+    await logAttempt(assignmentId, studentId, 'graded', { correct, band }, conn);
 
     // 4. Apply the ladder + assistance (same transaction).
     const prog = await applyProgression(conn, studentId, assignmentId, correct);
@@ -119,6 +140,7 @@ export async function submitAndGrade(
       difficulty,
       stallCount: prog.stallCount,
       assistanceRaised: prog.assistanceRaised,
+      timeToSubmitSeconds,
     };
   } catch (err) {
     await conn.rollback();

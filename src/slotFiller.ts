@@ -1,5 +1,6 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
+import { logAttempt } from './tracking.js';
 
 export interface FillResult {
   weekSlotId: number;
@@ -194,6 +195,9 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
     const assignmentId = Number(ins.insertId);
 
     await conn.query(`UPDATE week_slots SET assignment_id = ? WHERE id = ?`, [assignmentId, weekSlotId]);
+
+    // Audit: the assignment now exists ('opened' = surfaced to the student).
+    await logAttempt(assignmentId, studentId, 'opened', { weekSlotId, targetLevel }, conn);
 
     await conn.query(
       `INSERT INTO selection_log (student_id, chosen_mission, candidates, filters_applied)

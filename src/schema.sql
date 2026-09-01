@@ -3,6 +3,12 @@
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+-- Stage 5 tables (dropped here so a full rebuild is clean; recreated by
+-- `npm run db:migrate5`, which re-adds them and the assignments columns).
+DROP TABLE IF EXISTS feedback_responses;
+DROP TABLE IF EXISTS attempt_logs;
+DROP TABLE IF EXISTS feedback_questions;
+
 -- Stage 3 tables (dropped here so a full rebuild is clean; recreated by
 -- `npm run db:migrate`, which re-adds them and the students columns).
 DROP TABLE IF EXISTS xp_events;

@@ -8,8 +8,37 @@ import { submitAndGrade } from './grading.js';
 import { fillSlot } from './slotFiller.js';
 import { unlockNext } from './slotUnlock.js';
 import { awardXp } from './xp.js';
+import { getQuestions, submitFeedback, FeedbackError } from './feedback.js';
+import { getStudentProgress, getSubmissionLog, getMissionQuality, logAttempt } from './tracking.js';
+import { feedbackGatesUnlock, setFeedbackGatesUnlock } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Resolve the CALLING student's identity. For now it comes from an
+ * `X-Student-Id` header (the demo dropdown can send it; when LTI lands it comes
+ * from the launch token). If the header is present and does not match the path
+ * student, we refuse — a student may only read their own data. If no header is
+ * present we trust the path (single-user demo convenience).
+ *
+ * Returns the caller id, or null if it already sent a 4xx response.
+ */
+function enforceSelf(req: express.Request, res: express.Response, pathId: number): number | null {
+  const hdr = req.header('x-student-id');
+  if (hdr != null && hdr !== '') {
+    const caller = Number(hdr);
+    if (!Number.isFinite(caller)) {
+      res.status(400).json({ error: 'invalid x-student-id' });
+      return null;
+    }
+    if (caller !== pathId) {
+      res.status(403).json({ error: "forbidden: cannot access another student's data" });
+      return null;
+    }
+    return caller;
+  }
+  return pathId;
+}
 
 const app = express();
 app.use(express.json());
@@ -215,8 +244,18 @@ app.post('/api/slot/:slotId/open', async (req, res) => {
     const missionId = Number(aRows[0].mission_id);
     const difficulty = Number(aRows[0].difficulty);
 
+    // Stamp opened_at on first view — anchors time_to_submit_seconds at grade
+    // time. Only the first open sets it (COALESCE keeps any earlier value).
+    await pool.query(
+      `UPDATE assignments SET opened_at = COALESCE(opened_at, NOW()) WHERE id = ?`,
+      [assignmentId]
+    );
+
     // Award 'attempt' XP — once per assignment (guarded inside awardXp).
     const xp = await awardXp(Number(slot.student_id), assignmentId, 'attempt', difficulty);
+
+    // Audit: the student viewed the mission.
+    await logAttempt(assignmentId, Number(slot.student_id), 'viewed', { slotId });
 
     const mission = await loadMissionContent(missionId);
     res.json({ assignment_id: assignmentId, ...mission, xp });
@@ -246,8 +285,13 @@ app.post('/api/submit', async (req, res) => {
       correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
     }
 
-    // Unlock the next slot (no-op for Stage 1 free-play assignments).
+    // Unlock the next slot. With FEEDBACK_GATES_UNLOCK on, this marks the slot
+    // submitted but holds the next slot until feedback is submitted.
     const unlock = await unlockNext(result.assignmentId);
+
+    // Tell the client whether feedback is now required before it can continue.
+    const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
+    const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
 
     // Fresh XP total for the header.
     const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
@@ -255,7 +299,16 @@ app.post('/api/submit', async (req, res) => {
 
     const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
 
-    res.json({ ...result, xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp }, unlock });
+    res.json({
+      ...result,
+      xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
+      unlock,
+      feedback: {
+        required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
+        status: feedbackStatus,
+        gates_unlock: feedbackGatesUnlock(),
+      },
+    });
   } catch (err: any) {
     console.error(err);
     res.status(400).json({ error: err?.message ?? 'submit failed' });
@@ -377,6 +430,160 @@ app.get('/api/history/:studentId', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'failed to load history' });
   }
+});
+
+// ===========================================================================
+// Stage 5 — feedback + tracking
+// ===========================================================================
+
+/** GET /api/feedback/questions — active questions, ordered. Rendered by the UI. */
+app.get('/api/feedback/questions', async (_req, res) => {
+  try {
+    const questions = await getQuestions();
+    res.json(questions);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to load feedback questions' });
+  }
+});
+
+/**
+ * POST /api/feedback/:assignmentId  body { answers: [{ question_key, value }] }
+ * Submits the student's feedback, awards feedback XP once, and — when feedback
+ * gates unlocking — releases the next slot.
+ */
+app.post('/api/feedback/:assignmentId', async (req, res) => {
+  const assignmentId = Number(req.params.assignmentId);
+  if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
+  const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+  try {
+    // Caller identity: header when present, else derive from the assignment
+    // (single-user demo). submitFeedback re-checks ownership regardless.
+    let studentId = Number(req.header('x-student-id'));
+    if (!Number.isFinite(studentId)) {
+      const [[row]] = await pool.query<any[]>(`SELECT student_id FROM assignments WHERE id = ?`, [assignmentId]);
+      if (!row) return res.status(404).json({ error: 'assignment not found' });
+      studentId = Number(row.student_id);
+    }
+
+    const result = await submitFeedback(assignmentId, studentId, answers);
+
+    // Release the gated next slot only on the FIRST completion, and only when
+    // feedback actually gates unlocking (otherwise the grade-time unlock already
+    // advanced the week and re-running would skip a slot).
+    let unlock = null;
+    if (!result.alreadyComplete && feedbackGatesUnlock()) {
+      unlock = await unlockNext(assignmentId);
+    }
+
+    res.json({ ...result, unlock });
+  } catch (err: any) {
+    if (err instanceof FeedbackError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'failed to submit feedback' });
+  }
+});
+
+/** GET /api/progress/:studentId — the student's own progress panel. */
+app.get('/api/progress/:studentId', async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+  const caller = enforceSelf(req, res, studentId);
+  if (caller == null) return; // already responded 4xx
+  try {
+    const progress = await getStudentProgress(caller);
+    if (!progress) return res.status(404).json({ error: 'student not found' });
+    res.json(progress);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to load progress' });
+  }
+});
+
+/** GET /api/submissions/:studentId?limit=&offset= — paginated submission log. */
+app.get('/api/submissions/:studentId', async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+  const caller = enforceSelf(req, res, studentId);
+  if (caller == null) return;
+  try {
+    const limit = req.query.limit != null ? Number(req.query.limit) : 20;
+    const offset = req.query.offset != null ? Number(req.query.offset) : 0;
+    const log = await getSubmissionLog(caller, limit, offset);
+    res.json(log);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to load submissions' });
+  }
+});
+
+/** GET /api/mission-quality — SME report across all qualifying missions. */
+app.get('/api/mission-quality', async (_req, res) => {
+  try {
+    const report = await getMissionQuality();
+    res.json(report);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to build mission-quality report' });
+  }
+});
+
+/** GET /api/mission-quality/:missionId — single mission detail. */
+app.get('/api/mission-quality/:missionId', async (req, res) => {
+  const missionId = Number(req.params.missionId);
+  if (!Number.isFinite(missionId)) return res.status(400).json({ error: 'invalid missionId' });
+  try {
+    const report = await getMissionQuality(missionId);
+    res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to build mission-quality report' });
+  }
+});
+
+/** GET /api/attempts/:assignmentId — the audit trail for one assignment. */
+app.get('/api/attempts/:assignmentId', async (req, res) => {
+  const assignmentId = Number(req.params.assignmentId);
+  if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
+  try {
+    const [rows] = await pool.query<any[]>(
+      `SELECT id, event, detail, created_at
+         FROM attempt_logs
+        WHERE assignment_id = ?
+        ORDER BY created_at ASC, id ASC`,
+      [assignmentId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'failed to load attempt log' });
+  }
+});
+
+/** GET /quality — the internal SME mission-quality view (not for students). */
+app.get('/quality', (_req, res) => {
+  res.sendFile(join(__dirname, '..', 'public', 'quality.html'));
+});
+
+/**
+ * POST /api/test/feedback-gating  body { enabled: boolean | null }
+ * Test hook: inject the FEEDBACK_GATES_UNLOCK value at runtime so an HTTP-driven
+ * harness can set the server's behaviour for its own run (Stage 3 sets false,
+ * Stage 5 sets true) without an env change or restart. Disabled unless
+ * ENABLE_TEST_HOOKS is set, so it is never exposed in production.
+ */
+app.post('/api/test/feedback-gating', (req, res) => {
+  if (!process.env.ENABLE_TEST_HOOKS) {
+    return res.status(403).json({ error: 'test hooks disabled' });
+  }
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== 'boolean' && enabled !== null) {
+    return res.status(400).json({ error: 'enabled must be boolean or null' });
+  }
+  setFeedbackGatesUnlock(enabled);
+  res.json({ feedbackGatesUnlock: feedbackGatesUnlock() });
 });
 
 /** Shared: mission content (title/body/difficulty + options). */

@@ -7,11 +7,14 @@
   "scripts": {
     "db:schema": "tsx src/schema.ts",
     "db:migrate": "tsx src/migrate.ts",
+    "db:migrate5": "tsx src/migrate5.ts",
     "db:seed": "tsx src/seed.ts",
     "publish": "tsx src/publish.ts",
     "dev": "tsx watch src/server.ts",
     "verify": "node verify.mjs",
-    "verify:stage3": "tsx verify-stage3.mjs"
+    "verify:stage3": "tsx verify-stage3.mjs",
+    "verify:stage5": "tsx verify-stage5.mjs",
+    "verify:all": "node run-all.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

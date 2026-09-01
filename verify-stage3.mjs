@@ -23,6 +23,22 @@ async function j(path, opts) {
   const r = await fetch(BASE + path, opts);
   return r.json();
 }
+
+// Stage 3 semantics assume a slot unlocks immediately on submit. Turn feedback
+// gating OFF on the server for the duration of this run (the harness owns the
+// setting; no env change or restart needed). Requires ENABLE_TEST_HOOKS.
+{
+  const r = await fetch(BASE + '/api/test/feedback-gating', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  });
+  if (r.status !== 200) {
+    console.error(`FATAL: could not disable feedback gating (status ${r.status}). ` +
+      `Start the server with ENABLE_TEST_HOOKS=1.`);
+    process.exit(2);
+  }
+  console.log('[setup] feedback gating disabled for Stage 3 run');
+}
 async function post(path, body) {
   return j(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
 }

@@ -3,17 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mission Demo — Stage 3</title>
+  <title>Mission Demo — Stage 5</title>
   <style>
     :root { --up: #1a7f37; --hold: #9a6700; --lock: #8c959f; --xp: #8250df; }
     * { box-sizing: border-box; }
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      max-width: 720px; margin: 0 auto; padding: 24px; color: #1c1e21; line-height: 1.45;
+      max-width: 760px; margin: 0 auto; padding: 24px; color: #1c1e21; line-height: 1.45;
     }
     header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
     h1 { font-size: 1.35rem; margin: 0; }
     h2 { font-size: 1.05rem; margin: 20px 0 8px; }
+    a { color: #1f6feb; }
     .card { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px; margin: 12px 0; }
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     select, button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid #d0d7de; }
@@ -24,6 +25,11 @@
     .xp-counter { font-weight: 700; color: var(--xp); font-size: 1.1rem; }
     .xp-gain { color: var(--xp); font-weight: 600; }
     .seg-name { font-weight: 600; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+    .stat { background: #f6f8fa; border-radius: 8px; padding: 10px 12px; }
+    .stat .n { font-size: 1.25rem; font-weight: 700; }
+    .stat .l { font-size: 0.75rem; color: #57606a; text-transform: uppercase; letter-spacing: 0.03em; }
 
     ul.slots { list-style: none; padding: 0; margin: 0; }
     li.slot { border: 1px solid #d0d7de; border-radius: 8px; margin: 8px 0; padding: 12px; }
@@ -45,6 +51,20 @@
     .tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
     .tag.up { background: #dafbe1; color: var(--up); }
     .tag.hold { background: #fff8c5; color: var(--hold); }
+
+    .feedback { margin-top: 12px; padding: 12px; border: 1px solid #d0b8ff; border-radius: 8px; background: #faf7ff; }
+    .feedback h3 { margin: 0 0 4px; font-size: 0.95rem; }
+    .fq { margin: 10px 0; }
+    .fq .q { font-weight: 600; margin-bottom: 4px; }
+    .fq .req { color: #cf222e; }
+    .fq .scale { display: inline-flex; gap: 6px; }
+    .fq textarea { width: 100%; min-height: 48px; font: inherit; padding: 6px; border-radius: 6px; border: 1px solid #d0d7de; }
+    .gate-note { color: var(--hold); font-weight: 600; font-size: 0.9rem; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eaeef2; }
+    th { color: #57606a; font-weight: 600; }
+
     ul.history { list-style: none; padding: 0; margin: 0; }
     ul.history li { padding: 6px 10px; border-left: 4px solid #d0d7de; margin: 6px 0; background: #f6f8fa; border-radius: 0 6px 6px 0; }
     ul.history li.up { border-left-color: var(--up); }
@@ -54,9 +74,10 @@
 </head>
 <body>
   <header>
-    <h1>Student Mission Demo <span class="pill">Stage 3</span></h1>
+    <h1>Student Mission Demo <span class="pill">Stage 5</span></h1>
     <div class="row">
       <span>XP</span><span class="xp-counter" id="xpCounter">0</span>
+      <a href="/quality" title="SME mission-quality report">Quality report →</a>
     </div>
   </header>
 
@@ -69,9 +90,22 @@
     </div>
   </div>
 
+  <h2>Progress</h2>
+  <div class="card">
+    <div class="stats" id="stats"><span class="muted">Loading…</span></div>
+  </div>
+
   <h2>This week</h2>
   <div id="weekStatus" class="muted"></div>
   <ul class="slots" id="slots"><li class="muted">Loading…</li></ul>
+
+  <h2>Submission log</h2>
+  <div class="card">
+    <table id="subsTable">
+      <thead><tr><th>Mission</th><th>Diff</th><th>Date</th><th>Result</th><th>Time</th><th>Feedback</th></tr></thead>
+      <tbody id="subsBody"><tr><td colspan="6" class="muted">No submissions yet.</td></tr></tbody>
+    </table>
+  </div>
 
   <h2>Level history</h2>
   <ul class="history" id="history"><li class="muted">No events yet.</li></ul>
@@ -79,8 +113,9 @@
   <script>
     const $ = (id) => document.getElementById(id);
     let currentStudentId = null;
-    let openSlotId = null;        // slot currently expanded for answering
+    let openSlotId = null;
     let openAssignmentId = null;
+    let feedbackQuestions = null; // cached from the API — never hardcoded here
 
     async function api(path, opts) {
       const res = await fetch(path, opts);
@@ -94,6 +129,12 @@
 
     function reasonClass(reason) {
       return reason && reason.includes('pass') ? 'up' : 'hold'; // never a demotion class
+    }
+    function fmtSeconds(s) {
+      if (s == null) return '—';
+      s = Number(s);
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
     }
 
     async function loadStudents() {
@@ -110,7 +151,6 @@
       }
       currentStudentId = Number(sel.value);
     }
-
     function selectedOpt() {
       const sel = $('student');
       return sel.options[sel.selectedIndex];
@@ -129,6 +169,32 @@
       $('segName').textContent = seg.segment ? seg.segment.name : 'Unassigned';
     }
 
+    async function loadProgress() {
+      const p = await api('/api/progress/' + currentStudentId);
+      const pct = Math.round((p.feedback_completion_rate || 0) * 100);
+      $('stats').innerHTML = [
+        ['Level', p.current_level],
+        ['Segment', p.segment_name || '—'],
+        ['Total XP', p.total_xp],
+        ['Current streak', p.current_streak + 'd'],
+        ['Longest streak', p.longest_streak + 'd'],
+        ['Completed', p.correct + '/' + p.submitted],
+        ['Feedback rate', pct + '%'],
+      ].map(([l, n]) => `<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+    }
+
+    async function loadSubmissions() {
+      const data = await api('/api/submissions/' + currentStudentId + '?limit=10');
+      const body = $('subsBody');
+      if (!data.rows.length) { body.innerHTML = '<tr><td colspan="6" class="muted">No submissions yet.</td></tr>'; return; }
+      body.innerHTML = data.rows.map((r) => {
+        const date = r.submitted_at ? String(r.submitted_at).slice(0, 10) : '—';
+        const result = r.score_band === 'fail' ? '✗ fail' : '✓ ' + r.score_band;
+        const fb = r.feedback_status === 'complete' ? '✓' : (r.feedback_status === 'not_required' ? '—' : 'pending');
+        return `<tr><td>${r.title}</td><td>${r.difficulty}</td><td>${date}</td><td>${result}</td><td>${fmtSeconds(r.time_to_submit_seconds)}</td><td>${fb}</td></tr>`;
+      }).join('');
+    }
+
     async function loadWeek() {
       openSlotId = null; openAssignmentId = null;
       const ul = $('slots');
@@ -140,15 +206,12 @@
       }
       $('weekStatus').textContent = `Week of ${String(week.week_start).slice(0, 10)} — status: ${week.status}`;
       ul.innerHTML = '';
-      for (const slot of week.slots) {
-        ul.appendChild(renderSlot(slot));
-      }
+      for (const slot of week.slots) ul.appendChild(renderSlot(slot));
     }
 
     function renderSlot(slot) {
       const li = document.createElement('li');
       li.className = 'slot ' + slot.status;
-
       const head = document.createElement('div');
       head.className = 'slot-head';
       const left = document.createElement('div');
@@ -167,10 +230,8 @@
       head.appendChild(left); head.appendChild(right);
       li.appendChild(head);
 
-      // Locked: metadata only — NEVER the question (server enforces this too).
-      if (slot.status === 'locked') return li;
+      if (slot.status === 'locked') return li; // metadata only — NEVER the question
 
-      // Open/submitted: show a button to open (loads question + awards attempt XP).
       if (slot.status === 'open') {
         const btn = document.createElement('button');
         btn.textContent = slot.mission ? 'Answer this mission' : 'Open mission';
@@ -199,7 +260,7 @@
       }
       openSlotId = slotId;
       openAssignmentId = data.assignment_id;
-      if (data.xp && data.xp.awarded) await refreshHeader(); // attempt XP may have landed
+      if (data.xp && data.xp.awarded) await refreshHeader();
 
       let html = `<p><strong>${data.title}</strong> <span class="pill">difficulty ${data.difficulty}</span></p>`;
       html += `<p class="muted">${data.body}</p>`;
@@ -230,8 +291,79 @@
         (result.assistanceRaised ? `<br><span class="pill">instructor notified — you'll keep going</span>` : '');
 
       await refreshHeader();
-      await loadWeek();
-      await loadHistory();
+      await loadProgress();
+      await loadSubmissions();
+
+      // Feedback: appears immediately after the result, before the next slot.
+      if (result.feedback && result.feedback.required) {
+        await renderFeedbackForm(slotId, openAssignmentId, result.feedback.gates_unlock);
+      } else {
+        await loadWeek();
+        await loadHistory();
+      }
+    }
+
+    async function renderFeedbackForm(slotId, assignmentId, gates) {
+      if (!feedbackQuestions) feedbackQuestions = await api('/api/feedback/questions');
+      const host = document.createElement('div');
+      host.className = 'feedback';
+      host.id = 'fb-' + slotId;
+      let html = `<h3>Quick feedback</h3>`;
+      if (gates) html += `<div class="gate-note">Submit feedback to unlock your next mission.</div>`;
+      for (const q of feedbackQuestions) {
+        html += `<div class="fq"><div class="q">${q.prompt}${q.required ? ' <span class="req">*</span>' : ''}</div>`;
+        html += renderInput(q, slotId);
+        html += `</div>`;
+      }
+      html += `<button id="fbsubmit-${slotId}">Submit feedback</button><div id="fbres-${slotId}"></div>`;
+      host.innerHTML = html;
+      $('res-' + slotId).appendChild(host);
+      $('fbsubmit-' + slotId).onclick = () => submitFeedback(slotId, assignmentId);
+    }
+
+    function renderInput(q, slotId) {
+      const name = `fq-${slotId}-${q.question_key}`;
+      if (q.answer_type === 'scale_1_5') {
+        let s = `<span class="scale">`;
+        for (let i = 1; i <= 5; i++) s += `<label class="opt" style="margin:0"><input type="radio" name="${name}" value="${i}" /> ${i}</label>`;
+        return s + `</span>`;
+      }
+      if (q.answer_type === 'yes_no') {
+        return ['yes', 'no'].map((v) => `<label class="opt" style="display:inline-block;margin:0 6px 0 0"><input type="radio" name="${name}" value="${v}" /> ${v}</label>`).join('');
+      }
+      if (q.answer_type === 'single_select') {
+        return (q.options || []).map((o) => `<label class="opt"><input type="radio" name="${name}" value="${o.replace(/"/g, '&quot;')}" /> ${o}</label>`).join('');
+      }
+      return `<textarea id="${name}" maxlength="500" placeholder="Optional"></textarea>`;
+    }
+
+    async function submitFeedback(slotId, assignmentId) {
+      const answers = [];
+      for (const q of feedbackQuestions) {
+        const name = `fq-${slotId}-${q.question_key}`;
+        if (q.answer_type === 'free_text') {
+          const el = document.getElementById(name);
+          if (el && el.value.trim()) answers.push({ question_key: q.question_key, value: el.value });
+        } else {
+          const sel = document.querySelector(`input[name="${name}"]:checked`);
+          if (sel) answers.push({ question_key: q.question_key, value: sel.value });
+        }
+      }
+      const btn = $('fbsubmit-' + slotId);
+      btn.disabled = true;
+      try {
+        const r = await post('/api/feedback/' + assignmentId, { answers });
+        const gained = r.xp && r.xp.awarded ? r.xp.points : 0;
+        $('fbres-' + slotId).innerHTML = `<div class="result correct">Thanks! <span class="xp-gain">+${gained} XP</span></div>`;
+        await refreshHeader();
+        await loadProgress();
+        await loadSubmissions();
+        await loadWeek();     // the next slot is now unlocked
+        await loadHistory();
+      } catch (e) {
+        btn.disabled = false;
+        $('fbres-' + slotId).innerHTML = `<div class="result incorrect">${e.message}</div>`;
+      }
     }
 
     async function loadHistory() {
@@ -250,14 +382,18 @@
     $('student').addEventListener('change', async () => {
       currentStudentId = Number($('student').value);
       await refreshHeader();
+      await loadProgress();
       await loadWeek();
+      await loadSubmissions();
       await loadHistory();
     });
 
     (async () => {
       await loadStudents();
       await refreshHeader();
+      await loadProgress();
       await loadWeek();
+      await loadSubmissions();
       await loadHistory();
     })();
   </script>
