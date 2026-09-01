@@ -47,6 +47,9 @@ const venvPy = ['pipeline/.venv/Scripts/python.exe', 'pipeline/.venv/bin/python'
   .map((p) => join(root, p)).find(existsSync);
 
 try {
+  // Migrations (Item 4) — fresh scratch DB matches current; idempotent; reversible.
+  run('npm run verify:migrations');
+
   // Stage 1 — free-play loop (gating irrelevant).
   run('npm run db:seed');
   run('npm run verify');
@@ -80,7 +83,7 @@ try {
   // Leave the demo DB pristine.
   run('npm run db:seed');
 
-  console.log('\n\x1b[32m==== ALL SUITES PASSED (Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation) ====\x1b[0m');
+  console.log('\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation) ====\x1b[0m');
 } catch (err) {
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);

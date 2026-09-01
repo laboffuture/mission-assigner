@@ -5,10 +5,9 @@
   "type": "module",
   "description": "Student mission automation demo — adaptive difficulty ladder",
   "scripts": {
-    "db:schema": "tsx src/schema.ts",
-    "db:migrate": "tsx src/migrate.ts",
-    "db:migrate5": "tsx src/migrate5.ts",
-    "db:migrate:auth": "tsx src/migrateAuth.ts",
+    "db:migrate": "tsx src/migrator.ts up",
+    "db:migrate:down": "tsx src/migrator.ts down",
+    "db:migrate:status": "tsx src/migrator.ts status",
     "db:seed": "tsx src/seed.ts",
     "publish": "tsx src/publish.ts",
     "dev": "tsx watch src/server.ts",
@@ -18,6 +17,7 @@
     "verify:auth": "node verify-auth.mjs",
     "verify:logging": "node verify-logging.mjs",
     "verify:validation": "node verify-validation.mjs",
+    "verify:migrations": "tsx verify-migrations.mjs",
     "verify:all": "node run-all.mjs"
   },
   "dependencies": {
@@ -27,6 +27,7 @@
     "mysql2": "^3.11.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "umzug": "^3.8.3",
     "zod": "^4.5.4"
   },
   "devDependencies": {

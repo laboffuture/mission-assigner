@@ -45,19 +45,36 @@ cp .env.example .env
 npm install
 ```
 
-### 4. Create schema, apply the Stage 3 migration, and seed
+### 4. Migrate and seed
 
 ```bash
-npm run db:schema      # base tables (Stage 1)
-npm run db:migrate     # ADDITIVE Stage 3 migration: new tables + students columns
-npm run db:migrate5    # ADDITIVE Stage 5 migration: feedback/tracking tables + assignments columns
-npm run db:migrate:auth # ADDITIVE auth migration: students.role
-npm run db:seed        # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students + 4 staff
+npm run db:migrate   # bring the database to current (runs all pending migrations)
+npm run db:seed      # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students + 4 staff
 ```
 
-`db:migrate` and `db:migrate5` are additive and idempotent — they only ever add
-tables/columns and are safe to run repeatedly against live data. Run them in
-order after `db:schema` and before `db:seed`.
+`db:migrate` runs the versioned migrations in `src/migrations/` and is a no-op
+when the database is already current. `db:migrate:status` shows applied/pending;
+`db:migrate:down` reverts the last migration.
+
+### Migrations (Item 4)
+
+Schema changes are **versioned migrations** run by [umzug](https://github.com/sequelize/umzug),
+recorded in a `schema_migrations` table:
+
+| migration | contents |
+|-----------|----------|
+| `001_initial_schema` | Stage 1: students, missions, assignments, events |
+| `002_stage3_segments_weeks_xp` | Stage 3: segments, weekly templates/slots, XP, cold start |
+| `003_stage5_feedback_tracking` | Stage 5: feedback questions/responses, attempt log |
+| `004_auth_roles` | `students.role` |
+
+**Why umzug (not db-migrate):** umzug is a thin, framework-agnostic migration
+runner — it imposes no ORM and no DB driver of its own, so every migration is
+plain `mysql2/promise` raw SQL (matching the stack). The only custom piece is a
+~20-line storage adapter that records applied migrations via mysql2. Each
+migration has an `up` and a `down`. `npm run verify:migrations` proves a fresh
+migrated database is schema-identical to the current one, that re-running is a
+no-op, and that `down` reverses cleanly.
 
 ### 5. Run
 
@@ -135,17 +152,20 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 
 | command | purpose |
 |---------|---------|
-| `npm run db:schema` | (re)create base tables (Stage 1) |
-| `npm run db:migrate` | additive Stage 3 migration (tables + students columns) |
-| `npm run db:migrate5` | additive Stage 5 migration (feedback/tracking tables + assignments columns) |
+| `npm run db:migrate` | run all pending migrations (no-op if current) |
+| `npm run db:migrate:status` | show applied / pending migrations |
+| `npm run db:migrate:down` | revert the last migration |
 | `npm run db:seed` | seed missions, segments, week template, xp rules, feedback questions, students |
 | `npm run publish -- <studentId\|all> [YYYY-MM-DD]` | publish a week (idempotent; runs on a schedule in production) |
 | `npm run dev` | start the server |
 | `npm run verify` | Stage 1 acceptance harness |
-| `npm run verify:stage3` | Stage 3 acceptance harness (14 criteria) |
-| `npm run verify:stage5` | Stage 5 acceptance harness (17 criteria) |
+| `npm run verify:stage3` | Stage 3 acceptance harness |
+| `npm run verify:stage5` | Stage 5 acceptance harness |
 | `npm run verify:auth` | auth acceptance harness (role + ownership) |
-| `npm run verify:all` | run **all** suites (Stage 1 + 2 + 3 + 5 + Auth) in one pass |
+| `npm run verify:logging` | logging + error-shape harness |
+| `npm run verify:validation` | input-validation harness |
+| `npm run verify:migrations` | migrations harness (fresh == current, idempotent, reversible) |
+| `npm run verify:all` | run **all** suites in one pass |
 
 > **Feedback gating is injectable per test.** `FEEDBACK_GATES_UNLOCK` is read
 > through `src/config.ts::feedbackGatesUnlock()` (never at import time) and backed
