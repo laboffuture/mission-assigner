@@ -23,6 +23,7 @@
     "verify:migrations": "tsx verify-migrations.mjs",
     "verify:config": "node verify-config.mjs",
     "verify:timezone": "tsx verify-timezone.mjs",
+    "verify:concurrency": "tsx verify-concurrency.mjs",
     "verify:all": "node run-all.mjs"
   },
   "dependencies": {

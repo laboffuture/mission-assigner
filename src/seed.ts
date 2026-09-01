@@ -41,6 +41,7 @@ async function main() {
     // Wipe in FK-safe order (Stage 3 tables first, then Stage 1).
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     for (const t of [
+      'idempotency_keys',
       'feedback_responses',
       'attempt_logs',
       'feedback_questions',

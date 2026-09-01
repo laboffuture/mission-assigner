@@ -331,6 +331,66 @@ app.post(
  * ownership check is a query keyed to the authenticated id, so a student can
  * never submit against another student's assignment.
  */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The submit business step: grade (row-level FOR UPDATE inside submitAndGrade),
+ * award submit/correct XP, unlock the next slot, and build the response. Because
+ * grading takes a FOR UPDATE lock and only proceeds when the assignment is still
+ * 'open', concurrent submits are serialised: exactly one grades (and therefore
+ * runs the XP award + unlock, each additionally guarded); the loser throws
+ * 'not open' before touching XP or slots.
+ */
+async function runSubmit(assignmentId: number, selected: string) {
+  const result = await submitAndGrade(assignmentId, selected);
+  const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
+  let correctXp = null;
+  if (result.correct) {
+    correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
+  }
+  const unlock = await unlockNext(result.assignmentId);
+
+  const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
+  const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
+  const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
+  const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
+  const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
+
+  return {
+    ...result,
+    xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
+    unlock,
+    feedback: {
+      required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
+      status: feedbackStatus,
+      gates_unlock: feedbackGatesUnlock(),
+    },
+  };
+}
+
+/** Poll for a concurrent request's cached idempotent result. */
+async function waitForIdempotentResult(key: string, assignmentId: number): Promise<any | null> {
+  for (let i = 0; i < 100; i++) {
+    const [[row]] = await pool.query<any[]>(
+      `SELECT response FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`,
+      [key, assignmentId]
+    );
+    if (!row) return null; // the in-flight request failed and released the claim
+    if (row.response != null) {
+      return typeof row.response === 'string' ? JSON.parse(row.response) : row.response;
+    }
+    await sleep(100);
+  }
+  return null;
+}
+
+/**
+ * POST /api/submit  body { assignmentId, selected }   header (optional): Idempotency-Key
+ * Student-only, own assignment. Idempotent: a retried submit carrying the same
+ * Idempotency-Key returns the ORIGINAL result rather than erroring or
+ * re-grading. Concurrency-safe even without a key (grading's FOR UPDATE lets
+ * only one request grade).
+ */
 app.post(
   '/api/submit',
   requireAuth,
@@ -338,6 +398,7 @@ app.post(
   validate({ body: submitBody }),
   async (req, res) => {
     const { assignmentId, selected } = req.valid!.body;
+    const idemKey = req.header('idempotency-key');
     try {
       // Ownership enforced in SQL: no row unless this assignment is the caller's.
       const [own] = await pool.query<any[]>(
@@ -348,39 +409,41 @@ app.post(
         return sendError(req, res, 403, 'forbidden', 'not your assignment');
       }
 
-      const result = await submitAndGrade(assignmentId, selected);
-
-      // XP: submit always; correct only if correct, scaled by difficulty.
-      const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
-      let correctXp = null;
-      if (result.correct) {
-        correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
+      if (idemKey) {
+        // Claim the key. The UNIQUE(idempotency_key, assignment_id) makes exactly
+        // one concurrent request the "owner"; the rest wait for its result.
+        try {
+          await pool.query(
+            `INSERT INTO idempotency_keys (idempotency_key, assignment_id) VALUES (?, ?)`,
+            [idemKey, assignmentId]
+          );
+        } catch (e: any) {
+          if (e && e.code === 'ER_DUP_ENTRY') {
+            const cached = await waitForIdempotentResult(idemKey, assignmentId);
+            if (cached) return res.json({ ...cached, idempotent_replay: true });
+            return sendError(req, res, 409, 'conflict', 'a request with this Idempotency-Key is still processing');
+          }
+          throw e;
+        }
+        try {
+          const result = await runSubmit(assignmentId, selected);
+          await pool.query(
+            `UPDATE idempotency_keys SET response = ? WHERE idempotency_key = ? AND assignment_id = ?`,
+            [JSON.stringify(result), idemKey, assignmentId]
+          );
+          return res.json(result);
+        } catch (err) {
+          // Release the claim so a genuine retry can proceed.
+          await pool.query(
+            `DELETE FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`,
+            [idemKey, assignmentId]
+          ).catch(() => {});
+          throw err;
+        }
       }
 
-      // Unlock the next slot. With FEEDBACK_GATES_UNLOCK on, this marks the slot
-      // submitted but holds the next slot until feedback is submitted.
-      const unlock = await unlockNext(result.assignmentId);
-
-      // Tell the client whether feedback is now required before it can continue.
-      const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
-      const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
-
-      // Fresh XP total for the header.
-      const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
-      const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
-
-      const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
-
-      res.json({
-        ...result,
-        xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
-        unlock,
-        feedback: {
-          required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
-          status: feedbackStatus,
-          gates_unlock: feedbackGatesUnlock(),
-        },
-      });
+      const result = await runSubmit(assignmentId, selected);
+      res.json(result);
     } catch (err: any) {
       // Business-rule errors from grading (e.g. assignment not open) are safe to
       // surface as 400; unexpected ones are logged and surfaced generically.

@@ -262,7 +262,7 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | GET  | `/api/current/:studentId` | Stage 1 free-play mission |
 | GET  | `/api/week/:studentId` | the week with all slots; **locked slots never include question text** |
 | POST | `/api/slot/:slotId/open` | award `attempt` XP (once), return the mission |
-| POST | `/api/submit` | grade, award `submit`/`correct` XP, unlock the next slot |
+| POST | `/api/submit` | grade, award `submit`/`correct` XP, unlock the next slot. Accepts an optional `Idempotency-Key` header — a retried submit returns the original result instead of re-grading. Concurrency-safe (grading takes a row-level `FOR UPDATE`, so only one of two simultaneous submits grades). |
 | GET  | `/api/xp/:studentId` | total XP + last 20 events |
 | GET  | `/api/segment/:studentId` | the student's segment and why they were placed |
 | GET  | `/api/assistance` | open assistance events (instructor view) |

@@ -23,9 +23,10 @@ function check(name, cond, detail = '') {
 // for this comparison, so we diff exactly the migration-owned set.
 const NODE_TABLES = [
   'assignments', 'assistance_events', 'attempt_logs', 'feedback_questions', 'feedback_responses',
-  'level_events', 'mission_options', 'mission_tags', 'missions', 'segment_prerequisites', 'segments',
-  'selection_log', 'student_courses', 'student_interests', 'student_weeks', 'students',
-  'week_slots', 'week_template_slots', 'week_templates', 'xp_events', 'xp_rules',
+  'idempotency_keys', 'level_events', 'mission_options', 'mission_tags', 'missions',
+  'segment_prerequisites', 'segments', 'selection_log', 'student_courses', 'student_interests',
+  'student_weeks', 'students', 'week_slots', 'week_template_slots', 'week_templates',
+  'xp_events', 'xp_rules',
 ];
 
 /** Dump the migration-owned tables (no data) via the container's mysqldump, normalised. */
@@ -51,7 +52,7 @@ await root.query(`CREATE DATABASE \`${SCRATCH}\` CHARACTER SET utf8mb4 COLLATE u
 const pool = makePool(SCRATCH);
 const umzug = buildUmzug(pool);
 
-const EXPECTED = 5;
+const EXPECTED = 6;
 console.log('\n[Migrating a fresh database applies every migration]');
 const applied1 = await umzug.up();
 check(`all ${EXPECTED} migrations applied`, applied1.length === EXPECTED, `(applied=${applied1.length})`);

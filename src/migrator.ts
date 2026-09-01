@@ -8,6 +8,7 @@ import * as m002 from './migrations/002_stage3_segments_weeks_xp.js';
 import * as m003 from './migrations/003_stage5_feedback_tracking.js';
 import * as m004 from './migrations/004_auth_roles.js';
 import * as m005 from './migrations/005_student_timezone.js';
+import * as m006 from './migrations/006_idempotency_keys.js';
 
 /**
  * Versioned migrations (Item 4).
@@ -32,6 +33,7 @@ const MIGRATIONS: Migration[] = [
   { name: '003_stage5_feedback_tracking', up: m003.up, down: m003.down },
   { name: '004_auth_roles', up: m004.up, down: m004.down },
   { name: '005_student_timezone', up: m005.up, down: m005.down },
+  { name: '006_idempotency_keys', up: m006.up, down: m006.down },
 ];
 
 /** A pool bound to `dbName` with multi-statement SQL enabled (migrations need it). */

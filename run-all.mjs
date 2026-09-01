@@ -80,6 +80,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:timezone');
 
+  // Concurrency (Item 8) — idempotency key + row-lock; no double grade/XP/unlock.
+  run('npm run db:seed');
+  run('npm run verify:concurrency');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
