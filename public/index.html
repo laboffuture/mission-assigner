@@ -186,8 +186,8 @@
     async function loadSubmissions() {
       const data = await api('/api/submissions/' + currentStudentId + '?limit=10');
       const body = $('subsBody');
-      if (!data.rows.length) { body.innerHTML = '<tr><td colspan="6" class="muted">No submissions yet.</td></tr>'; return; }
-      body.innerHTML = data.rows.map((r) => {
+      if (!data.items.length) { body.innerHTML = '<tr><td colspan="6" class="muted">No submissions yet.</td></tr>'; return; }
+      body.innerHTML = data.items.map((r) => {
         const date = r.submitted_at ? String(r.submitted_at).slice(0, 10) : '—';
         const result = r.score_band === 'fail' ? '✗ fail' : '✓ ' + r.score_band;
         const fb = r.feedback_status === 'complete' ? '✓' : (r.feedback_status === 'not_required' ? '—' : 'pending');

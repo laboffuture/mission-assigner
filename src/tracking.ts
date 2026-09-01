@@ -1,6 +1,7 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
 import { computeStreaks } from './streaks.js';
+import { type Page, clampLimit, decodeCursor, encodeCursor, buildPage } from './pagination.js';
 
 export type AttemptEvent = 'opened' | 'viewed' | 'submitted' | 'graded' | 'feedback_submitted';
 
@@ -108,29 +109,109 @@ export async function getStudentProgress(studentId: number): Promise<StudentProg
 }
 
 // ---------------------------------------------------------------------------
-// getSubmissionLog — paginated, newest first
+// getSubmissionLog — cursor-paginated (keyset on submitted_at, id), newest first
 // ---------------------------------------------------------------------------
-export async function getSubmissionLog(studentId: number, limit = 20, offset = 0) {
-  const lim = Math.min(Math.max(1, Number(limit) || 20), 100);
-  const off = Math.max(0, Number(offset) || 0);
-
-  const [[{ total }]] = await pool.query<any[]>(
-    `SELECT COUNT(*) AS total FROM assignments WHERE student_id = ? AND status = 'graded'`,
-    [studentId]
-  );
-
+export async function getSubmissionLog(
+  studentId: number,
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<Page<any>> {
+  const lim = clampLimit(opts.limit);
+  const dec = decodeCursor(opts.cursor);
+  const params: any[] = [studentId];
+  let cursorClause = '';
+  if (dec) {
+    cursorClause = 'AND (a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))';
+    params.push(dec.sortValue, dec.sortValue, dec.id);
+  }
   const [rows] = await pool.query<any[]>(
-    `SELECT a.id AS assignment_id, m.title, m.difficulty,
+    `SELECT a.id AS assignment_id, a.id AS id, m.title, m.difficulty,
             a.submitted_at, a.score_band, a.time_to_submit_seconds, a.feedback_status
        FROM assignments a
        JOIN missions m ON m.id = a.mission_id
-      WHERE a.student_id = ? AND a.status = 'graded'
+      WHERE a.student_id = ? AND a.status = 'graded' ${cursorClause}
       ORDER BY a.submitted_at DESC, a.id DESC
-      LIMIT ? OFFSET ?`,
-    [studentId, lim, off]
+      LIMIT ?`,
+    [...params, lim + 1]
   );
+  return buildPage(rows, lim, (r) => encodeCursor(r.submitted_at, r.id));
+}
 
-  return { total: Number(total), limit: lim, offset: off, rows };
+// ---------------------------------------------------------------------------
+// getXpHistory — cursor-paginated (keyset on created_at, id), newest first
+// ---------------------------------------------------------------------------
+export async function getXpHistory(
+  studentId: number,
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<Page<any>> {
+  const lim = clampLimit(opts.limit);
+  const dec = decodeCursor(opts.cursor);
+  const params: any[] = [studentId];
+  let cursorClause = '';
+  if (dec) {
+    cursorClause = 'AND (created_at < ? OR (created_at = ? AND id < ?))';
+    params.push(dec.sortValue, dec.sortValue, dec.id);
+  }
+  const [rows] = await pool.query<any[]>(
+    `SELECT id, assignment_id, event_type, difficulty, points, created_at
+       FROM xp_events
+      WHERE student_id = ? ${cursorClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?`,
+    [...params, lim + 1]
+  );
+  return buildPage(rows, lim, (r) => encodeCursor(r.created_at, r.id));
+}
+
+// ---------------------------------------------------------------------------
+// getAttemptLog — cursor-paginated audit trail for one assignment (oldest first)
+// ---------------------------------------------------------------------------
+export async function getAttemptLog(
+  assignmentId: number,
+  ownerId: number,
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<Page<any>> {
+  const lim = clampLimit(opts.limit);
+  const dec = decodeCursor(opts.cursor);
+  const params: any[] = [assignmentId, ownerId];
+  let cursorClause = '';
+  if (dec) {
+    cursorClause = 'AND (created_at > ? OR (created_at = ? AND id > ?))';
+    params.push(dec.sortValue, dec.sortValue, dec.id);
+  }
+  const [rows] = await pool.query<any[]>(
+    `SELECT id, event, detail, created_at
+       FROM attempt_logs
+      WHERE assignment_id = ? AND student_id = ? ${cursorClause}
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?`,
+    [...params, lim + 1]
+  );
+  return buildPage(rows, lim, (r) => encodeCursor(r.created_at, r.id));
+}
+
+// ---------------------------------------------------------------------------
+// getMissionBank — cursor-paginated listing of the mission bank (newest first)
+// ---------------------------------------------------------------------------
+export async function getMissionBank(
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<Page<any>> {
+  const lim = clampLimit(opts.limit);
+  const dec = decodeCursor(opts.cursor);
+  const params: any[] = [];
+  let cursorClause = '';
+  if (dec) {
+    cursorClause = 'WHERE (created_at < ? OR (created_at = ? AND id < ?))';
+    params.push(dec.sortValue, dec.sortValue, dec.id);
+  }
+  const [rows] = await pool.query<any[]>(
+    `SELECT id, title, subject, mission_type, difficulty, time_band, status, version, created_at
+       FROM missions
+       ${cursorClause}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?`,
+    [...params, lim + 1]
+  );
+  return buildPage(rows, lim, (r) => encodeCursor(r.created_at, r.id));
 }
 
 // ---------------------------------------------------------------------------
@@ -167,8 +248,53 @@ function median(nums: number[]): number | null {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
+/** Compute the quality row for one aggregated mission (attempts/passes/tagged). */
+async function missionQualityRow(m: any): Promise<MissionQualityRow> {
+  const attempts = Number(m.attempts);
+  const passes = Number(m.passes);
+  const passRate = attempts === 0 ? 0 : passes / attempts;
+  const observed = observedDifficulty(passRate);
+  const tagged = Number(m.tagged);
+
+  // Median perceived_difficulty from feedback (map single_select labels to an
+  // ordinal, take the median, map back to a label).
+  const [perceivedRows] = await pool.query<any[]>(
+    `SELECT fr.answer_value AS v
+       FROM feedback_responses fr
+       JOIN assignments a ON a.id = fr.assignment_id
+      WHERE a.mission_id = ? AND fr.question_key = 'perceived_difficulty'`,
+    [m.id]
+  );
+  const ordinalMap: Record<string, number> = { 'Too easy': 0, 'About right': 1, 'Too hard': 2 };
+  const ordinalLabels = ['Too easy', 'About right', 'Too hard'];
+  const ordinals = perceivedRows.map((r) => ordinalMap[String(r.v)]).filter((n) => n != null);
+  const medOrdinal = median(ordinals);
+  const medianPerceived = medOrdinal == null ? null : ordinalLabels[Math.round(medOrdinal)];
+
+  const [timeRows] = await pool.query<any[]>(
+    `SELECT time_to_submit_seconds AS t
+       FROM assignments
+      WHERE mission_id = ? AND status = 'graded' AND time_to_submit_seconds IS NOT NULL`,
+    [m.id]
+  );
+  const medTime = median(timeRows.map((r) => Number(r.t)));
+
+  return {
+    mission_id: Number(m.id),
+    title: m.title,
+    tagged_difficulty: tagged,
+    observed_difficulty: observed,
+    attempts,
+    passes,
+    pass_rate: Number(passRate.toFixed(3)),
+    median_perceived_difficulty: medianPerceived,
+    median_time_to_submit_seconds: medTime,
+    mismatch: Math.abs(observed - tagged) >= 2,
+  };
+}
+
+/** Array form — used for a single mission and by in-process callers. */
 export async function getMissionQuality(missionId?: number): Promise<MissionQualityRow[]> {
-  // Missions with at least MIN_ATTEMPTS graded attempts.
   const params: any[] = [];
   let missionFilter = '';
   if (missionId != null) {
@@ -187,53 +313,37 @@ export async function getMissionQuality(missionId?: number): Promise<MissionQual
       ORDER BY m.id`,
     [...params, MIN_ATTEMPTS]
   );
-
   const report: MissionQualityRow[] = [];
-  for (const m of missions) {
-    const attempts = Number(m.attempts);
-    const passes = Number(m.passes);
-    const passRate = attempts === 0 ? 0 : passes / attempts;
-    const observed = observedDifficulty(passRate);
-    const tagged = Number(m.tagged);
-
-    // Median perceived_difficulty from feedback (map the single_select labels to
-    // an ordinal, take the median, map back to a label).
-    const [perceivedRows] = await pool.query<any[]>(
-      `SELECT fr.answer_value AS v
-         FROM feedback_responses fr
-         JOIN assignments a ON a.id = fr.assignment_id
-        WHERE a.mission_id = ? AND fr.question_key = 'perceived_difficulty'`,
-      [m.id]
-    );
-    const ordinalMap: Record<string, number> = { 'Too easy': 0, 'About right': 1, 'Too hard': 2 };
-    const ordinalLabels = ['Too easy', 'About right', 'Too hard'];
-    const ordinals = perceivedRows
-      .map((r) => ordinalMap[String(r.v)])
-      .filter((n) => n != null);
-    const medOrdinal = median(ordinals);
-    const medianPerceived = medOrdinal == null ? null : ordinalLabels[Math.round(medOrdinal)];
-
-    // Median time_to_submit_seconds.
-    const [timeRows] = await pool.query<any[]>(
-      `SELECT time_to_submit_seconds AS t
-         FROM assignments
-        WHERE mission_id = ? AND status = 'graded' AND time_to_submit_seconds IS NOT NULL`,
-      [m.id]
-    );
-    const medTime = median(timeRows.map((r) => Number(r.t)));
-
-    report.push({
-      mission_id: Number(m.id),
-      title: m.title,
-      tagged_difficulty: tagged,
-      observed_difficulty: observed,
-      attempts,
-      passes,
-      pass_rate: Number(passRate.toFixed(3)),
-      median_perceived_difficulty: medianPerceived,
-      median_time_to_submit_seconds: medTime,
-      mismatch: Math.abs(observed - tagged) >= 2,
-    });
-  }
+  for (const m of missions) report.push(await missionQualityRow(m));
   return report;
+}
+
+/** Cursor-paginated form (keyset on mission id) for the SME list view. */
+export async function getMissionQualityPage(
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<Page<MissionQualityRow>> {
+  const lim = clampLimit(opts.limit);
+  const dec = decodeCursor(opts.cursor);
+  const params: any[] = [];
+  let cursorClause = '';
+  if (dec) {
+    cursorClause = 'AND m.id > ?';
+    params.push(dec.id);
+  }
+  const [missions] = await pool.query<any[]>(
+    `SELECT m.id, m.title, m.difficulty AS tagged,
+            COUNT(a.id) AS attempts,
+            SUM(a.score_band IN ('pass','pass_strong')) AS passes
+       FROM missions m
+       JOIN assignments a ON a.mission_id = m.id AND a.status = 'graded'
+      WHERE 1 = 1 ${cursorClause}
+      GROUP BY m.id, m.title, m.difficulty
+     HAVING attempts >= ?
+      ORDER BY m.id ASC
+      LIMIT ?`,
+    [...params, MIN_ATTEMPTS, lim + 1]
+  );
+  const rows: MissionQualityRow[] = [];
+  for (const m of missions) rows.push(await missionQualityRow(m));
+  return buildPage(rows, lim, (r) => encodeCursor(r.mission_id, r.mission_id));
 }

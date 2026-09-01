@@ -68,7 +68,8 @@
           status.textContent = 'Access denied — this report is for SME / QC / admin only. Log in as a staff user on the main page first.';
           return;
         }
-        rows = await res.json();
+        const data = await res.json();
+        rows = Array.isArray(data) ? data : data.items; // { items, nextCursor }
       } catch (e) {
         status.textContent = 'Failed to load report.';
         return;

@@ -84,6 +84,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:concurrency');
 
+  // Pagination (Item 9) — cursor-based list endpoints.
+  run('npm run db:seed');
+  run('npm run verify:pagination');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });

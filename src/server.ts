@@ -12,7 +12,16 @@ import { fillSlot } from './slotFiller.js';
 import { unlockNext } from './slotUnlock.js';
 import { awardXp } from './xp.js';
 import { getQuestions, submitFeedback, FeedbackError } from './feedback.js';
-import { getStudentProgress, getSubmissionLog, getMissionQuality, logAttempt } from './tracking.js';
+import {
+  getStudentProgress,
+  getSubmissionLog,
+  getXpHistory,
+  getAttemptLog,
+  getMissionBank,
+  getMissionQuality,
+  getMissionQualityPage,
+  logAttempt,
+} from './tracking.js';
 import { feedbackGatesUnlock, setFeedbackGatesUnlock } from './config.js';
 import {
   requireAuth,
@@ -453,26 +462,24 @@ app.post(
   }
 );
 
-/** GET /api/xp/:studentId — total and the last 20 events. Own data only. */
-app.get('/api/xp/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
-  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
-  if (studentId == null) return;
-  try {
-    const [[totalRow]] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [studentId]);
-    const [events] = await pool.query<any[]>(
-      `SELECT id, assignment_id, event_type, difficulty, points, created_at
-         FROM xp_events
-        WHERE student_id = ?
-        ORDER BY created_at DESC, id DESC
-        LIMIT 20`,
-      [studentId]
-    );
-    res.json({ total_xp: totalRow ? Number(totalRow.total_xp) : 0, events });
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load xp');
+/** GET /api/xp/:studentId — total + cursor-paginated event history. Own data only. */
+app.get(
+  '/api/xp/:studentId',
+  requireAuth,
+  validate({ params: studentIdParams, query: listQuery }),
+  async (req, res) => {
+    const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
+    if (studentId == null) return;
+    try {
+      const [[totalRow]] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [studentId]);
+      const page = await getXpHistory(studentId, { limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
+      res.json({ total_xp: totalRow ? Number(totalRow.total_xp) : 0, items: page.items, nextCursor: page.nextCursor });
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load xp');
+    }
   }
-});
+);
 
 /** GET /api/segment/:studentId — the student's segment and placement reason. */
 app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
@@ -644,9 +651,7 @@ app.get(
     const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
     if (studentId == null) return;
     try {
-      const limit = req.valid!.query.limit ?? 20;
-      const offset = req.valid!.query.offset ?? 0;
-      const log = await getSubmissionLog(studentId, limit, offset);
+      const log = await getSubmissionLog(studentId, { limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json(log);
     } catch (err) {
       rlog(req).error({ err }, 'request failed');
@@ -660,13 +665,31 @@ app.get(
   '/api/mission-quality',
   requireAuth,
   requireRole('sme', 'qc', 'admin'),
+  validate({ query: listQuery }),
   async (req, res) => {
     try {
-      const report = await getMissionQuality();
-      res.json(report);
+      const page = await getMissionQualityPage({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
+      res.json(page);
     } catch (err) {
       rlog(req).error({ err }, 'request failed');
       sendError(req, res, 500, 'internal_error', 'failed to build mission-quality report');
+    }
+  }
+);
+
+/** GET /api/missions — cursor-paginated mission-bank listing. SME/QC/admin only. */
+app.get(
+  '/api/missions',
+  requireAuth,
+  requireRole('sme', 'qc', 'admin'),
+  validate({ query: listQuery }),
+  async (req, res) => {
+    try {
+      const page = await getMissionBank({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
+      res.json(page);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to list missions');
     }
   }
 );
@@ -695,32 +718,29 @@ app.get(
  * up by assignment id (the resource key), and a mismatch is a 403 (not an empty
  * 200); the attempt query is then keyed to that authorised student id.
  */
-app.get('/api/attempts/:assignmentId', requireAuth, validate({ params: assignmentIdParams }), async (req, res) => {
-  const assignmentId = req.valid!.params.assignmentId;
-  try {
-    const [[asg]] = await pool.query<any[]>(
-      `SELECT student_id FROM assignments WHERE id = ?`,
-      [assignmentId]
-    );
-    if (!asg) return sendError(req, res, 404, 'not_found', 'assignment not found');
-    if (req.auth!.role === 'student' && Number(asg.student_id) !== req.auth!.userId) {
-      return sendError(req, res, 403, 'forbidden', "cannot access another user's data");
+app.get(
+  '/api/attempts/:assignmentId',
+  requireAuth,
+  validate({ params: assignmentIdParams, query: listQuery }),
+  async (req, res) => {
+    const assignmentId = req.valid!.params.assignmentId;
+    try {
+      const [[asg]] = await pool.query<any[]>(`SELECT student_id FROM assignments WHERE id = ?`, [assignmentId]);
+      if (!asg) return sendError(req, res, 404, 'not_found', 'assignment not found');
+      if (req.auth!.role === 'student' && Number(asg.student_id) !== req.auth!.userId) {
+        return sendError(req, res, 403, 'forbidden', "cannot access another user's data");
+      }
+      const page = await getAttemptLog(assignmentId, Number(asg.student_id), {
+        limit: req.valid!.query.limit,
+        cursor: req.valid!.query.cursor,
+      });
+      res.json(page);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load attempt log');
     }
-    const ownerId = Number(asg.student_id);
-
-    const [rows] = await pool.query<any[]>(
-      `SELECT id, event, detail, created_at
-         FROM attempt_logs
-        WHERE assignment_id = ? AND student_id = ?
-        ORDER BY created_at ASC, id ASC`,
-      [assignmentId, ownerId]
-    );
-    res.json(rows);
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load attempt log');
   }
-});
+);
 
 /** GET /quality — the internal SME mission-quality view (HTML shell). The
  *  sensitive data it renders comes from /api/mission-quality, which is

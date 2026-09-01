@@ -185,7 +185,7 @@ console.log('\n[Criterion 7] total_xp equals the sum of xp_events');
   const [[{ sum }]] = await db.query(`SELECT COALESCE(SUM(points),0) sum FROM xp_events WHERE student_id=1`);
   check('total_xp == SUM(xp_events.points)', Number(total) === Number(sum), `(total=${total}, sum=${sum})`);
   const xp = await j('/api/xp/1');
-  check('xp endpoint returns events + total', xp.total_xp === Number(total) && Array.isArray(xp.events));
+  check('xp endpoint returns items + total (paginated)', xp.total_xp === Number(total) && Array.isArray(xp.items) && 'nextCursor' in xp);
   // attempt+submit+correct all present
   const [types] = await db.query(`SELECT DISTINCT event_type FROM xp_events WHERE student_id=1`);
   const set = new Set(types.map((t) => t.event_type));

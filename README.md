@@ -271,6 +271,7 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | POST | `/api/feedback/:assignmentId` | submit answers; returns XP; releases the gated next slot |
 | GET  | `/api/progress/:studentId` | student progress panel (own data only) |
 | GET  | `/api/submissions/:studentId` | paginated submission log (own data only) |
+| GET  | `/api/missions` | mission-bank listing (SME/QC/admin), cursor-paginated |
 | GET  | `/api/mission-quality` | SME report across all qualifying missions |
 | GET  | `/api/mission-quality/:missionId` | single mission detail |
 | GET  | `/api/attempts/:assignmentId` | attempt-log audit trail for one assignment |
@@ -279,6 +280,12 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 A student may only read their **own** progress and submissions: the caller
 identity comes from an `X-Student-Id` header (the LTI launch token later), and a
 mismatch with the path student is refused with `403`.
+
+**Pagination (Item 9).** Every list endpoint (submissions, XP history, attempt
+log, mission bank, mission-quality) is **cursor-paginated**, keyed on
+`(created_at, id)` — not offset, which shifts as rows are inserted. Response
+shape is `{ items: [...], nextCursor: string | null }`; pass `?cursor=` back (with
+optional `?limit=`, max 100) to fetch the next page.
 
 ## Safety guarantees
 
