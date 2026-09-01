@@ -26,6 +26,8 @@ review_*.xlsx
 backup.sql
 *.dump.sql
 pipeline/fixtures/*.sql
+backups/
+*.sql.gz
 
 # --- Server run logs (regenerable) ---
 logs-server.txt
