@@ -19,8 +19,15 @@ function check(name, cond, detail = '') {
 const LETTERS = ['a', 'b', 'c', 'd'];
 const wrong = (c) => LETTERS.find((x) => x !== c);
 
-async function j(path, opts) {
-  const r = await fetch(BASE + path, opts);
+// Dev auth: every request acts as the student in `ACTING` (X-User-Id header).
+// Most of this harness drives demo student 1; the throwaway-student blocks set
+// ACTING to their own id before driving the API.
+let ACTING = 1;
+async function j(path, opts = {}) {
+  const r = await fetch(BASE + path, {
+    ...opts,
+    headers: { 'X-User-Id': String(ACTING), ...(opts.headers || {}) },
+  });
   return r.json();
 }
 
@@ -189,6 +196,7 @@ console.log('\n[Criterion 9 & 10 & 11] stall -> one assistance; wrong never demo
 {
   // Fresh student, Foundation (max 4, start 0). Drive 3 wrongs at level 0.
   const s = await newStudent('T-stall', 13, 'Computer Science', []);
+  ACTING = s; // drive the API as this student
   await assignSegment(s); // Foundation
   await applyColdStart(s);
   await publishWeek(s, '2026-09-14');
@@ -233,6 +241,7 @@ console.log('\n[Criterion 13] relaxation order followed + logged when no exact m
   // match nothing so relaxation kicks in. We give a student a slot needing a
   // difficulty with no exact mission by exhausting via direct check on logs.
   const s = await newStudent('T-relax', 15, 'Computer Science', ['CS-101']); // Intermediate
+  ACTING = s; // drive the API as this student
   await assignSegment(s);
   await applyColdStart(s); // level 1
   // Assign every SHORT level-1 mission so the slot-1 (short, offset 0 -> level 1)

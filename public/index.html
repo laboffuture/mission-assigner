@@ -117,9 +117,17 @@
     let openAssignmentId = null;
     let feedbackQuestions = null; // cached from the API — never hardcoded here
 
-    async function api(path, opts) {
-      const res = await fetch(path, opts);
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    // Dev auth: the selected user's id is sent as X-User-Id on every request.
+    function authHeaders() {
+      return currentStudentId != null ? { 'X-User-Id': String(currentStudentId) } : {};
+    }
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg = body && body.error && typeof body.error === 'object' ? body.error.message : body.error;
+        throw new Error(msg || res.statusText);
+      }
       return res.json();
     }
     const post = (path, body) => api(path, {
@@ -137,36 +145,28 @@
       const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
     }
 
-    async function loadStudents() {
-      const students = await api('/api/students');
+    // Dev login roster (AUTH_MODE=dev only). Picking a user sets the identity
+    // (X-User-Id) sent on every request — the demo stand-in for a login / LTI
+    // launch token. Staff users are tagged with their role.
+    async function loadUsers() {
+      const users = await (await fetch('/api/dev/users')).json();
       const sel = $('student');
       sel.innerHTML = '';
-      for (const s of students) {
+      for (const u of users) {
         const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.display_name;
-        opt.dataset.level = s.current_level;
-        opt.dataset.xp = s.total_xp ?? 0;
+        opt.value = u.id;
+        opt.textContent = u.display_name + (u.role !== 'student' ? ` [${u.role}]` : '');
         sel.appendChild(opt);
       }
       currentStudentId = Number(sel.value);
-    }
-    function selectedOpt() {
-      const sel = $('student');
-      return sel.options[sel.selectedIndex];
+      localStorage.setItem('devUserId', String(currentStudentId));
     }
 
     async function refreshHeader() {
-      const students = await api('/api/students');
-      const s = students.find((x) => Number(x.id) === currentStudentId);
-      if (s) {
-        selectedOpt().dataset.level = s.current_level;
-        selectedOpt().dataset.xp = s.total_xp ?? 0;
-      }
-      $('levelBadge').textContent = `Level ${selectedOpt().dataset.level}`;
-      $('xpCounter').textContent = selectedOpt().dataset.xp;
-      const seg = await api('/api/segment/' + currentStudentId);
-      $('segName').textContent = seg.segment ? seg.segment.name : 'Unassigned';
+      const p = await api('/api/progress/' + currentStudentId);
+      $('levelBadge').textContent = `Level ${p.current_level}`;
+      $('xpCounter').textContent = p.total_xp;
+      $('segName').textContent = p.segment_name || 'Unassigned';
     }
 
     async function loadProgress() {
@@ -381,6 +381,7 @@
 
     $('student').addEventListener('change', async () => {
       currentStudentId = Number($('student').value);
+      localStorage.setItem('devUserId', String(currentStudentId));
       await refreshHeader();
       await loadProgress();
       await loadWeek();
@@ -389,7 +390,7 @@
     });
 
     (async () => {
-      await loadStudents();
+      await loadUsers();
       await refreshHeader();
       await loadProgress();
       await loadWeek();

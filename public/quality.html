@@ -58,14 +58,21 @@
       const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
     }
     (async () => {
+      const status = document.getElementById('status');
+      // Identity comes from whoever is logged in on the main page (dev mode).
+      const uid = localStorage.getItem('devUserId');
       let rows;
       try {
-        rows = await (await fetch('/api/mission-quality')).json();
+        const res = await fetch('/api/mission-quality', { headers: uid ? { 'X-User-Id': uid } : {} });
+        if (res.status === 401 || res.status === 403) {
+          status.textContent = 'Access denied — this report is for SME / QC / admin only. Log in as a staff user on the main page first.';
+          return;
+        }
+        rows = await res.json();
       } catch (e) {
-        document.getElementById('status').textContent = 'Failed to load report.';
+        status.textContent = 'Failed to load report.';
         return;
       }
-      const status = document.getElementById('status');
       if (!Array.isArray(rows) || rows.length === 0) {
         status.textContent = 'No missions yet have 5+ graded attempts. Complete more missions to populate this report.';
         return;

@@ -29,8 +29,13 @@ function check(name, cond, detail = '') {
 const LETTERS = ['a', 'b', 'c', 'd'];
 const wrong = (c) => LETTERS.find((x) => x !== c);
 
-async function j(path, opts) { return (await fetch(BASE + path, opts)).json(); }
-async function status(path, opts) { return (await fetch(BASE + path, opts)).status; }
+// Dev auth: default to acting as demo student 1; C14 overrides via headers.
+async function j(path, opts = {}) {
+  return (await fetch(BASE + path, { ...opts, headers: { 'X-User-Id': '1', ...(opts.headers || {}) } })).json();
+}
+async function status(path, opts = {}) {
+  return (await fetch(BASE + path, { ...opts, headers: { 'X-User-Id': '1', ...(opts.headers || {}) } })).status;
+}
 
 // This harness sets feedback gating to TRUE for its own run: in-process (via the
 // config setter, which governs the unlockNext calls below) and on the server

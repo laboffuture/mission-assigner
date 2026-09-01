@@ -48,10 +48,11 @@ npm install
 ### 4. Create schema, apply the Stage 3 migration, and seed
 
 ```bash
-npm run db:schema    # base tables (Stage 1)
-npm run db:migrate   # ADDITIVE Stage 3 migration: new tables + students columns
-npm run db:migrate5  # ADDITIVE Stage 5 migration: feedback/tracking tables + assignments columns
-npm run db:seed      # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students
+npm run db:schema      # base tables (Stage 1)
+npm run db:migrate     # ADDITIVE Stage 3 migration: new tables + students columns
+npm run db:migrate5    # ADDITIVE Stage 5 migration: feedback/tracking tables + assignments columns
+npm run db:migrate:auth # ADDITIVE auth migration: students.role
+npm run db:seed        # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students + 4 staff
 ```
 
 `db:migrate` and `db:migrate5` are additive and idempotent — they only ever add
@@ -73,8 +74,34 @@ XP is in the header, and the student's segment is shown.
 | env var | meaning |
 |---------|---------|
 | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME`/`PORT` | connection + server port |
+| `AUTH_MODE` | `dev` (header identity, insecure) or `lti` (launch token, stub) — see Authentication |
 | `COLD_START_STRATEGY` | how a brand-new student is placed — see below |
 | `FEEDBACK_GATES_UNLOCK` | whether feedback is required before the next slot unlocks — see below |
+
+## Authentication & authorisation (Item 1)
+
+Identity is resolved by a pluggable provider (`src/auth.ts`) selected by
+`AUTH_MODE`:
+
+- **`dev`** (default) — `DevAuthProvider` reads an **`X-User-Id`** header
+  (`X-Student-Id` accepted as an alias) and loads the user's role/subject from
+  the DB. This trusts a client-set header and is **INSECURE**; the server logs a
+  loud warning at boot. The dev login roster (`GET /api/dev/users`) exists only
+  in this mode and is the one unauthenticated API route (logging in is
+  inherently pre-auth). The UI's dropdown is that login.
+- **`lti`** — `LtiAuthProvider` will read the LTI 1.3 launch token. It is a
+  **stub** that throws until we have LTI access, so selecting it fails loudly
+  rather than allowing access.
+
+**Roles** live on `students.role`: `student`, `sme`, `qc`, `instructor`,
+`admin`. `requireAuth` populates `req.auth`; `requireRole(...)` gates endpoints.
+Every `/api` route requires authentication (401 otherwise). **Ownership** is
+enforced with the authenticated id in the SQL `WHERE` clause: a student may only
+read their own progress/submissions/XP/attempts/etc. (a cross-student read is a
+**403**, never an empty 200). Student actions (open/submit/feedback) are
+`student`-only. The **mission-quality** report (`/api/mission-quality*`, the data
+behind `/quality`) is **SME/QC/admin only**; `/api/students` (the full roster) is
+staff-only.
 
 ### `COLD_START_STRATEGY`
 
@@ -117,7 +144,8 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | `npm run verify` | Stage 1 acceptance harness |
 | `npm run verify:stage3` | Stage 3 acceptance harness (14 criteria) |
 | `npm run verify:stage5` | Stage 5 acceptance harness (17 criteria) |
-| `npm run verify:all` | run **all four** suites (Stage 1 + 2 + 3 + 5) in one pass |
+| `npm run verify:auth` | auth acceptance harness (role + ownership) |
+| `npm run verify:all` | run **all** suites (Stage 1 + 2 + 3 + 5 + Auth) in one pass |
 
 > **Feedback gating is injectable per test.** `FEEDBACK_GATES_UNLOCK` is read
 > through `src/config.ts::feedbackGatesUnlock()` (never at import time) and backed

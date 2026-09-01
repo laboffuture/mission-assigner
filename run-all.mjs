@@ -59,6 +59,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:stage5');
 
+  // Auth (Item 1) — role/ownership enforcement.
+  run('npm run db:seed');
+  run('npm run verify:auth');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
@@ -69,7 +73,7 @@ try {
   // Leave the demo DB pristine.
   run('npm run db:seed');
 
-  console.log('\n\x1b[32m==== ALL SUITES PASSED (Stage 1 + Stage 2 + Stage 3 + Stage 5) ====\x1b[0m');
+  console.log('\n\x1b[32m==== ALL SUITES PASSED (Stage 1 + Stage 2 + Stage 3 + Stage 5 + Auth) ====\x1b[0m');
 } catch (err) {
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);

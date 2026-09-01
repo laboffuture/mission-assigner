@@ -11,44 +11,46 @@ import { awardXp } from './xp.js';
 import { getQuestions, submitFeedback, FeedbackError } from './feedback.js';
 import { getStudentProgress, getSubmissionLog, getMissionQuality, logAttempt } from './tracking.js';
 import { feedbackGatesUnlock, setFeedbackGatesUnlock } from './config.js';
+import {
+  requireAuth,
+  requireRole,
+  resolveOwnedStudent,
+  warnIfInsecureAuth,
+  getAuthProvider,
+  STAFF_ROLES,
+} from './auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-
-/**
- * Resolve the CALLING student's identity. For now it comes from an
- * `X-Student-Id` header (the demo dropdown can send it; when LTI lands it comes
- * from the launch token). If the header is present and does not match the path
- * student, we refuse — a student may only read their own data. If no header is
- * present we trust the path (single-user demo convenience).
- *
- * Returns the caller id, or null if it already sent a 4xx response.
- */
-function enforceSelf(req: express.Request, res: express.Response, pathId: number): number | null {
-  const hdr = req.header('x-student-id');
-  if (hdr != null && hdr !== '') {
-    const caller = Number(hdr);
-    if (!Number.isFinite(caller)) {
-      res.status(400).json({ error: 'invalid x-student-id' });
-      return null;
-    }
-    if (caller !== pathId) {
-      res.status(403).json({ error: "forbidden: cannot access another student's data" });
-      return null;
-    }
-    return caller;
-  }
-  return pathId;
-}
 
 const app = express();
 app.use(express.json());
 app.use(express.static(join(__dirname, '..', 'public')));
 
-/** GET /api/students */
-app.get('/api/students', async (_req, res) => {
+// ---------------------------------------------------------------------------
+// Dev-only login roster. Logging in is inherently pre-auth (you can't pick who
+// to be if you must already be authenticated), so this is the ONLY unauthed API
+// route and it exists ONLY when AUTH_MODE=dev. In LTI mode identity comes from
+// the launch token and this route is not registered.
+// ---------------------------------------------------------------------------
+if (getAuthProvider().mode === 'dev') {
+  app.get('/api/dev/users', async (_req, res) => {
+    try {
+      const [rows] = await pool.query<any[]>(
+        `SELECT id, display_name, role FROM students ORDER BY FIELD(role,'student') DESC, id`
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'failed to load users' });
+    }
+  });
+}
+
+/** GET /api/students — staff roster (list every user). Never students. */
+app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (_req, res) => {
   try {
     const [rows] = await pool.query<any[]>(
-      `SELECT id, display_name, current_level, consecutive_wrong, total_xp, segment_id
+      `SELECT id, display_name, role, current_level, consecutive_wrong, total_xp, segment_id
          FROM students
         ORDER BY id`
     );
@@ -61,12 +63,13 @@ app.get('/api/students', async (_req, res) => {
 
 /**
  * GET /api/current/:studentId  (Stage 1 free-play — unchanged behaviour)
+ * Student-only, own data.
  */
-app.get('/api/current/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) {
-    return res.status(400).json({ error: 'invalid studentId' });
-  }
+app.get('/api/current/:studentId', requireAuth, requireRole('student'), async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const [openRows] = await pool.query<any[]>(
       `SELECT id AS assignment_id, mission_id
@@ -104,11 +107,14 @@ app.get('/api/current/:studentId', async (req, res) => {
  * SECURITY: mission content (body/options) is fetched ONLY for slots whose
  * status is not 'locked'. Locked slots return metadata only. This is enforced
  * in the SQL below (the content query filters `status <> 'locked'`), never in
- * the UI, so a crafted client cannot read locked questions.
+ * the UI, so a crafted client cannot read locked questions. Ownership: the
+ * week query is keyed to the authenticated student id.
  */
-app.get('/api/week/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+app.get('/api/week/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const [weekRows] = await pool.query<any[]>(
       `SELECT id, template_id, week_start, status
@@ -202,11 +208,11 @@ app.get('/api/week/:studentId', async (req, res) => {
 
 /**
  * POST /api/slot/:slotId/open — the student opens a slot to view its mission.
- * Fills the slot lazily if needed (slot 1 / weekly slots are opened at publish
- * but filled on first view), awards 'attempt' XP once per assignment, and
- * returns the mission. Refuses locked slots.
+ * Student-only. The slot must belong to the authenticated student (checked
+ * against the loaded slot's owner, since the slot is keyed by slot id, not
+ * student id).
  */
-app.post('/api/slot/:slotId/open', async (req, res) => {
+app.post('/api/slot/:slotId/open', requireAuth, requireRole('student'), async (req, res) => {
   const slotId = Number(req.params.slotId);
   if (!Number.isFinite(slotId)) return res.status(400).json({ error: 'invalid slotId' });
   try {
@@ -219,6 +225,11 @@ app.post('/api/slot/:slotId/open', async (req, res) => {
     );
     if (slotRows.length === 0) return res.status(404).json({ error: 'slot not found' });
     const slot = slotRows[0];
+
+    // Ownership: a student may only open their own slot.
+    if (Number(slot.student_id) !== req.auth!.userId) {
+      return res.status(403).json({ error: { code: 'forbidden', message: 'not your slot' } });
+    }
 
     if (slot.status === 'locked') {
       return res.status(403).json({ error: 'slot is locked' });
@@ -252,10 +263,10 @@ app.post('/api/slot/:slotId/open', async (req, res) => {
     );
 
     // Award 'attempt' XP — once per assignment (guarded inside awardXp).
-    const xp = await awardXp(Number(slot.student_id), assignmentId, 'attempt', difficulty);
+    const xp = await awardXp(req.auth!.userId, assignmentId, 'attempt', difficulty);
 
     // Audit: the student viewed the mission.
-    await logAttempt(assignmentId, Number(slot.student_id), 'viewed', { slotId });
+    await logAttempt(assignmentId, req.auth!.userId, 'viewed', { slotId });
 
     const mission = await loadMissionContent(missionId);
     res.json({ assignment_id: assignmentId, ...mission, xp });
@@ -267,15 +278,25 @@ app.post('/api/slot/:slotId/open', async (req, res) => {
 
 /**
  * POST /api/submit  body { assignmentId, selected }
- * Grades (Stage 1), awards 'submit' + (if correct) 'correct' XP, and unlocks the
- * next slot when the assignment belongs to a week.
+ * Student-only. The assignment must belong to the authenticated student — the
+ * ownership check is a query keyed to the authenticated id, so a student can
+ * never submit against another student's assignment.
  */
-app.post('/api/submit', async (req, res) => {
+app.post('/api/submit', requireAuth, requireRole('student'), async (req, res) => {
   const { assignmentId, selected } = req.body ?? {};
   if (!Number.isFinite(Number(assignmentId)) || typeof selected !== 'string') {
     return res.status(400).json({ error: 'assignmentId and selected are required' });
   }
   try {
+    // Ownership enforced in SQL: no row unless this assignment is the caller's.
+    const [own] = await pool.query<any[]>(
+      `SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`,
+      [Number(assignmentId), req.auth!.userId]
+    );
+    if (own.length === 0) {
+      return res.status(403).json({ error: { code: 'forbidden', message: 'not your assignment' } });
+    }
+
     const result = await submitAndGrade(Number(assignmentId), selected);
 
     // XP: submit always; correct only if correct, scaled by difficulty.
@@ -315,10 +336,12 @@ app.post('/api/submit', async (req, res) => {
   }
 });
 
-/** GET /api/xp/:studentId — total and the last 20 events. */
-app.get('/api/xp/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+/** GET /api/xp/:studentId — total and the last 20 events. Own data only. */
+app.get('/api/xp/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const [[totalRow]] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [studentId]);
     const [events] = await pool.query<any[]>(
@@ -337,9 +360,11 @@ app.get('/api/xp/:studentId', async (req, res) => {
 });
 
 /** GET /api/segment/:studentId — the student's segment and placement reason. */
-app.get('/api/segment/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+app.get('/api/segment/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const [rows] = await pool.query<any[]>(
       `SELECT s.id AS student_id, s.age, s.subject, s.current_level, s.placement_status,
@@ -394,8 +419,8 @@ app.get('/api/segment/:studentId', async (req, res) => {
   }
 });
 
-/** GET /api/assistance — open assistance events (future instructor view). */
-app.get('/api/assistance', async (_req, res) => {
+/** GET /api/assistance — open assistance events (instructor/admin view). */
+app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme', 'qc'), async (_req, res) => {
   try {
     const [rows] = await pool.query<any[]>(
       `SELECT ae.id, ae.student_id, s.display_name, ae.trigger_reason,
@@ -412,10 +437,12 @@ app.get('/api/assistance', async (_req, res) => {
   }
 });
 
-/** GET /api/history/:studentId — last 5 level events, newest first. */
-app.get('/api/history/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
+/** GET /api/history/:studentId — last 5 level events, newest first. Own data only. */
+app.get('/api/history/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const [rows] = await pool.query<any[]>(
       `SELECT from_level, to_level, reason, created_at
@@ -436,8 +463,8 @@ app.get('/api/history/:studentId', async (req, res) => {
 // Stage 5 — feedback + tracking
 // ===========================================================================
 
-/** GET /api/feedback/questions — active questions, ordered. Rendered by the UI. */
-app.get('/api/feedback/questions', async (_req, res) => {
+/** GET /api/feedback/questions — active questions, ordered. Any authenticated user. */
+app.get('/api/feedback/questions', requireAuth, async (_req, res) => {
   try {
     const questions = await getQuestions();
     res.json(questions);
@@ -449,23 +476,15 @@ app.get('/api/feedback/questions', async (_req, res) => {
 
 /**
  * POST /api/feedback/:assignmentId  body { answers: [{ question_key, value }] }
- * Submits the student's feedback, awards feedback XP once, and — when feedback
- * gates unlocking — releases the next slot.
+ * Student-only. Identity is the authenticated user; submitFeedback re-checks
+ * that the assignment belongs to them.
  */
-app.post('/api/feedback/:assignmentId', async (req, res) => {
+app.post('/api/feedback/:assignmentId', requireAuth, requireRole('student'), async (req, res) => {
   const assignmentId = Number(req.params.assignmentId);
   if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
   const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
   try {
-    // Caller identity: header when present, else derive from the assignment
-    // (single-user demo). submitFeedback re-checks ownership regardless.
-    let studentId = Number(req.header('x-student-id'));
-    if (!Number.isFinite(studentId)) {
-      const [[row]] = await pool.query<any[]>(`SELECT student_id FROM assignments WHERE id = ?`, [assignmentId]);
-      if (!row) return res.status(404).json({ error: 'assignment not found' });
-      studentId = Number(row.student_id);
-    }
-
+    const studentId = req.auth!.userId;
     const result = await submitFeedback(assignmentId, studentId, answers);
 
     // Release the gated next slot only on the FIRST completion, and only when
@@ -487,13 +506,13 @@ app.post('/api/feedback/:assignmentId', async (req, res) => {
 });
 
 /** GET /api/progress/:studentId — the student's own progress panel. */
-app.get('/api/progress/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
-  const caller = enforceSelf(req, res, studentId);
-  if (caller == null) return; // already responded 4xx
+app.get('/api/progress/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
-    const progress = await getStudentProgress(caller);
+    const progress = await getStudentProgress(studentId);
     if (!progress) return res.status(404).json({ error: 'student not found' });
     res.json(progress);
   } catch (err) {
@@ -502,16 +521,16 @@ app.get('/api/progress/:studentId', async (req, res) => {
   }
 });
 
-/** GET /api/submissions/:studentId?limit=&offset= — paginated submission log. */
-app.get('/api/submissions/:studentId', async (req, res) => {
-  const studentId = Number(req.params.studentId);
-  if (!Number.isFinite(studentId)) return res.status(400).json({ error: 'invalid studentId' });
-  const caller = enforceSelf(req, res, studentId);
-  if (caller == null) return;
+/** GET /api/submissions/:studentId?limit=&offset= — paginated submission log. Own data only. */
+app.get('/api/submissions/:studentId', requireAuth, async (req, res) => {
+  const pathId = Number(req.params.studentId);
+  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
+  const studentId = resolveOwnedStudent(req, res, pathId);
+  if (studentId == null) return;
   try {
     const limit = req.query.limit != null ? Number(req.query.limit) : 20;
     const offset = req.query.offset != null ? Number(req.query.offset) : 0;
-    const log = await getSubmissionLog(caller, limit, offset);
+    const log = await getSubmissionLog(studentId, limit, offset);
     res.json(log);
   } catch (err) {
     console.error(err);
@@ -519,8 +538,8 @@ app.get('/api/submissions/:studentId', async (req, res) => {
   }
 });
 
-/** GET /api/mission-quality — SME report across all qualifying missions. */
-app.get('/api/mission-quality', async (_req, res) => {
+/** GET /api/mission-quality — SME report. SME/QC/admin only. */
+app.get('/api/mission-quality', requireAuth, requireRole('sme', 'qc', 'admin'), async (_req, res) => {
   try {
     const report = await getMissionQuality();
     res.json(report);
@@ -530,8 +549,8 @@ app.get('/api/mission-quality', async (_req, res) => {
   }
 });
 
-/** GET /api/mission-quality/:missionId — single mission detail. */
-app.get('/api/mission-quality/:missionId', async (req, res) => {
+/** GET /api/mission-quality/:missionId — single mission detail. SME/QC/admin only. */
+app.get('/api/mission-quality/:missionId', requireAuth, requireRole('sme', 'qc', 'admin'), async (req, res) => {
   const missionId = Number(req.params.missionId);
   if (!Number.isFinite(missionId)) return res.status(400).json({ error: 'invalid missionId' });
   try {
@@ -543,17 +562,32 @@ app.get('/api/mission-quality/:missionId', async (req, res) => {
   }
 });
 
-/** GET /api/attempts/:assignmentId — the audit trail for one assignment. */
-app.get('/api/attempts/:assignmentId', async (req, res) => {
+/**
+ * GET /api/attempts/:assignmentId — the audit trail for one assignment.
+ * A student may only read attempts for their OWN assignment. The owner is looked
+ * up by assignment id (the resource key), and a mismatch is a 403 (not an empty
+ * 200); the attempt query is then keyed to that authorised student id.
+ */
+app.get('/api/attempts/:assignmentId', requireAuth, async (req, res) => {
   const assignmentId = Number(req.params.assignmentId);
   if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
   try {
+    const [[asg]] = await pool.query<any[]>(
+      `SELECT student_id FROM assignments WHERE id = ?`,
+      [assignmentId]
+    );
+    if (!asg) return res.status(404).json({ error: 'assignment not found' });
+    if (req.auth!.role === 'student' && Number(asg.student_id) !== req.auth!.userId) {
+      return res.status(403).json({ error: { code: 'forbidden', message: "cannot access another user's data" } });
+    }
+    const ownerId = Number(asg.student_id);
+
     const [rows] = await pool.query<any[]>(
       `SELECT id, event, detail, created_at
          FROM attempt_logs
-        WHERE assignment_id = ?
+        WHERE assignment_id = ? AND student_id = ?
         ORDER BY created_at ASC, id ASC`,
-      [assignmentId]
+      [assignmentId, ownerId]
     );
     res.json(rows);
   } catch (err) {
@@ -562,7 +596,9 @@ app.get('/api/attempts/:assignmentId', async (req, res) => {
   }
 });
 
-/** GET /quality — the internal SME mission-quality view (not for students). */
+/** GET /quality — the internal SME mission-quality view (HTML shell). The
+ *  sensitive data it renders comes from /api/mission-quality, which is
+ *  SME/QC/admin only; the shell itself carries nothing secret. */
 app.get('/quality', (_req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'quality.html'));
 });
@@ -608,4 +644,5 @@ async function loadMissionContent(missionId: number) {
 const PORT = Number(process.env.PORT) || 3000;
 app.listen(PORT, () => {
   console.log(`Mission demo listening on http://localhost:${PORT}`);
+  warnIfInsecureAuth();
 });

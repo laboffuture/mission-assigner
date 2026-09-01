@@ -220,8 +220,8 @@ async function main() {
       const [res] = await conn.query<any>(
         `INSERT INTO students
            (moodle_user_id, display_name, age, subject, current_level, consecutive_wrong,
-            total_xp, placement_status, stall_count)
-         VALUES (NULL, ?, ?, ?, ?, 0, 0, 'complete', 0)`,
+            total_xp, placement_status, stall_count, role)
+         VALUES (NULL, ?, ?, ?, ?, 0, 0, 'complete', 0, 'student')`,
         [s.name, s.age, SUBJECT, s.level]
       );
       const studentId = res.insertId as number;
@@ -237,6 +237,25 @@ async function main() {
       }
     }
 
+    // ---- Staff users (Item 1: one per non-student role) ------------------
+    // These live in the users (students) table with a non-student role. They
+    // have no missions/weeks; they exist so role-gated endpoints can be exercised.
+    const staff: Array<{ name: string; role: string }> = [
+      { name: 'SME User', role: 'sme' },
+      { name: 'QC User', role: 'qc' },
+      { name: 'Instructor User', role: 'instructor' },
+      { name: 'Admin User', role: 'admin' },
+    ];
+    for (const st of staff) {
+      await conn.query<any>(
+        `INSERT INTO students
+           (moodle_user_id, display_name, age, subject, current_level, consecutive_wrong,
+            total_xp, placement_status, stall_count, role)
+         VALUES (NULL, ?, 30, ?, 0, 0, 0, 'complete', 0, ?)`,
+        [st.name, SUBJECT, st.role]
+      );
+    }
+
     console.log('Base seed complete:');
     console.log(`  missions:        ${missionCount}`);
     console.log(`  mission_options: ${optionCount}`);
@@ -245,6 +264,7 @@ async function main() {
     console.log(`  xp_rules:        ${xpRules.length}`);
     console.log(`  feedback_qs:     ${feedbackQuestions.length} (PLACEHOLDERS)`);
     console.log(`  students:        ${students.length}`);
+    console.log(`  staff users:     ${staff.length} (sme, qc, instructor, admin)`);
 
     conn.release();
 
