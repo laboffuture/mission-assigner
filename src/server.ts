@@ -22,6 +22,17 @@ import {
   getAuthProvider,
   STAFF_ROLES,
 } from './auth.js';
+import { validate } from './validate.js';
+import { sendError } from './httpError.js';
+import {
+  studentIdParams,
+  slotIdParams,
+  missionIdParams,
+  assignmentIdParams,
+  submitBody,
+  feedbackBody,
+  listQuery,
+} from './schemas.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -68,7 +79,7 @@ if (getAuthProvider().mode === 'dev') {
       res.json(rows);
     } catch (err) {
       rlog(req).error({ err }, 'request failed');
-      res.status(500).json({ error: 'failed to load users' });
+      sendError(req, res, 500, 'internal_error', 'failed to load users');
     }
   });
 }
@@ -84,7 +95,7 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, r
     res.json(rows);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load students' });
+    sendError(req, res, 500, 'internal_error', 'failed to load students');
   }
 });
 
@@ -92,41 +103,45 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, r
  * GET /api/current/:studentId  (Stage 1 free-play — unchanged behaviour)
  * Student-only, own data.
  */
-app.get('/api/current/:studentId', requireAuth, requireRole('student'), async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
-  if (studentId == null) return;
-  try {
-    const [openRows] = await pool.query<any[]>(
-      `SELECT id AS assignment_id, mission_id
-         FROM assignments
-        WHERE student_id = ? AND status = 'open'
-        ORDER BY assigned_at ASC
-        LIMIT 1`,
-      [studentId]
-    );
+app.get(
+  '/api/current/:studentId',
+  requireAuth,
+  requireRole('student'),
+  validate({ params: studentIdParams }),
+  async (req, res) => {
+    const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
+    if (studentId == null) return;
+    try {
+      const [openRows] = await pool.query<any[]>(
+        `SELECT id AS assignment_id, mission_id
+           FROM assignments
+          WHERE student_id = ? AND status = 'open'
+          ORDER BY assigned_at ASC
+          LIMIT 1`,
+        [studentId]
+      );
 
-    let assignmentId: number;
-    let missionId: number;
+      let assignmentId: number;
+      let missionId: number;
 
-    if (openRows.length > 0) {
-      assignmentId = Number(openRows[0].assignment_id);
-      missionId = Number(openRows[0].mission_id);
-    } else {
-      const sel = await selectMission(studentId);
-      if (!sel) return res.json({ empty: true });
-      assignmentId = sel.assignmentId;
-      missionId = sel.missionId;
+      if (openRows.length > 0) {
+        assignmentId = Number(openRows[0].assignment_id);
+        missionId = Number(openRows[0].mission_id);
+      } else {
+        const sel = await selectMission(studentId);
+        if (!sel) return res.json({ empty: true });
+        assignmentId = sel.assignmentId;
+        missionId = sel.missionId;
+      }
+
+      const mission = await loadMissionContent(missionId);
+      res.json({ assignment_id: assignmentId, ...mission });
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load current mission');
     }
-
-    const mission = await loadMissionContent(missionId);
-    res.json({ assignment_id: assignmentId, ...mission });
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load current mission' });
   }
-});
+);
 
 /**
  * GET /api/week/:studentId — the current (latest) week with all slots.
@@ -137,10 +152,8 @@ app.get('/api/current/:studentId', requireAuth, requireRole('student'), async (r
  * the UI, so a crafted client cannot read locked questions. Ownership: the
  * week query is keyed to the authenticated student id.
  */
-app.get('/api/week/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
+app.get('/api/week/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
+  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
   if (studentId == null) return;
   try {
     const [weekRows] = await pool.query<any[]>(
@@ -229,7 +242,7 @@ app.get('/api/week/:studentId', requireAuth, async (req, res) => {
     });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load week' });
+    sendError(req, res, 500, 'internal_error', 'failed to load week');
   }
 });
 
@@ -239,69 +252,74 @@ app.get('/api/week/:studentId', requireAuth, async (req, res) => {
  * against the loaded slot's owner, since the slot is keyed by slot id, not
  * student id).
  */
-app.post('/api/slot/:slotId/open', requireAuth, requireRole('student'), async (req, res) => {
-  const slotId = Number(req.params.slotId);
-  if (!Number.isFinite(slotId)) return res.status(400).json({ error: 'invalid slotId' });
-  try {
-    const [slotRows] = await pool.query<any[]>(
-      `SELECT ws.id, ws.status, ws.assignment_id, sw.student_id
-         FROM week_slots ws
-         JOIN student_weeks sw ON sw.id = ws.student_week_id
-        WHERE ws.id = ?`,
-      [slotId]
-    );
-    if (slotRows.length === 0) return res.status(404).json({ error: 'slot not found' });
-    const slot = slotRows[0];
+app.post(
+  '/api/slot/:slotId/open',
+  requireAuth,
+  requireRole('student'),
+  validate({ params: slotIdParams }),
+  async (req, res) => {
+    const slotId = req.valid!.params.slotId;
+    try {
+      const [slotRows] = await pool.query<any[]>(
+        `SELECT ws.id, ws.status, ws.assignment_id, sw.student_id
+           FROM week_slots ws
+           JOIN student_weeks sw ON sw.id = ws.student_week_id
+          WHERE ws.id = ?`,
+        [slotId]
+      );
+      if (slotRows.length === 0) return sendError(req, res, 404, 'not_found', 'slot not found');
+      const slot = slotRows[0];
 
-    // Ownership: a student may only open their own slot.
-    if (Number(slot.student_id) !== req.auth!.userId) {
-      return res.status(403).json({ error: { code: 'forbidden', message: 'not your slot' } });
-    }
-
-    if (slot.status === 'locked') {
-      return res.status(403).json({ error: 'slot is locked' });
-    }
-
-    // Lazy fill on first view.
-    let assignmentId = slot.assignment_id != null ? Number(slot.assignment_id) : null;
-    if (assignmentId == null) {
-      const fill = await fillSlot(slotId);
-      if (fill.gap || fill.assignmentId == null) {
-        return res.json({ empty: true, message: 'no mission available — please contact your instructor.' });
+      // Ownership: a student may only open their own slot.
+      if (Number(slot.student_id) !== req.auth!.userId) {
+        return sendError(req, res, 403, 'forbidden', 'not your slot');
       }
-      assignmentId = fill.assignmentId;
+
+      if (slot.status === 'locked') {
+        return sendError(req, res, 403, 'forbidden', 'slot is locked');
+      }
+
+      // Lazy fill on first view.
+      let assignmentId = slot.assignment_id != null ? Number(slot.assignment_id) : null;
+      if (assignmentId == null) {
+        const fill = await fillSlot(slotId);
+        if (fill.gap || fill.assignmentId == null) {
+          return res.json({ empty: true, message: 'no mission available — please contact your instructor.' });
+        }
+        assignmentId = fill.assignmentId;
+      }
+
+      // Load mission + difficulty for the attempt award.
+      const [aRows] = await pool.query<any[]>(
+        `SELECT a.mission_id, m.difficulty
+           FROM assignments a JOIN missions m ON m.id = a.mission_id
+          WHERE a.id = ?`,
+        [assignmentId]
+      );
+      const missionId = Number(aRows[0].mission_id);
+      const difficulty = Number(aRows[0].difficulty);
+
+      // Stamp opened_at on first view — anchors time_to_submit_seconds at grade
+      // time. Only the first open sets it (COALESCE keeps any earlier value).
+      await pool.query(
+        `UPDATE assignments SET opened_at = COALESCE(opened_at, NOW()) WHERE id = ?`,
+        [assignmentId]
+      );
+
+      // Award 'attempt' XP — once per assignment (guarded inside awardXp).
+      const xp = await awardXp(req.auth!.userId, assignmentId, 'attempt', difficulty);
+
+      // Audit: the student viewed the mission.
+      await logAttempt(assignmentId, req.auth!.userId, 'viewed', { slotId });
+
+      const mission = await loadMissionContent(missionId);
+      res.json({ assignment_id: assignmentId, ...mission, xp });
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to open slot');
     }
-
-    // Load mission + difficulty for the attempt award.
-    const [aRows] = await pool.query<any[]>(
-      `SELECT a.mission_id, m.difficulty
-         FROM assignments a JOIN missions m ON m.id = a.mission_id
-        WHERE a.id = ?`,
-      [assignmentId]
-    );
-    const missionId = Number(aRows[0].mission_id);
-    const difficulty = Number(aRows[0].difficulty);
-
-    // Stamp opened_at on first view — anchors time_to_submit_seconds at grade
-    // time. Only the first open sets it (COALESCE keeps any earlier value).
-    await pool.query(
-      `UPDATE assignments SET opened_at = COALESCE(opened_at, NOW()) WHERE id = ?`,
-      [assignmentId]
-    );
-
-    // Award 'attempt' XP — once per assignment (guarded inside awardXp).
-    const xp = await awardXp(req.auth!.userId, assignmentId, 'attempt', difficulty);
-
-    // Audit: the student viewed the mission.
-    await logAttempt(assignmentId, req.auth!.userId, 'viewed', { slotId });
-
-    const mission = await loadMissionContent(missionId);
-    res.json({ assignment_id: assignmentId, ...mission, xp });
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to open slot' });
   }
-});
+);
 
 /**
  * POST /api/submit  body { assignmentId, selected }
@@ -309,65 +327,68 @@ app.post('/api/slot/:slotId/open', requireAuth, requireRole('student'), async (r
  * ownership check is a query keyed to the authenticated id, so a student can
  * never submit against another student's assignment.
  */
-app.post('/api/submit', requireAuth, requireRole('student'), async (req, res) => {
-  const { assignmentId, selected } = req.body ?? {};
-  if (!Number.isFinite(Number(assignmentId)) || typeof selected !== 'string') {
-    return res.status(400).json({ error: 'assignmentId and selected are required' });
-  }
-  try {
-    // Ownership enforced in SQL: no row unless this assignment is the caller's.
-    const [own] = await pool.query<any[]>(
-      `SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`,
-      [Number(assignmentId), req.auth!.userId]
-    );
-    if (own.length === 0) {
-      return res.status(403).json({ error: { code: 'forbidden', message: 'not your assignment' } });
+app.post(
+  '/api/submit',
+  requireAuth,
+  requireRole('student'),
+  validate({ body: submitBody }),
+  async (req, res) => {
+    const { assignmentId, selected } = req.valid!.body;
+    try {
+      // Ownership enforced in SQL: no row unless this assignment is the caller's.
+      const [own] = await pool.query<any[]>(
+        `SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`,
+        [assignmentId, req.auth!.userId]
+      );
+      if (own.length === 0) {
+        return sendError(req, res, 403, 'forbidden', 'not your assignment');
+      }
+
+      const result = await submitAndGrade(assignmentId, selected);
+
+      // XP: submit always; correct only if correct, scaled by difficulty.
+      const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
+      let correctXp = null;
+      if (result.correct) {
+        correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
+      }
+
+      // Unlock the next slot. With FEEDBACK_GATES_UNLOCK on, this marks the slot
+      // submitted but holds the next slot until feedback is submitted.
+      const unlock = await unlockNext(result.assignmentId);
+
+      // Tell the client whether feedback is now required before it can continue.
+      const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
+      const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
+
+      // Fresh XP total for the header.
+      const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
+      const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
+
+      const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
+
+      res.json({
+        ...result,
+        xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
+        unlock,
+        feedback: {
+          required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
+          status: feedbackStatus,
+          gates_unlock: feedbackGatesUnlock(),
+        },
+      });
+    } catch (err: any) {
+      // Business-rule errors from grading (e.g. assignment not open) are safe to
+      // surface as 400; unexpected ones are logged and surfaced generically.
+      rlog(req).error({ err }, 'submit failed');
+      sendError(req, res, 400, 'bad_request', err?.message ?? 'submit failed');
     }
-
-    const result = await submitAndGrade(Number(assignmentId), selected);
-
-    // XP: submit always; correct only if correct, scaled by difficulty.
-    const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
-    let correctXp = null;
-    if (result.correct) {
-      correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
-    }
-
-    // Unlock the next slot. With FEEDBACK_GATES_UNLOCK on, this marks the slot
-    // submitted but holds the next slot until feedback is submitted.
-    const unlock = await unlockNext(result.assignmentId);
-
-    // Tell the client whether feedback is now required before it can continue.
-    const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
-    const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
-
-    // Fresh XP total for the header.
-    const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
-    const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
-
-    const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
-
-    res.json({
-      ...result,
-      xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
-      unlock,
-      feedback: {
-        required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
-        status: feedbackStatus,
-        gates_unlock: feedbackGatesUnlock(),
-      },
-    });
-  } catch (err: any) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(400).json({ error: err?.message ?? 'submit failed' });
   }
-});
+);
 
 /** GET /api/xp/:studentId — total and the last 20 events. Own data only. */
-app.get('/api/xp/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
+app.get('/api/xp/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
+  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
   if (studentId == null) return;
   try {
     const [[totalRow]] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [studentId]);
@@ -382,15 +403,13 @@ app.get('/api/xp/:studentId', requireAuth, async (req, res) => {
     res.json({ total_xp: totalRow ? Number(totalRow.total_xp) : 0, events });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load xp' });
+    sendError(req, res, 500, 'internal_error', 'failed to load xp');
   }
 });
 
 /** GET /api/segment/:studentId — the student's segment and placement reason. */
-app.get('/api/segment/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
+app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
+  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
   if (studentId == null) return;
   try {
     const [rows] = await pool.query<any[]>(
@@ -402,7 +421,7 @@ app.get('/api/segment/:studentId', requireAuth, async (req, res) => {
         WHERE s.id = ?`,
       [studentId]
     );
-    if (rows.length === 0) return res.status(404).json({ error: 'student not found' });
+    if (rows.length === 0) return sendError(req, res, 404, 'not_found', 'student not found');
     const r = rows[0];
 
     // Explain qualification against the segment's prerequisites.
@@ -442,7 +461,7 @@ app.get('/api/segment/:studentId', requireAuth, async (req, res) => {
     });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load segment' });
+    sendError(req, res, 500, 'internal_error', 'failed to load segment');
   }
 });
 
@@ -460,15 +479,13 @@ app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme'
     res.json(rows);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load assistance events' });
+    sendError(req, res, 500, 'internal_error', 'failed to load assistance events');
   }
 });
 
 /** GET /api/history/:studentId — last 5 level events, newest first. Own data only. */
-app.get('/api/history/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
+app.get('/api/history/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
+  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
   if (studentId == null) return;
   try {
     const [rows] = await pool.query<any[]>(
@@ -482,7 +499,7 @@ app.get('/api/history/:studentId', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load history' });
+    sendError(req, res, 500, 'internal_error', 'failed to load history');
   }
 });
 
@@ -497,97 +514,113 @@ app.get('/api/feedback/questions', requireAuth, async (req, res) => {
     res.json(questions);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load feedback questions' });
+    sendError(req, res, 500, 'internal_error', 'failed to load feedback questions');
   }
 });
 
 /**
  * POST /api/feedback/:assignmentId  body { answers: [{ question_key, value }] }
  * Student-only. Identity is the authenticated user; submitFeedback re-checks
- * that the assignment belongs to them.
+ * that the assignment belongs to them (business rule, kept in the service).
  */
-app.post('/api/feedback/:assignmentId', requireAuth, requireRole('student'), async (req, res) => {
-  const assignmentId = Number(req.params.assignmentId);
-  if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
-  const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
-  try {
-    const studentId = req.auth!.userId;
-    const result = await submitFeedback(assignmentId, studentId, answers);
+app.post(
+  '/api/feedback/:assignmentId',
+  requireAuth,
+  requireRole('student'),
+  validate({ params: assignmentIdParams, body: feedbackBody }),
+  async (req, res) => {
+    const assignmentId = req.valid!.params.assignmentId;
+    const answers = req.valid!.body.answers;
+    try {
+      const studentId = req.auth!.userId;
+      const result = await submitFeedback(assignmentId, studentId, answers);
 
-    // Release the gated next slot only on the FIRST completion, and only when
-    // feedback actually gates unlocking (otherwise the grade-time unlock already
-    // advanced the week and re-running would skip a slot).
-    let unlock = null;
-    if (!result.alreadyComplete && feedbackGatesUnlock()) {
-      unlock = await unlockNext(assignmentId);
-    }
+      // Release the gated next slot only on the FIRST completion, and only when
+      // feedback actually gates unlocking (otherwise the grade-time unlock already
+      // advanced the week and re-running would skip a slot).
+      let unlock = null;
+      if (!result.alreadyComplete && feedbackGatesUnlock()) {
+        unlock = await unlockNext(assignmentId);
+      }
 
-    res.json({ ...result, unlock });
-  } catch (err: any) {
-    if (err instanceof FeedbackError) {
-      return res.status(err.status).json({ error: err.message });
+      res.json({ ...result, unlock });
+    } catch (err: any) {
+      if (err instanceof FeedbackError) {
+        return sendError(req, res, err.status, 'feedback_error', err.message);
+      }
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to submit feedback');
     }
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to submit feedback' });
   }
-});
+);
 
 /** GET /api/progress/:studentId — the student's own progress panel. */
-app.get('/api/progress/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
+app.get('/api/progress/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
+  const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
   if (studentId == null) return;
   try {
     const progress = await getStudentProgress(studentId);
-    if (!progress) return res.status(404).json({ error: 'student not found' });
+    if (!progress) return sendError(req, res, 404, 'not_found', 'student not found');
     res.json(progress);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load progress' });
+    sendError(req, res, 500, 'internal_error', 'failed to load progress');
   }
 });
 
-/** GET /api/submissions/:studentId?limit=&offset= — paginated submission log. Own data only. */
-app.get('/api/submissions/:studentId', requireAuth, async (req, res) => {
-  const pathId = Number(req.params.studentId);
-  if (!Number.isFinite(pathId)) return res.status(400).json({ error: 'invalid studentId' });
-  const studentId = resolveOwnedStudent(req, res, pathId);
-  if (studentId == null) return;
-  try {
-    const limit = req.query.limit != null ? Number(req.query.limit) : 20;
-    const offset = req.query.offset != null ? Number(req.query.offset) : 0;
-    const log = await getSubmissionLog(studentId, limit, offset);
-    res.json(log);
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load submissions' });
+/** GET /api/submissions/:studentId?limit=&offset=&cursor= — paginated submission log. Own data only. */
+app.get(
+  '/api/submissions/:studentId',
+  requireAuth,
+  validate({ params: studentIdParams, query: listQuery }),
+  async (req, res) => {
+    const studentId = resolveOwnedStudent(req, res, req.valid!.params.studentId);
+    if (studentId == null) return;
+    try {
+      const limit = req.valid!.query.limit ?? 20;
+      const offset = req.valid!.query.offset ?? 0;
+      const log = await getSubmissionLog(studentId, limit, offset);
+      res.json(log);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load submissions');
+    }
   }
-});
+);
 
 /** GET /api/mission-quality — SME report. SME/QC/admin only. */
-app.get('/api/mission-quality', requireAuth, requireRole('sme', 'qc', 'admin'), async (req, res) => {
-  try {
-    const report = await getMissionQuality();
-    res.json(report);
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to build mission-quality report' });
+app.get(
+  '/api/mission-quality',
+  requireAuth,
+  requireRole('sme', 'qc', 'admin'),
+  async (req, res) => {
+    try {
+      const report = await getMissionQuality();
+      res.json(report);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to build mission-quality report');
+    }
   }
-});
+);
 
 /** GET /api/mission-quality/:missionId — single mission detail. SME/QC/admin only. */
-app.get('/api/mission-quality/:missionId', requireAuth, requireRole('sme', 'qc', 'admin'), async (req, res) => {
-  const missionId = Number(req.params.missionId);
-  if (!Number.isFinite(missionId)) return res.status(400).json({ error: 'invalid missionId' });
-  try {
-    const report = await getMissionQuality(missionId);
-    res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to build mission-quality report' });
+app.get(
+  '/api/mission-quality/:missionId',
+  requireAuth,
+  requireRole('sme', 'qc', 'admin'),
+  validate({ params: missionIdParams }),
+  async (req, res) => {
+    const missionId = req.valid!.params.missionId;
+    try {
+      const report = await getMissionQuality(missionId);
+      res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to build mission-quality report');
+    }
   }
-});
+);
 
 /**
  * GET /api/attempts/:assignmentId — the audit trail for one assignment.
@@ -595,17 +628,16 @@ app.get('/api/mission-quality/:missionId', requireAuth, requireRole('sme', 'qc',
  * up by assignment id (the resource key), and a mismatch is a 403 (not an empty
  * 200); the attempt query is then keyed to that authorised student id.
  */
-app.get('/api/attempts/:assignmentId', requireAuth, async (req, res) => {
-  const assignmentId = Number(req.params.assignmentId);
-  if (!Number.isFinite(assignmentId)) return res.status(400).json({ error: 'invalid assignmentId' });
+app.get('/api/attempts/:assignmentId', requireAuth, validate({ params: assignmentIdParams }), async (req, res) => {
+  const assignmentId = req.valid!.params.assignmentId;
   try {
     const [[asg]] = await pool.query<any[]>(
       `SELECT student_id FROM assignments WHERE id = ?`,
       [assignmentId]
     );
-    if (!asg) return res.status(404).json({ error: 'assignment not found' });
+    if (!asg) return sendError(req, res, 404, 'not_found', 'assignment not found');
     if (req.auth!.role === 'student' && Number(asg.student_id) !== req.auth!.userId) {
-      return res.status(403).json({ error: { code: 'forbidden', message: "cannot access another user's data" } });
+      return sendError(req, res, 403, 'forbidden', "cannot access another user's data");
     }
     const ownerId = Number(asg.student_id);
 
@@ -619,7 +651,7 @@ app.get('/api/attempts/:assignmentId', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
-    res.status(500).json({ error: 'failed to load attempt log' });
+    sendError(req, res, 500, 'internal_error', 'failed to load attempt log');
   }
 });
 
@@ -632,18 +664,16 @@ app.get('/quality', (_req, res) => {
 
 /**
  * POST /api/test/feedback-gating  body { enabled: boolean | null }
- * Test hook: inject the FEEDBACK_GATES_UNLOCK value at runtime so an HTTP-driven
- * harness can set the server's behaviour for its own run (Stage 3 sets false,
- * Stage 5 sets true) without an env change or restart. Disabled unless
- * ENABLE_TEST_HOOKS is set, so it is never exposed in production.
+ * Test hook (ENABLE_TEST_HOOKS only): inject FEEDBACK_GATES_UNLOCK at runtime so
+ * an HTTP-driven harness can set the server's behaviour for its own run.
  */
 app.post('/api/test/feedback-gating', (req, res) => {
   if (!process.env.ENABLE_TEST_HOOKS) {
-    return res.status(403).json({ error: 'test hooks disabled' });
+    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
   }
   const enabled = req.body?.enabled;
   if (typeof enabled !== 'boolean' && enabled !== null) {
-    return res.status(400).json({ error: 'enabled must be boolean or null' });
+    return sendError(req, res, 400, 'validation_error', 'enabled must be boolean or null');
   }
   setFeedbackGatesUnlock(enabled);
   res.json({ feedbackGatesUnlock: feedbackGatesUnlock() });
@@ -684,16 +714,15 @@ if (process.env.ENABLE_TEST_HOOKS) {
 /**
  * Central error handler — LAST middleware. Catches anything thrown or passed to
  * next(err), logs it with stack + requestId, reports it to Sentry (if enabled),
- * and returns a consistent JSON shape. A stack trace is NEVER sent to the client.
+ * and returns the consistent JSON shape. A stack trace is NEVER sent to the client.
  */
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const requestId = (req as any).id;
   rlog(req).error({ err }, 'unhandled error');
   captureException(err);
   if (res.headersSent) return;
   const status = Number.isInteger(err?.status) ? err.status : 500;
   const message = status >= 500 ? 'internal server error' : String(err?.message ?? 'error');
-  res.status(status).json({ error: { code: err?.code ?? 'internal_error', message, requestId } });
+  sendError(req, res, status, err?.code ?? 'internal_error', message);
 });
 
 const PORT = Number(process.env.PORT) || 3000;

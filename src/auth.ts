@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db.js';
 import { logger } from './logger.js';
+import { sendError } from './httpError.js';
 
 /**
  * Authentication & authorisation.
@@ -102,10 +103,8 @@ export function resetAuthProvider(): void {
   providerSingleton = null;
 }
 
-function unauthenticated(res: Response) {
-  return res.status(401).json({
-    error: { code: 'unauthenticated', message: 'authentication required' },
-  });
+function unauthenticated(req: Request, res: Response) {
+  return sendError(req, res, 401, 'unauthenticated', 'authentication required');
 }
 
 /** Populate req.auth or reject with 401. */
@@ -113,7 +112,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   try {
     const auth = await getAuthProvider().authenticate(req);
     if (!auth) {
-      unauthenticated(res);
+      unauthenticated(req, res);
       return;
     }
     req.auth = auth;
@@ -121,7 +120,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   } catch (err) {
     // e.g. the LTI stub throwing. Never leak details to the client.
     (req as any).log?.error({ err }, 'authentication error') ?? logger.error({ err }, 'authentication error');
-    res.status(500).json({ error: { code: 'auth_error', message: 'authentication failed' } });
+    sendError(req, res, 500, 'auth_error', 'authentication failed');
   }
 }
 
@@ -129,13 +128,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 export function requireRole(...roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.auth) {
-      unauthenticated(res);
+      unauthenticated(req, res);
       return;
     }
     if (!roles.includes(req.auth.role)) {
-      res.status(403).json({
-        error: { code: 'forbidden', message: `requires role: ${roles.join(', ')}` },
-      });
+      sendError(req, res, 403, 'forbidden', `requires role: ${roles.join(', ')}`);
       return;
     }
     next();
@@ -156,9 +153,7 @@ export function resolveOwnedStudent(req: Request, res: Response, pathId: number)
   const auth = req.auth!;
   if (auth.role === 'student') {
     if (pathId !== auth.userId) {
-      res.status(403).json({
-        error: { code: 'forbidden', message: "cannot access another user's data" },
-      });
+      sendError(req, res, 403, 'forbidden', "cannot access another user's data");
       return null;
     }
     return auth.userId;
