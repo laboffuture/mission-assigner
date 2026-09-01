@@ -11,7 +11,7 @@ export interface PublishedSlot {
 }
 
 export interface PublishResult {
-  created: boolean;          // false if this week already existed (no-op)
+  created: boolean; // false if this week already existed (no-op)
   studentWeekId: number;
   templateId: number;
   weekStart: string;
@@ -57,10 +57,7 @@ export async function publishWeek(studentId: number, weekStart: string): Promise
     }
 
     // Student's subject + segment.
-    const [studentRows] = await conn.query<any[]>(
-      `SELECT subject, segment_id FROM students WHERE id = ?`,
-      [studentId]
-    );
+    const [studentRows] = await conn.query<any[]>(`SELECT subject, segment_id FROM students WHERE id = ?`, [studentId]);
     if (studentRows.length === 0) throw new Error(`Student ${studentId} not found`);
     const { subject, segment_id } = studentRows[0];
 

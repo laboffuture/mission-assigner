@@ -22,6 +22,14 @@ stages, all sharing one MySQL database:
 Node.js 20 · TypeScript (strict) · MySQL 8 · mysql2 (raw parameterised SQL, no
 ORM) · Express 4 · tsx (no build step) · one static HTML file (vanilla JS).
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push and pull request against a MySQL 8
+service container: `npm ci`, `typecheck`, `lint`, `format:check`, `db:migrate`,
+then **all** suites via `npm run verify:all` (Node harnesses + the Stage 2
+pytest). The build fails if any step fails. ESLint (flat config,
+`typescript-eslint`) lints `src/**/*.ts`; Prettier enforces formatting.
+
 ## Setup
 
 ### 1. Start MySQL 8
@@ -177,6 +185,10 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | `npm run db:seed` | seed missions, segments, week template, xp rules, feedback questions, students |
 | `npm run publish -- <studentId\|all> [YYYY-MM-DD]` | publish a week (idempotent; runs on a schedule in production) |
 | `npm run dev` | start the server |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` / `lint:fix` | ESLint (TypeScript) |
+| `npm run format` / `format:check` | Prettier |
+| `npm run backup` / `restore` / `backup:verify` | database backup, restore, and tested-restore |
 | `npm run verify` | Stage 1 acceptance harness |
 | `npm run verify:stage3` | Stage 3 acceptance harness |
 | `npm run verify:stage5` | Stage 5 acceptance harness |

@@ -45,10 +45,7 @@ async function submissionDates(studentId: number, tz: string): Promise<Set<strin
 
 /** The student's local "today" (their zone's current calendar date). */
 async function localToday(tz: string): Promise<string> {
-  const [[row]] = await pool.query<any[]>(
-    `SELECT DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', ?)) AS today`,
-    [tz]
-  );
+  const [[row]] = await pool.query<any[]>(`SELECT DATE(CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', ?)) AS today`, [tz]);
   return toISODate(row.today);
 }
 
@@ -86,9 +83,6 @@ export async function computeLongestStreak(studentId: number): Promise<number> {
 }
 
 export async function computeStreaks(studentId: number): Promise<{ current: number; longest: number }> {
-  const [current, longest] = await Promise.all([
-    computeStreak(studentId),
-    computeLongestStreak(studentId),
-  ]);
+  const [current, longest] = await Promise.all([computeStreak(studentId), computeLongestStreak(studentId)]);
   return { current, longest };
 }

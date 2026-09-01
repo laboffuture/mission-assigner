@@ -5,9 +5,7 @@ import type { Pool } from 'mysql2/promise';
 // day-boundary interpretation is per student.
 
 export async function up(pool: Pool): Promise<void> {
-  await pool.query(
-    `ALTER TABLE students ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata'`
-  );
+  await pool.query(`ALTER TABLE students ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata'`);
 }
 
 export async function down(pool: Pool): Promise<void> {

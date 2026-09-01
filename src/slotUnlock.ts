@@ -3,11 +3,11 @@ import { fillSlot } from './slotFiller.js';
 import { feedbackGatesUnlock } from './config.js';
 
 export interface UnlockResult {
-  wasSlot: boolean;               // false if the assignment wasn't part of a week
+  wasSlot: boolean; // false if the assignment wasn't part of a week
   submittedSlotId: number | null;
-  openedSlotId: number | null;    // the next slot that was opened, if any
+  openedSlotId: number | null; // the next slot that was opened, if any
   weekComplete: boolean;
-  gatedOnFeedback: boolean;       // true = next slot held back until feedback is submitted
+  gatedOnFeedback: boolean; // true = next slot held back until feedback is submitted
 }
 
 /**
@@ -102,10 +102,7 @@ export async function unlockNext(assignmentId: number): Promise<UnlockResult> {
 
     if (nextRows.length > 0) {
       openedSlotId = Number(nextRows[0].week_slot_id);
-      await conn.query(
-        `UPDATE week_slots SET status = 'open', opened_at = NOW() WHERE id = ?`,
-        [openedSlotId]
-      );
+      await conn.query(`UPDATE week_slots SET status = 'open', opened_at = NOW() WHERE id = ?`, [openedSlotId]);
     } else {
       // No locked slots remain -> the week is complete.
       await conn.query(`UPDATE student_weeks SET status = 'complete' WHERE id = ?`, [studentWeekId]);

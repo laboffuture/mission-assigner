@@ -8,8 +8,8 @@ export interface FillResult {
   assignmentId: number | null;
   missionId: number | null;
   targetLevel: number;
-  relaxations: string[];   // ordered log of each relaxation applied
-  gap: boolean;            // true = no mission available, coverage gap recorded
+  relaxations: string[]; // ordered log of each relaxation applied
+  gap: boolean; // true = no mission available, coverage gap recorded
 }
 
 interface Candidate {
@@ -159,7 +159,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
         studentId,
         subject: slot.subject,
         age: slot.age,
-        missionType: slot.mission_type,   // NEVER relaxed
+        missionType: slot.mission_type, // NEVER relaxed
         timeBands: widened,
         minDiff: Math.max(minLevel, targetLevel - 1),
         maxDiff: Math.min(maxLevel, targetLevel + 1),
@@ -261,16 +261,7 @@ async function queryCandidates(conn: PoolConnection, a: QueryArgs): Promise<Cand
       GROUP BY m.id, m.version, m.difficulty
       ${order}
       LIMIT 1`,
-    [
-      a.studentId,
-      a.subject,
-      a.missionType,
-      ...a.timeBands,
-      a.minDiff,
-      a.maxDiff,
-      a.age,
-      a.studentId,
-    ]
+    [a.studentId, a.subject, a.missionType, ...a.timeBands, a.minDiff, a.maxDiff, a.age, a.studentId]
   );
   if (rows.length === 0) return null;
   const r = rows[0];

@@ -58,10 +58,7 @@ export async function applyColdStart(studentId: number): Promise<ColdStartResult
       [startLevel, placementStatus, studentId]
     );
 
-    logger.info(
-      { studentId, strategy, startLevel, placementStatus },
-      'cold start applied'
-    );
+    logger.info({ studentId, strategy, startLevel, placementStatus }, 'cold start applied');
 
     return { studentId, strategy, startLevel, placementStatus };
   } finally {

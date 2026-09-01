@@ -25,17 +25,15 @@ export interface SegmentDecision {
 export async function assignSegment(studentId: number): Promise<SegmentDecision> {
   const conn = await pool.getConnection();
   try {
-    const [studentRows] = await conn.query<any[]>(
-      `SELECT id, display_name, age, subject FROM students WHERE id = ?`,
-      [studentId]
-    );
+    const [studentRows] = await conn.query<any[]>(`SELECT id, display_name, age, subject FROM students WHERE id = ?`, [
+      studentId,
+    ]);
     if (studentRows.length === 0) throw new Error(`Student ${studentId} not found`);
     const student = studentRows[0];
 
-    const [completedRows] = await conn.query<any[]>(
-      `SELECT course_ref FROM student_courses WHERE student_id = ?`,
-      [studentId]
-    );
+    const [completedRows] = await conn.query<any[]>(`SELECT course_ref FROM student_courses WHERE student_id = ?`, [
+      studentId,
+    ]);
     const completed = new Set<string>(completedRows.map((r) => String(r.course_ref)));
 
     // All active segments for the subject, with their prerequisites.
@@ -75,7 +73,13 @@ export async function assignSegment(studentId: number): Promise<SegmentDecision>
       else if (missingPrereqs.length > 0) why = `missing prerequisites: ${missingPrereqs.join(', ')}`;
       else why = 'qualifies';
 
-      candidates.push({ id: Number(seg.id), name: seg.name, start_level: Number(seg.start_level), qualified: isQualified, why });
+      candidates.push({
+        id: Number(seg.id),
+        name: seg.name,
+        start_level: Number(seg.start_level),
+        qualified: isQualified,
+        why,
+      });
       if (isQualified) qualified.push(seg);
     }
 
@@ -84,7 +88,10 @@ export async function assignSegment(studentId: number): Promise<SegmentDecision>
 
     if (qualified.length > 0) {
       // Highest start_level among qualified (segments already ordered desc).
-      chosen = qualified.reduce((best, s) => (Number(s.start_level) > Number(best.start_level) ? s : best), qualified[0]);
+      chosen = qualified.reduce(
+        (best, s) => (Number(s.start_level) > Number(best.start_level) ? s : best),
+        qualified[0]
+      );
       reason = 'best_qualified';
     } else if (segments.length > 0) {
       // Fallback: lowest start_level segment for the subject.

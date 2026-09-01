@@ -60,10 +60,7 @@ export class DevAuthProvider implements AuthProvider {
     const userId = Number(raw);
     if (!Number.isInteger(userId) || userId <= 0) return null;
 
-    const [rows] = await pool.query<any[]>(
-      `SELECT id, role, subject FROM students WHERE id = ?`,
-      [userId]
-    );
+    const [rows] = await pool.query<any[]>(`SELECT id, role, subject FROM students WHERE id = ?`, [userId]);
     if (rows.length === 0) return null;
     return {
       userId: Number(rows[0].id),
@@ -119,7 +116,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     next();
   } catch (err) {
     // e.g. the LTI stub throwing. Never leak details to the client.
-    (req as any).log?.error({ err }, 'authentication error') ?? logger.error({ err }, 'authentication error');
+    const log = (req as any).log ?? logger;
+    log.error({ err }, 'authentication error');
     sendError(req, res, 500, 'auth_error', 'authentication failed');
   }
 }

@@ -192,9 +192,7 @@ export async function getAttemptLog(
 // ---------------------------------------------------------------------------
 // getMissionBank — cursor-paginated listing of the mission bank (newest first)
 // ---------------------------------------------------------------------------
-export async function getMissionBank(
-  opts: { limit?: number; cursor?: string } = {}
-): Promise<Page<any>> {
+export async function getMissionBank(opts: { limit?: number; cursor?: string } = {}): Promise<Page<any>> {
   const lim = clampLimit(opts.limit);
   const dec = decodeCursor(opts.cursor);
   const params: any[] = [];

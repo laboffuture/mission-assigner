@@ -314,10 +314,7 @@ app.post(
 
       // Stamp opened_at on first view — anchors time_to_submit_seconds at grade
       // time. Only the first open sets it (COALESCE keeps any earlier value).
-      await pool.query(
-        `UPDATE assignments SET opened_at = COALESCE(opened_at, NOW()) WHERE id = ?`,
-        [assignmentId]
-      );
+      await pool.query(`UPDATE assignments SET opened_at = COALESCE(opened_at, NOW()) WHERE id = ?`, [assignmentId]);
 
       // Award 'attempt' XP — once per assignment (guarded inside awardXp).
       const xp = await awardXp(req.auth!.userId, assignmentId, 'attempt', difficulty);
@@ -359,7 +356,9 @@ async function runSubmit(assignmentId: number, selected: string) {
   }
   const unlock = await unlockNext(result.assignmentId);
 
-  const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [result.assignmentId]);
+  const [[fbRow]] = await pool.query<any[]>(`SELECT feedback_status FROM assignments WHERE id = ?`, [
+    result.assignmentId,
+  ]);
   const feedbackStatus = fbRow ? fbRow.feedback_status : 'pending';
   const [xpRow] = await pool.query<any[]>(`SELECT total_xp FROM students WHERE id = ?`, [result.studentId]);
   const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
@@ -400,67 +399,64 @@ async function waitForIdempotentResult(key: string, assignmentId: number): Promi
  * re-grading. Concurrency-safe even without a key (grading's FOR UPDATE lets
  * only one request grade).
  */
-app.post(
-  '/api/submit',
-  requireAuth,
-  requireRole('student'),
-  validate({ body: submitBody }),
-  async (req, res) => {
-    const { assignmentId, selected } = req.valid!.body;
-    const idemKey = req.header('idempotency-key');
-    try {
-      // Ownership enforced in SQL: no row unless this assignment is the caller's.
-      const [own] = await pool.query<any[]>(
-        `SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`,
-        [assignmentId, req.auth!.userId]
-      );
-      if (own.length === 0) {
-        return sendError(req, res, 403, 'forbidden', 'not your assignment');
-      }
-
-      if (idemKey) {
-        // Claim the key. The UNIQUE(idempotency_key, assignment_id) makes exactly
-        // one concurrent request the "owner"; the rest wait for its result.
-        try {
-          await pool.query(
-            `INSERT INTO idempotency_keys (idempotency_key, assignment_id) VALUES (?, ?)`,
-            [idemKey, assignmentId]
-          );
-        } catch (e: any) {
-          if (e && e.code === 'ER_DUP_ENTRY') {
-            const cached = await waitForIdempotentResult(idemKey, assignmentId);
-            if (cached) return res.json({ ...cached, idempotent_replay: true });
-            return sendError(req, res, 409, 'conflict', 'a request with this Idempotency-Key is still processing');
-          }
-          throw e;
-        }
-        try {
-          const result = await runSubmit(assignmentId, selected);
-          await pool.query(
-            `UPDATE idempotency_keys SET response = ? WHERE idempotency_key = ? AND assignment_id = ?`,
-            [JSON.stringify(result), idemKey, assignmentId]
-          );
-          return res.json(result);
-        } catch (err) {
-          // Release the claim so a genuine retry can proceed.
-          await pool.query(
-            `DELETE FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`,
-            [idemKey, assignmentId]
-          ).catch(() => {});
-          throw err;
-        }
-      }
-
-      const result = await runSubmit(assignmentId, selected);
-      res.json(result);
-    } catch (err: any) {
-      // Business-rule errors from grading (e.g. assignment not open) are safe to
-      // surface as 400; unexpected ones are logged and surfaced generically.
-      rlog(req).error({ err }, 'submit failed');
-      sendError(req, res, 400, 'bad_request', err?.message ?? 'submit failed');
+app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: submitBody }), async (req, res) => {
+  const { assignmentId, selected } = req.valid!.body;
+  const idemKey = req.header('idempotency-key');
+  try {
+    // Ownership enforced in SQL: no row unless this assignment is the caller's.
+    const [own] = await pool.query<any[]>(`SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`, [
+      assignmentId,
+      req.auth!.userId,
+    ]);
+    if (own.length === 0) {
+      return sendError(req, res, 403, 'forbidden', 'not your assignment');
     }
+
+    if (idemKey) {
+      // Claim the key. The UNIQUE(idempotency_key, assignment_id) makes exactly
+      // one concurrent request the "owner"; the rest wait for its result.
+      try {
+        await pool.query(`INSERT INTO idempotency_keys (idempotency_key, assignment_id) VALUES (?, ?)`, [
+          idemKey,
+          assignmentId,
+        ]);
+      } catch (e: any) {
+        if (e && e.code === 'ER_DUP_ENTRY') {
+          const cached = await waitForIdempotentResult(idemKey, assignmentId);
+          if (cached) return res.json({ ...cached, idempotent_replay: true });
+          return sendError(req, res, 409, 'conflict', 'a request with this Idempotency-Key is still processing');
+        }
+        throw e;
+      }
+      try {
+        const result = await runSubmit(assignmentId, selected);
+        await pool.query(`UPDATE idempotency_keys SET response = ? WHERE idempotency_key = ? AND assignment_id = ?`, [
+          JSON.stringify(result),
+          idemKey,
+          assignmentId,
+        ]);
+        return res.json(result);
+      } catch (err) {
+        // Release the claim so a genuine retry can proceed.
+        await pool
+          .query(`DELETE FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`, [
+            idemKey,
+            assignmentId,
+          ])
+          .catch(() => {});
+        throw err;
+      }
+    }
+
+    const result = await runSubmit(assignmentId, selected);
+    res.json(result);
+  } catch (err: any) {
+    // Business-rule errors from grading (e.g. assignment not open) are safe to
+    // surface as 400; unexpected ones are logged and surfaced generically.
+    rlog(req).error({ err }, 'submit failed');
+    sendError(req, res, 400, 'bad_request', err?.message ?? 'submit failed');
   }
-);
+});
 
 /** GET /api/xp/:studentId — total + cursor-paginated event history. Own data only. */
 app.get(
@@ -519,18 +515,22 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
       subject: r.subject,
       current_level: Number(r.current_level),
       placement_status: r.placement_status,
-      segment: r.segment_id == null ? null : {
-        id: Number(r.segment_id),
-        name: r.segment_name,
-        start_level: Number(r.start_level),
-        min_level: Number(r.min_level),
-        max_level: Number(r.max_level),
-        description: r.description,
-      },
-      why: r.segment_id == null
-        ? 'No segment assigned yet.'
-        : `Age ${r.age} within range and prerequisites ${prerequisites.every((p) => p.completed) ? 'met' : 'partially met'}; ` +
-          `placed at start_level ${r.start_level}.`,
+      segment:
+        r.segment_id == null
+          ? null
+          : {
+              id: Number(r.segment_id),
+              name: r.segment_name,
+              start_level: Number(r.start_level),
+              min_level: Number(r.min_level),
+              max_level: Number(r.max_level),
+              description: r.description,
+            },
+      why:
+        r.segment_id == null
+          ? 'No segment assigned yet.'
+          : `Age ${r.age} within range and prerequisites ${prerequisites.every((p) => p.completed) ? 'met' : 'partially met'}; ` +
+            `placed at start_level ${r.start_level}.`,
       prerequisites,
     });
   } catch (err) {
@@ -768,10 +768,9 @@ app.post('/api/test/feedback-gating', (req, res) => {
 
 /** Shared: mission content (title/body/difficulty + options). */
 async function loadMissionContent(missionId: number) {
-  const [missionRows] = await pool.query<any[]>(
-    `SELECT id, title, body, difficulty FROM missions WHERE id = ?`,
-    [missionId]
-  );
+  const [missionRows] = await pool.query<any[]>(`SELECT id, title, body, difficulty FROM missions WHERE id = ?`, [
+    missionId,
+  ]);
   const mission = missionRows[0];
   const [options] = await pool.query<any[]>(
     `SELECT option_key, option_text FROM mission_options WHERE mission_id = ? ORDER BY option_key ASC`,

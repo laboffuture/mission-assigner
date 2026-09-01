@@ -51,10 +51,7 @@ function parseAnswerKey(raw: unknown): { correct: string } {
  * from progression.ts) in ONE transaction. Level logic lives in progression.ts;
  * this function owns grading and the transaction boundary.
  */
-export async function submitAndGrade(
-  assignmentId: number,
-  selected: string
-): Promise<GradeResult> {
+export async function submitAndGrade(assignmentId: number, selected: string): Promise<GradeResult> {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

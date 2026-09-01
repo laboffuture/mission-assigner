@@ -106,9 +106,7 @@ async function ensureDatabase(dbName: string): Promise<void> {
     multipleStatements: true,
   });
   try {
-    await root.query(
-      `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`
-    );
+    await root.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`);
   } finally {
     await root.end();
   }
@@ -123,7 +121,10 @@ async function main() {
   try {
     if (cmd === 'up') {
       const applied = await umzug.up();
-      logger.info({ applied: applied.map((m) => m.name) }, applied.length ? 'migrations applied' : 'already up to date');
+      logger.info(
+        { applied: applied.map((m) => m.name) },
+        applied.length ? 'migrations applied' : 'already up to date'
+      );
     } else if (cmd === 'down') {
       const reverted = await umzug.down();
       logger.info({ reverted: reverted.map((m) => m.name) }, 'reverted last migration');

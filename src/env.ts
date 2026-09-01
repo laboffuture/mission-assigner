@@ -35,9 +35,7 @@ export function validateEnv(): Env {
   if (cached) return cached;
   const parsed = EnvSchema.safeParse(process.env);
   if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
-      .join('\n');
+    const issues = parsed.error.issues.map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`).join('\n');
     process.stderr.write(
       `\nFATAL: invalid environment configuration — refusing to start.\n` +
         `${issues}\n\n` +

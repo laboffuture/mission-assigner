@@ -30,7 +30,7 @@ const LETTERS = ['a', 'b', 'c', 'd'] as const;
 function mondayOf(d: Date): string {
   const copy = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   const day = copy.getUTCDay(); // 0=Sun..6=Sat
-  const diff = (day + 6) % 7;   // days since Monday
+  const diff = (day + 6) % 7; // days since Monday
   copy.setUTCDate(copy.getUTCDate() - diff);
   return copy.toISOString().slice(0, 10);
 }
@@ -96,10 +96,11 @@ async function main() {
           key === correct
             ? `Option ${key.toUpperCase()} — the correct choice for ${tag}`
             : `Option ${key.toUpperCase()} — a plausible ${tag} distractor`;
-        await conn.query(
-          `INSERT INTO mission_options (mission_id, option_key, option_text) VALUES (?, ?, ?)`,
-          [missionId, key, text]
-        );
+        await conn.query(`INSERT INTO mission_options (mission_id, option_key, option_text) VALUES (?, ?, ?)`, [
+          missionId,
+          key,
+          text,
+        ]);
         optionCount++;
       }
       await conn.query(`INSERT INTO mission_tags (mission_id, tag) VALUES (?, ?)`, [missionId, tag]);
@@ -114,7 +115,15 @@ async function main() {
     // ---- Segments (management/SME-defined) ------------------------------
     const segs: Record<string, number> = {};
     for (const seg of [
-      { name: 'CS Foundation', age_min: 12, age_max: 14, min: 0, max: 4, start: 0, desc: 'Entry segment, no prerequisites.' },
+      {
+        name: 'CS Foundation',
+        age_min: 12,
+        age_max: 14,
+        min: 0,
+        max: 4,
+        start: 0,
+        desc: 'Entry segment, no prerequisites.',
+      },
       { name: 'CS Intermediate', age_min: 14, age_max: 16, min: 0, max: 4, start: 1, desc: 'Requires CS-101.' },
       { name: 'CS Advanced', age_min: 16, age_max: 18, min: 0, max: 4, start: 2, desc: 'Requires CS-101 and CS-201.' },
     ]) {
@@ -126,8 +135,13 @@ async function main() {
       segs[seg.name] = r.insertId as number;
     }
     // Prerequisites.
-    await conn.query(`INSERT INTO segment_prerequisites (segment_id, course_ref) VALUES (?, 'CS-101')`, [segs['CS Intermediate']]);
-    await conn.query(`INSERT INTO segment_prerequisites (segment_id, course_ref) VALUES (?, 'CS-101'), (?, 'CS-201')`, [segs['CS Advanced'], segs['CS Advanced']]);
+    await conn.query(`INSERT INTO segment_prerequisites (segment_id, course_ref) VALUES (?, 'CS-101')`, [
+      segs['CS Intermediate'],
+    ]);
+    await conn.query(`INSERT INTO segment_prerequisites (segment_id, course_ref) VALUES (?, 'CS-101'), (?, 'CS-201')`, [
+      segs['CS Advanced'],
+      segs['CS Advanced'],
+    ]);
 
     // ---- Week template + 8 slots ----------------------------------------
     const [wt] = await conn.query<any>(
@@ -171,10 +185,11 @@ async function main() {
       ['feedback', null, 5],
     ];
     for (const [evt, diff, pts] of xpRules) {
-      await conn.query(
-        `INSERT INTO xp_rules (event_type, difficulty, points, active) VALUES (?, ?, ?, TRUE)`,
-        [evt, diff, pts]
-      );
+      await conn.query(`INSERT INTO xp_rules (event_type, difficulty, points, active) VALUES (?, ?, ?, TRUE)`, [
+        evt,
+        diff,
+        pts,
+      ]);
     }
 
     // ---- Feedback questions (Stage 5) -----------------------------------
@@ -189,11 +204,46 @@ async function main() {
       order: number;
       required: boolean;
     }> = [
-      { key: 'perceived_difficulty', prompt: 'PLACEHOLDER — How difficult was this mission?', type: 'single_select', options: ['Too easy', 'About right', 'Too hard'], order: 1, required: true },
-      { key: 'time_taken', prompt: 'PLACEHOLDER — How long did this take compared to what you expected?', type: 'single_select', options: ['Less than expected', 'About as expected', 'Longer than expected'], order: 2, required: true },
-      { key: 'clarity', prompt: 'PLACEHOLDER — How clear was the question? (1 = very unclear, 5 = very clear)', type: 'scale_1_5', options: null, order: 3, required: true },
-      { key: 'confidence', prompt: 'PLACEHOLDER — How confident are you in your answer? (1 = not at all, 5 = very)', type: 'scale_1_5', options: null, order: 4, required: true },
-      { key: 'comments', prompt: 'PLACEHOLDER — Any comments? (optional)', type: 'free_text', options: null, order: 5, required: false },
+      {
+        key: 'perceived_difficulty',
+        prompt: 'PLACEHOLDER — How difficult was this mission?',
+        type: 'single_select',
+        options: ['Too easy', 'About right', 'Too hard'],
+        order: 1,
+        required: true,
+      },
+      {
+        key: 'time_taken',
+        prompt: 'PLACEHOLDER — How long did this take compared to what you expected?',
+        type: 'single_select',
+        options: ['Less than expected', 'About as expected', 'Longer than expected'],
+        order: 2,
+        required: true,
+      },
+      {
+        key: 'clarity',
+        prompt: 'PLACEHOLDER — How clear was the question? (1 = very unclear, 5 = very clear)',
+        type: 'scale_1_5',
+        options: null,
+        order: 3,
+        required: true,
+      },
+      {
+        key: 'confidence',
+        prompt: 'PLACEHOLDER — How confident are you in your answer? (1 = not at all, 5 = very)',
+        type: 'scale_1_5',
+        options: null,
+        order: 4,
+        required: true,
+      },
+      {
+        key: 'comments',
+        prompt: 'PLACEHOLDER — Any comments? (optional)',
+        type: 'free_text',
+        options: null,
+        order: 5,
+        required: false,
+      },
     ];
     for (const q of feedbackQuestions) {
       await conn.query(
@@ -232,10 +282,10 @@ async function main() {
         await conn.query(`INSERT INTO student_interests (student_id, tag) VALUES (?, ?)`, [studentId, tag]);
       }
       for (const course of s.courses) {
-        await conn.query(
-          `INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?, ?, NOW())`,
-          [studentId, course]
-        );
+        await conn.query(`INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?, ?, NOW())`, [
+          studentId,
+          course,
+        ]);
       }
     }
 

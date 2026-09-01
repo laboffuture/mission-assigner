@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: devpass
+          MYSQL_DATABASE: mission_demo
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -pdevpass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_USER: root
+      DB_PASS: devpass
+      DB_NAME: mission_demo
+      AUTH_MODE: dev
+      LOG_LEVEL: info
+      ENABLE_TEST_HOOKS: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Discover MySQL container and load timezone tables
+        run: |
+          CID=$(docker ps -q --filter ancestor=mysql:8 | head -1)
+          echo "MYSQL_CONTAINER=$CID" >> "$GITHUB_ENV"
+          # Named-zone support (Asia/Kolkata) for the streak/timezone suite.
+          docker exec "$CID" sh -c "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Run migrations
+        run: npm run db:migrate
+
+      - name: Set up Python (Stage 2 pipeline)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Stage 2 pipeline deps
+        working-directory: pipeline
+        run: |
+          python -m venv .venv
+          ./.venv/bin/pip install --quiet --upgrade pip
+          ./.venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Start server
+        run: |
+          npm run dev > /tmp/server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/dev/users >/dev/null; then echo "server up"; break; fi
+            sleep 2
+          done
+
+      - name: Run all suites
+        run: npm run verify:all
+
+      - name: Server log (on failure)
+        if: failure()
+        run: cat /tmp/server.log || true

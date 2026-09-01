@@ -87,10 +87,12 @@ export async function applyProgression(
   }
 
   // consecutive_wrong is kept in lock-step with stall_count for the Stage 1 view.
-  await conn.query(
-    `UPDATE students SET current_level = ?, stall_count = ?, consecutive_wrong = ? WHERE id = ?`,
-    [toLevel, stallToPersist, stallToPersist, studentId]
-  );
+  await conn.query(`UPDATE students SET current_level = ?, stall_count = ?, consecutive_wrong = ? WHERE id = ?`, [
+    toLevel,
+    stallToPersist,
+    stallToPersist,
+    studentId,
+  ]);
 
   await conn.query(
     `INSERT INTO level_events (student_id, assignment_id, from_level, to_level, reason)
@@ -185,8 +187,5 @@ async function raiseAssistance(conn: PoolConnection, studentId: number, levelAtT
     [studentId, levelAtTrigger, JSON.stringify(context)]
   );
 
-  logger.info(
-    { studentId, levelAtTrigger, tags: tagsInvolved },
-    'assistance raised'
-  );
+  logger.info({ studentId, levelAtTrigger, tags: tagsInvolved }, 'assistance raised');
 }

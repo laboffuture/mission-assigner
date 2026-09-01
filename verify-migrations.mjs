@@ -9,7 +9,7 @@ import { buildUmzug, makePool } from './src/migrator.js';
 
 const CURRENT = process.env.DB_NAME ?? 'mission_demo';
 const SCRATCH = 'mm_migr_scratch';
-const CONTAINER = 'mission-mysql';
+const CONTAINER = process.env.MYSQL_CONTAINER || 'mission-mysql';
 const DBPASS = process.env.DB_PASS ?? 'devpass';
 
 let pass = 0, fail = 0;

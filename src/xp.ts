@@ -4,7 +4,7 @@ import { pool } from './db.js';
 export type XpEventType = 'attempt' | 'submit' | 'correct' | 'streak_bonus' | 'feedback';
 
 export interface XpAward {
-  awarded: boolean;      // false if skipped (no rule, or already awarded)
+  awarded: boolean; // false if skipped (no rule, or already awarded)
   points: number;
   reason?: 'no_rule' | 'already_awarded';
   totalXp: number;
