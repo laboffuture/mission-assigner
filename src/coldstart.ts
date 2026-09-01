@@ -1,4 +1,5 @@
 import { pool } from './db.js';
+import { logger } from './logger.js';
 
 /**
  * Cold start: a brand-new student has no performance history.
@@ -57,9 +58,9 @@ export async function applyColdStart(studentId: number): Promise<ColdStartResult
       [startLevel, placementStatus, studentId]
     );
 
-    console.log(
-      `[coldstart] Student ${studentId}: strategy=${strategy}, start_level=${startLevel}, ` +
-        `placement_status=${placementStatus}`
+    logger.info(
+      { studentId, strategy, startLevel, placementStatus },
+      'cold start applied'
     );
 
     return { studentId, strategy, startLevel, placementStatus };

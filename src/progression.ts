@@ -1,5 +1,6 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { PLACEMENT_MISSION_LIMIT } from './coldstart.js';
+import { logger } from './logger.js';
 
 export const DEFAULT_MAX_LEVEL = 4;
 export const DEFAULT_MIN_LEVEL = 0;
@@ -184,7 +185,8 @@ async function raiseAssistance(conn: PoolConnection, studentId: number, levelAtT
     [studentId, levelAtTrigger, JSON.stringify(context)]
   );
 
-  console.log(
-    `[assistance] Student ${studentId} raised assistance at level ${levelAtTrigger}; tags=${tagsInvolved.join(', ')}`
+  logger.info(
+    { studentId, levelAtTrigger, tags: tagsInvolved },
+    'assistance raised'
   );
 }

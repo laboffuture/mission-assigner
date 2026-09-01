@@ -1,4 +1,5 @@
 import { pool } from './db.js';
+import { logger } from './logger.js';
 
 export interface SegmentDecision {
   studentId: number;
@@ -89,14 +90,15 @@ export async function assignSegment(studentId: number): Promise<SegmentDecision>
       // Fallback: lowest start_level segment for the subject.
       chosen = segments.reduce((low, s) => (Number(s.start_level) < Number(low.start_level) ? s : low), segments[0]);
       reason = 'fallback_lowest';
-      console.warn(
-        `[segmentation] Student ${studentId} ("${student.display_name}") qualified for NO segment; ` +
-          `falling back to lowest start_level segment "${chosen.name}" (start_level ${chosen.start_level}).`
+      logger.warn(
+        { studentId, displayName: student.display_name, fallbackSegment: chosen.name, startLevel: chosen.start_level },
+        'student qualified for NO segment; falling back to lowest start_level segment'
       );
     } else {
       reason = 'no_segments_for_subject';
-      console.warn(
-        `[segmentation] Student ${studentId} ("${student.display_name}"): no segments exist for subject "${student.subject}".`
+      logger.warn(
+        { studentId, displayName: student.display_name, subject: student.subject },
+        'no segments exist for subject'
       );
     }
 
@@ -106,9 +108,9 @@ export async function assignSegment(studentId: number): Promise<SegmentDecision>
       await conn.query(`UPDATE students SET segment_id = ? WHERE id = ?`, [segmentId, studentId]);
     }
 
-    console.log(
-      `[segmentation] Student ${studentId} -> ${chosen ? `segment ${segmentId} ("${chosen.name}")` : 'NONE'} ` +
-        `[reason=${reason}] candidates=${JSON.stringify(candidates)}`
+    logger.info(
+      { studentId, segmentId, segmentName: chosen ? chosen.name : null, reason, candidates },
+      'segment assigned'
     );
 
     return {

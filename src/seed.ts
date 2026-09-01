@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { pool } from './db.js';
 import { assignSegment } from './segmentation.js';
 import { publishWeek } from './weekPublisher.js';
+import { logger } from './logger.js';
 
 /**
  * Wipes and re-seeds the demo data for Stage 1 + Stage 3.
@@ -256,15 +257,19 @@ async function main() {
       );
     }
 
-    console.log('Base seed complete:');
-    console.log(`  missions:        ${missionCount}`);
-    console.log(`  mission_options: ${optionCount}`);
-    console.log(`  mission_tags:    ${tagCount}`);
-    console.log(`  segments:        3`);
-    console.log(`  xp_rules:        ${xpRules.length}`);
-    console.log(`  feedback_qs:     ${feedbackQuestions.length} (PLACEHOLDERS)`);
-    console.log(`  students:        ${students.length}`);
-    console.log(`  staff users:     ${staff.length} (sme, qc, instructor, admin)`);
+    logger.info(
+      {
+        missions: missionCount,
+        mission_options: optionCount,
+        mission_tags: tagCount,
+        segments: 3,
+        xp_rules: xpRules.length,
+        feedback_questions: feedbackQuestions.length,
+        students: students.length,
+        staff: staff.length,
+      },
+      'base seed complete (feedback questions are PLACEHOLDERS)'
+    );
 
     conn.release();
 
@@ -273,7 +278,10 @@ async function main() {
     for (const sid of studentIds) {
       const decision = await assignSegment(sid);
       const wk = await publishWeek(sid, weekStart);
-      console.log(`  student ${sid}: segment=${decision.segmentName} (${decision.reason}), week ${weekStart} -> ${wk.slots.length} slots`);
+      logger.info(
+        { studentId: sid, segment: decision.segmentName, reason: decision.reason, weekStart, slots: wk.slots.length },
+        'seeded student'
+      );
     }
   } finally {
     await pool.end();
@@ -285,6 +293,6 @@ function capitalize(s: string): string {
 }
 
 main().catch((err) => {
-  console.error('Seed failed:', err);
+  logger.error({ err }, 'seed failed');
   process.exit(1);
 });

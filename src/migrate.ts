@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { rootPool } from './db.js';
+import { logger } from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -92,10 +93,10 @@ async function main() {
     }
 
     if (applied.length === 0) {
-      console.log('Stage 3 migration: nothing to do (already applied).');
+      logger.info('Stage 3 migration: nothing to do (already applied).');
     } else {
-      console.log('Stage 3 migration applied:');
-      for (const a of applied) console.log(`  - ${a}`);
+      logger.info('Stage 3 migration applied:');
+      for (const a of applied) logger.info(`  - ${a}`);
     }
 
     const [tables] = await pool.query<any[]>(
@@ -103,13 +104,13 @@ async function main() {
         WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`,
       [dbName]
     );
-    console.log(`Total tables now: ${tables.length}`);
+    logger.info(`Total tables now: ${tables.length}`);
   } finally {
     await pool.end();
   }
 }
 
 main().catch((err) => {
-  console.error('Migration failed:', err);
+  logger.error({ err }, 'Stage 3 migration failed');
   process.exit(1);
 });

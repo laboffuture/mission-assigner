@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { rootPool } from './db.js';
+import { logger } from './logger.js';
 
 const __role_ddl =
   "ADD COLUMN role ENUM('student','sme','qc','instructor','admin') NOT NULL DEFAULT 'student'";
@@ -27,11 +28,11 @@ async function main() {
   try {
     await pool.query(`USE \`${dbName}\``);
     if (await columnExists(pool, dbName, 'students', 'role')) {
-      console.log('Auth migration: nothing to do (students.role already present).');
+      logger.info('Auth migration: nothing to do (students.role already present).');
     } else {
       await pool.query(`ALTER TABLE students ${__role_ddl}`);
       await pool.query('ALTER TABLE students ADD INDEX idx_students_role (role)');
-      console.log('Auth migration applied: students.role added (+ idx_students_role).');
+      logger.info('Auth migration applied: students.role added (+ idx_students_role).');
     }
   } finally {
     await pool.end();
@@ -39,6 +40,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Auth migration failed:', err);
+  logger.error({ err }, 'Auth migration failed');
   process.exit(1);
 });

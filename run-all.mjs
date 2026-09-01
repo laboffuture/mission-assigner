@@ -63,6 +63,9 @@ try {
   run('npm run db:seed');
   run('npm run verify:auth');
 
+  // Logging (Item 2) — request id, error shape, redaction. No reseed needed.
+  run('npm run verify:logging');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
@@ -73,7 +76,7 @@ try {
   // Leave the demo DB pristine.
   run('npm run db:seed');
 
-  console.log('\n\x1b[32m==== ALL SUITES PASSED (Stage 1 + Stage 2 + Stage 3 + Stage 5 + Auth) ====\x1b[0m');
+  console.log('\n\x1b[32m==== ALL SUITES PASSED (Stage 1 + Stage 2 + Stage 3 + Stage 5 + Auth + Logging) ====\x1b[0m');
 } catch (err) {
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);

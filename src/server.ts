@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
+import pinoHttp from 'pino-http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { pool } from './db.js';
+import { logger, getTestLogs, newRequestId } from './logger.js';
+import { initSentry, captureException } from './sentry.js';
 import { selectMission } from './selection.js';
 import { submitAndGrade } from './grading.js';
 import { fillSlot } from './slotFiller.js';
@@ -23,6 +26,30 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+
+/** Per-request logger accessor (pino-http attaches req.log; fall back to base). */
+const rlog = (req: express.Request) => (req as any).log ?? logger;
+
+// Structured request logging FIRST: assign/propagate a request id (returned as
+// X-Request-Id), then log method/path/status/duration/userId per request. Each
+// handler gets a req.log child carrying the request id.
+const httpLogger = pinoHttp({
+  logger,
+  genReqId: (req, res) => {
+    const incoming = req.headers['x-request-id'];
+    const id = typeof incoming === 'string' && incoming ? incoming : newRequestId();
+    res.setHeader('X-Request-Id', id);
+    return id;
+  },
+  customProps: (req) => ({ requestId: (req as any).id, userId: (req as any).auth?.userId }),
+  autoLogging: { ignore: (req) => (req.url ?? '').startsWith('/api/test/logs') },
+});
+app.use(httpLogger);
+app.use((req, _res, next) => {
+  (req as any).log = (req as any).log.child({ requestId: (req as any).id });
+  next();
+});
+
 app.use(express.json());
 app.use(express.static(join(__dirname, '..', 'public')));
 
@@ -33,21 +60,21 @@ app.use(express.static(join(__dirname, '..', 'public')));
 // the launch token and this route is not registered.
 // ---------------------------------------------------------------------------
 if (getAuthProvider().mode === 'dev') {
-  app.get('/api/dev/users', async (_req, res) => {
+  app.get('/api/dev/users', async (req, res) => {
     try {
       const [rows] = await pool.query<any[]>(
         `SELECT id, display_name, role FROM students ORDER BY FIELD(role,'student') DESC, id`
       );
       res.json(rows);
     } catch (err) {
-      console.error(err);
+      rlog(req).error({ err }, 'request failed');
       res.status(500).json({ error: 'failed to load users' });
     }
   });
 }
 
 /** GET /api/students — staff roster (list every user). Never students. */
-app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (_req, res) => {
+app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, res) => {
   try {
     const [rows] = await pool.query<any[]>(
       `SELECT id, display_name, role, current_level, consecutive_wrong, total_xp, segment_id
@@ -56,7 +83,7 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (_req, 
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load students' });
   }
 });
@@ -96,7 +123,7 @@ app.get('/api/current/:studentId', requireAuth, requireRole('student'), async (r
     const mission = await loadMissionContent(missionId);
     res.json({ assignment_id: assignmentId, ...mission });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load current mission' });
   }
 });
@@ -201,7 +228,7 @@ app.get('/api/week/:studentId', requireAuth, async (req, res) => {
       slots,
     });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load week' });
   }
 });
@@ -271,7 +298,7 @@ app.post('/api/slot/:slotId/open', requireAuth, requireRole('student'), async (r
     const mission = await loadMissionContent(missionId);
     res.json({ assignment_id: assignmentId, ...mission, xp });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to open slot' });
   }
 });
@@ -331,7 +358,7 @@ app.post('/api/submit', requireAuth, requireRole('student'), async (req, res) =>
       },
     });
   } catch (err: any) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(400).json({ error: err?.message ?? 'submit failed' });
   }
 });
@@ -354,7 +381,7 @@ app.get('/api/xp/:studentId', requireAuth, async (req, res) => {
     );
     res.json({ total_xp: totalRow ? Number(totalRow.total_xp) : 0, events });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load xp' });
   }
 });
@@ -414,13 +441,13 @@ app.get('/api/segment/:studentId', requireAuth, async (req, res) => {
       prerequisites,
     });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load segment' });
   }
 });
 
 /** GET /api/assistance — open assistance events (instructor/admin view). */
-app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme', 'qc'), async (_req, res) => {
+app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme', 'qc'), async (req, res) => {
   try {
     const [rows] = await pool.query<any[]>(
       `SELECT ae.id, ae.student_id, s.display_name, ae.trigger_reason,
@@ -432,7 +459,7 @@ app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme'
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load assistance events' });
   }
 });
@@ -454,7 +481,7 @@ app.get('/api/history/:studentId', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load history' });
   }
 });
@@ -464,12 +491,12 @@ app.get('/api/history/:studentId', requireAuth, async (req, res) => {
 // ===========================================================================
 
 /** GET /api/feedback/questions — active questions, ordered. Any authenticated user. */
-app.get('/api/feedback/questions', requireAuth, async (_req, res) => {
+app.get('/api/feedback/questions', requireAuth, async (req, res) => {
   try {
     const questions = await getQuestions();
     res.json(questions);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load feedback questions' });
   }
 });
@@ -500,7 +527,7 @@ app.post('/api/feedback/:assignmentId', requireAuth, requireRole('student'), asy
     if (err instanceof FeedbackError) {
       return res.status(err.status).json({ error: err.message });
     }
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to submit feedback' });
   }
 });
@@ -516,7 +543,7 @@ app.get('/api/progress/:studentId', requireAuth, async (req, res) => {
     if (!progress) return res.status(404).json({ error: 'student not found' });
     res.json(progress);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load progress' });
   }
 });
@@ -533,18 +560,18 @@ app.get('/api/submissions/:studentId', requireAuth, async (req, res) => {
     const log = await getSubmissionLog(studentId, limit, offset);
     res.json(log);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load submissions' });
   }
 });
 
 /** GET /api/mission-quality — SME report. SME/QC/admin only. */
-app.get('/api/mission-quality', requireAuth, requireRole('sme', 'qc', 'admin'), async (_req, res) => {
+app.get('/api/mission-quality', requireAuth, requireRole('sme', 'qc', 'admin'), async (req, res) => {
   try {
     const report = await getMissionQuality();
     res.json(report);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to build mission-quality report' });
   }
 });
@@ -557,7 +584,7 @@ app.get('/api/mission-quality/:missionId', requireAuth, requireRole('sme', 'qc',
     const report = await getMissionQuality(missionId);
     res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to build mission-quality report' });
   }
 });
@@ -591,7 +618,7 @@ app.get('/api/attempts/:assignmentId', requireAuth, async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
+    rlog(req).error({ err }, 'request failed');
     res.status(500).json({ error: 'failed to load attempt log' });
   }
 });
@@ -641,8 +668,38 @@ async function loadMissionContent(missionId: number) {
   };
 }
 
+// Test-only routes (ENABLE_TEST_HOOKS): a synthetic error to exercise the
+// central error handler, and a peek at the in-memory log ring for the logging
+// test. Never registered in production.
+if (process.env.ENABLE_TEST_HOOKS) {
+  app.get('/api/test/boom', () => {
+    throw new Error('boom: synthetic error to exercise the central error handler');
+  });
+  app.get('/api/test/logs', (req, res) => {
+    const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
+    res.json(getTestLogs(requestId));
+  });
+}
+
+/**
+ * Central error handler — LAST middleware. Catches anything thrown or passed to
+ * next(err), logs it with stack + requestId, reports it to Sentry (if enabled),
+ * and returns a consistent JSON shape. A stack trace is NEVER sent to the client.
+ */
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const requestId = (req as any).id;
+  rlog(req).error({ err }, 'unhandled error');
+  captureException(err);
+  if (res.headersSent) return;
+  const status = Number.isInteger(err?.status) ? err.status : 500;
+  const message = status >= 500 ? 'internal server error' : String(err?.message ?? 'error');
+  res.status(status).json({ error: { code: err?.code ?? 'internal_error', message, requestId } });
+});
+
 const PORT = Number(process.env.PORT) || 3000;
-app.listen(PORT, () => {
-  console.log(`Mission demo listening on http://localhost:${PORT}`);
-  warnIfInsecureAuth();
+initSentry().finally(() => {
+  app.listen(PORT, () => {
+    logger.info({ port: PORT, authMode: getAuthProvider().mode }, `Mission demo listening on http://localhost:${PORT}`);
+    warnIfInsecureAuth();
+  });
 });

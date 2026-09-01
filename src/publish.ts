@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { pool } from './db.js';
 import { publishWeek } from './weekPublisher.js';
+import { logger } from './logger.js';
 
 /**
  * Manual week publisher. In production this runs on a schedule.
@@ -21,7 +22,7 @@ async function main() {
   const target = process.argv[2];
   const weekStart = process.argv[3] ?? mondayOf(new Date());
   if (!target) {
-    console.error('Usage: npm run publish -- <studentId|all> [weekStart=YYYY-MM-DD]');
+    logger.error('Usage: npm run publish -- <studentId|all> [weekStart=YYYY-MM-DD]');
     process.exit(1);
   }
 
@@ -35,14 +36,15 @@ async function main() {
 
   for (const id of ids) {
     const wk = await publishWeek(id, weekStart);
-    console.log(
-      `student ${id}: week ${weekStart} ${wk.created ? 'PUBLISHED' : 'already existed (no-op)'} — ${wk.slots.length} slots`
+    logger.info(
+      { studentId: id, weekStart, created: wk.created, slots: wk.slots.length },
+      wk.created ? 'week published' : 'week already existed (no-op)'
     );
   }
   await pool.end();
 }
 
 main().catch((err) => {
-  console.error('Publish failed:', err);
+  logger.error({ err }, 'publish failed');
   process.exit(1);
 });

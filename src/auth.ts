@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db.js';
+import { logger } from './logger.js';
 
 /**
  * Authentication & authorisation.
@@ -119,7 +120,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     next();
   } catch (err) {
     // e.g. the LTI stub throwing. Never leak details to the client.
-    console.error('[auth] authentication error:', err);
+    (req as any).log?.error({ err }, 'authentication error') ?? logger.error({ err }, 'authentication error');
     res.status(500).json({ error: { code: 'auth_error', message: 'authentication failed' } });
   }
 }
@@ -171,13 +172,10 @@ export function resolveOwnedStudent(req: Request, res: Response, pathId: number)
 export function warnIfInsecureAuth(): void {
   const provider = getAuthProvider();
   if (provider.mode === 'dev') {
-    console.warn(
-      '\n****************************************************************\n' +
-        '*  WARNING: AUTH_MODE=dev — identity comes from an X-User-Id   *\n' +
-        '*  HEADER the client sets. This is INSECURE and MUST NOT be    *\n' +
-        '*  used in production. Set AUTH_MODE=lti (with the LTI          *\n' +
-        '*  provider) before shipping to real students.                 *\n' +
-        '****************************************************************\n'
+    logger.warn(
+      { insecure: true, authMode: 'dev' },
+      'SECURITY: AUTH_MODE=dev — identity comes from a client-set X-User-Id header. ' +
+        'This is INSECURE and MUST NOT be used in production. Set AUTH_MODE=lti before shipping to real students.'
     );
   }
 }

@@ -1,6 +1,7 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
 import { logAttempt } from './tracking.js';
+import { logger } from './logger.js';
 
 export interface FillResult {
   weekSlotId: number;
@@ -119,7 +120,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
     // a. widen difficulty to target ±1
     if (!chosen) {
       relaxations.push('widen_difficulty_pm1');
-      console.log(`[slotFiller] slot ${weekSlotId}: relax (a) widen difficulty to ${targetLevel}±1`);
+      logger.info({ weekSlotId, targetLevel, relax: 'a' }, 'slotFiller: widen difficulty ±1');
       chosen = await queryCandidates(conn, {
         studentId,
         subject: slot.subject,
@@ -135,7 +136,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
     // b. drop tag-interest ranking (rank randomly)
     if (!chosen) {
       relaxations.push('drop_tag_ranking');
-      console.log(`[slotFiller] slot ${weekSlotId}: relax (b) drop tag-interest ranking (random)`);
+      logger.info({ weekSlotId, relax: 'b' }, 'slotFiller: drop tag-interest ranking (random)');
       chosen = await queryCandidates(conn, {
         studentId,
         subject: slot.subject,
@@ -153,7 +154,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
       const idx = TIME_BANDS.indexOf(String(slot.time_band));
       const widened = idx >= 0 ? TIME_BANDS.slice(idx) : [String(slot.time_band)];
       relaxations.push(`widen_time_band_to:${widened.join('|')}`);
-      console.log(`[slotFiller] slot ${weekSlotId}: relax (c) widen time_band to [${widened.join(', ')}]`);
+      logger.info({ weekSlotId, relax: 'c', bands: widened }, 'slotFiller: widen time_band');
       chosen = await queryCandidates(conn, {
         studentId,
         subject: slot.subject,
@@ -181,7 +182,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
         [studentId, JSON.stringify([]), JSON.stringify(filters)]
       );
       await conn.commit();
-      console.warn(`[slotFiller] slot ${weekSlotId}: NO mission available — coverage gap recorded.`);
+      logger.warn({ weekSlotId, studentId }, 'slotFiller: NO mission available — coverage gap recorded');
       return { weekSlotId, assignmentId: null, missionId: null, targetLevel, relaxations, gap: true };
     }
 

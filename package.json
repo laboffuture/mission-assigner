@@ -16,12 +16,16 @@
     "verify:stage3": "tsx verify-stage3.mjs",
     "verify:stage5": "tsx verify-stage5.mjs",
     "verify:auth": "node verify-auth.mjs",
+    "verify:logging": "node verify-logging.mjs",
     "verify:all": "node run-all.mjs"
   },
   "dependencies": {
+    "@sentry/node": "^10.73.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "mysql2": "^3.11.0"
+    "mysql2": "^3.11.0",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

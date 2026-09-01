@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { rootPool } from './db.js';
+import { logger } from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -31,15 +32,16 @@ async function main() {
         ORDER BY TABLE_NAME`,
       [dbName]
     );
-    console.log(`Schema applied to \`${dbName}\`. Tables:`);
-    for (const t of tables) console.log(`  - ${t.name}`);
-    console.log(`Total: ${tables.length} tables.`);
+    logger.info(
+      { database: dbName, tableCount: tables.length, tables: tables.map((t) => t.name) },
+      'schema applied'
+    );
   } finally {
     await pool.end();
   }
 }
 
 main().catch((err) => {
-  console.error('Schema failed:', err);
+  logger.error({ err }, 'schema failed');
   process.exit(1);
 });
