@@ -51,13 +51,14 @@ await root.query(`CREATE DATABASE \`${SCRATCH}\` CHARACTER SET utf8mb4 COLLATE u
 const pool = makePool(SCRATCH);
 const umzug = buildUmzug(pool);
 
+const EXPECTED = 5;
 console.log('\n[Migrating a fresh database applies every migration]');
 const applied1 = await umzug.up();
-check('all 4 migrations applied', applied1.length === 4, `(applied=${applied1.map((m) => m.name).length})`);
+check(`all ${EXPECTED} migrations applied`, applied1.length === EXPECTED, `(applied=${applied1.length})`);
 const [[{ n }]] = await pool.query(`SELECT COUNT(*) n FROM schema_migrations`);
-check('schema_migrations records 4 rows', Number(n) === 4, `(rows=${n})`);
+check(`schema_migrations records ${EXPECTED} rows`, Number(n) === EXPECTED, `(rows=${n})`);
 const [tsRows] = await pool.query(`SELECT applied_at FROM schema_migrations WHERE applied_at IS NOT NULL`);
-check('each recorded with a timestamp', tsRows.length === 4);
+check('each recorded with a timestamp', tsRows.length === EXPECTED);
 
 console.log('\n[Running migrate twice is a no-op]');
 const applied2 = await umzug.up();
@@ -84,7 +85,7 @@ console.log('\n[A fresh migrated schema is identical to the current database]');
 console.log('\n[A down migration reverses cleanly]');
 {
   const reverted = await umzug.down({ to: 0 });
-  check('all 4 migrations reverted', reverted.length === 4, `(reverted=${reverted.length})`);
+  check(`all ${EXPECTED} migrations reverted`, reverted.length === EXPECTED, `(reverted=${reverted.length})`);
   const [tables] = await pool.query(
     `SELECT TABLE_NAME AS t FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = ? AND TABLE_NAME <> 'schema_migrations'`,
@@ -93,7 +94,7 @@ console.log('\n[A down migration reverses cleanly]');
   check('all application tables dropped', tables.length === 0, `(remaining=${tables.map((r) => r.t).join(',')})`);
   // ...and re-appliable
   const reup = await umzug.up();
-  check('re-up after down applies all 4 again', reup.length === 4, `(applied=${reup.length})`);
+  check(`re-up after down applies all ${EXPECTED} again`, reup.length === EXPECTED, `(applied=${reup.length})`);
 }
 
 await pool.end();

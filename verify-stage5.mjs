@@ -232,10 +232,15 @@ console.log('\n[C12] computeStreak = 3 for three consecutive days, unbroken by t
   const { aid } = await gradeSlot1(sid, '2026-10-05');
   // Wipe the auto-created 'submitted' log so we control the dates exactly.
   await db.query(`DELETE FROM attempt_logs WHERE student_id=? AND event='submitted'`, [sid]);
+  // Insert at the student's LOCAL (Asia/Kolkata) yesterday/-2/-3 at local noon,
+  // stored as UTC — so the streak is unbroken regardless of wall-clock time.
   for (const nDaysAgo of [1, 2, 3]) { // yesterday, -2, -3; NOT today
     await db.query(
       `INSERT INTO attempt_logs (assignment_id, student_id, event, created_at)
-       VALUES (?, ?, 'submitted', DATE_SUB(CURDATE(), INTERVAL ? DAY))`, [aid, sid, nDaysAgo]);
+       VALUES (?, ?, 'submitted',
+         CONVERT_TZ(CONCAT(DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(),'+00:00','Asia/Kolkata')), INTERVAL ? DAY), ' 12:00:00'),
+                    'Asia/Kolkata', '+00:00'))`,
+      [aid, sid, nDaysAgo]);
   }
   const streak = await computeStreak(sid);
   check('streak = 3', streak === 3, `(streak=${streak})`);

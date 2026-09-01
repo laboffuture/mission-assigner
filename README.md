@@ -76,6 +76,25 @@ migration has an `up` and a `down`. `npm run verify:migrations` proves a fresh
 migrated database is schema-identical to the current one, that re-running is a
 no-op, and that `down` reverses cleanly.
 
+### Timezones (Item 7)
+
+**Convention: everything is UTC.** Timestamps are stored UTC; every connection
+sets `time_zone = '+00:00'` explicitly (never relies on the container default)
+and mysql2 uses `timezone: 'Z'`. **All time arithmetic is done in SQL**
+(`TIMESTAMPDIFF`, `CONVERT_TZ`) — never in JavaScript against a driver-returned
+`Date`, which would silently shift by the Node process's local zone (that bug is
+what motivated this rule).
+
+Streaks are bucketed by the **student's local day**, not the server's: each
+student has a `timezone` (IANA name, default `Asia/Kolkata`) and the streak
+converts UTC timestamps to that zone with `CONVERT_TZ` before taking the date.
+This needs MySQL's named-timezone tables loaded once per server:
+
+```bash
+docker exec mission-mysql sh -c \
+  "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
+```
+
 ### 5. Run
 
 ```bash

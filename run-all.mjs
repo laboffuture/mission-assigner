@@ -76,6 +76,10 @@ try {
   // Config validation (Item 6) — refuses to start on bad env.
   run('npm run verify:config');
 
+  // Timezone (Item 7) — UTC storage, SQL time math, per-student streak boundary.
+  run('npm run db:seed');
+  run('npm run verify:timezone');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
