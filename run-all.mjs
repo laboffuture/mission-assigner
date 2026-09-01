@@ -73,6 +73,9 @@ try {
   run('npm run db:seed');
   run('npm run verify:validation');
 
+  // Config validation (Item 6) — refuses to start on bad env.
+  run('npm run verify:config');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
@@ -83,7 +86,7 @@ try {
   // Leave the demo DB pristine.
   run('npm run db:seed');
 
-  console.log('\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation) ====\x1b[0m');
+  console.log('\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation + Config) ====\x1b[0m');
 } catch (err) {
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);

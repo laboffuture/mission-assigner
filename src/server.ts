@@ -24,6 +24,7 @@ import {
 } from './auth.js';
 import { validate } from './validate.js';
 import { sendError } from './httpError.js';
+import { validateEnv } from './env.js';
 import {
   studentIdParams,
   slotIdParams,
@@ -35,6 +36,9 @@ import {
 } from './schemas.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Refuse to start half-configured — validate every env var first (Item 6).
+validateEnv();
 
 const app = express();
 
@@ -730,5 +734,11 @@ initSentry().finally(() => {
   app.listen(PORT, () => {
     logger.info({ port: PORT, authMode: getAuthProvider().mode }, `Mission demo listening on http://localhost:${PORT}`);
     warnIfInsecureAuth();
+    if (process.env.ENABLE_TEST_HOOKS) {
+      logger.warn(
+        { testHooks: true },
+        'ENABLE_TEST_HOOKS is set — test-only routes (/api/test/*) are exposed and feedback gating is runtime-injectable. NEVER enable this in production.'
+      );
+    }
   });
 });

@@ -12,7 +12,12 @@ import pino from 'pino';
  * scraping files.
  */
 
-const LEVEL = process.env.LOG_LEVEL ?? 'info';
+// Tolerate a bad LOG_LEVEL here (fall back to 'info') so importing the logger
+// never throws; env.ts::validateEnv() reports the malformed value with a clear
+// message and exits at boot.
+const VALID_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'];
+const RAW_LEVEL = (process.env.LOG_LEVEL ?? 'info').toLowerCase();
+const LEVEL = VALID_LEVELS.includes(RAW_LEVEL) ? RAW_LEVEL : 'info';
 const TEST_HOOKS = !!process.env.ENABLE_TEST_HOOKS;
 
 /**

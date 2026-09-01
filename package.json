@@ -21,6 +21,7 @@
     "verify:logging": "node verify-logging.mjs",
     "verify:validation": "node verify-validation.mjs",
     "verify:migrations": "tsx verify-migrations.mjs",
+    "verify:config": "node verify-config.mjs",
     "verify:all": "node run-all.mjs"
   },
   "dependencies": {
