@@ -29,6 +29,7 @@
     "verify:validation": "node verify-validation.mjs",
     "verify:migrations": "tsx verify-migrations.mjs",
     "verify:config": "node verify-config.mjs",
+    "verify:prod-guard": "node verify-prod-guard.mjs",
     "verify:timezone": "tsx verify-timezone.mjs",
     "verify:concurrency": "tsx verify-concurrency.mjs",
     "verify:pagination": "node verify-pagination.mjs",

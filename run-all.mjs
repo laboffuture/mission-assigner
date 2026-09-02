@@ -80,6 +80,10 @@ try {
   // Config validation (Item 6) — refuses to start on bad env.
   run('npm run verify:config');
 
+  // Production security guard — refuses to boot in production while any staff
+  // account still has the default password. (Reseeds itself at the end.)
+  run('npm run verify:prod-guard');
+
   // Timezone (Item 7) — UTC storage, SQL time math, per-student streak boundary.
   run('npm run db:seed');
   run('npm run verify:timezone');

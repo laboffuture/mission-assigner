@@ -36,6 +36,7 @@ import { sendError } from './httpError.js';
 import { validateEnv } from './env.js';
 import { sessionMiddleware } from './session.js';
 import { registerAuthRoutes } from './authRoutes.js';
+import { assertProductionSecurity } from './securityChecks.js';
 import {
   studentIdParams,
   slotIdParams,
@@ -826,15 +827,26 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 });
 
 const PORT = Number(process.env.PORT) || 3000;
-initSentry().finally(() => {
-  app.listen(PORT, () => {
-    logger.info({ port: PORT, authMode: getAuthProvider().mode }, `Mission Hub listening on http://localhost:${PORT}`);
-    warnIfInsecureAuth();
-    if (process.env.ENABLE_TEST_HOOKS) {
-      logger.warn(
-        { testHooks: true },
-        'ENABLE_TEST_HOOKS is set — test-only routes (/api/test/*) are exposed and feedback gating is runtime-injectable. NEVER enable this in production.'
+initSentry()
+  .then(() => assertProductionSecurity())
+  .catch((err) => {
+    // Fatal, pre-listen security failure (e.g. default staff passwords in
+    // production). Print the reason and refuse to start.
+    process.stderr.write(`\nFATAL: ${err?.message ?? err}\n\n`);
+    process.exit(1);
+  })
+  .then(() => {
+    app.listen(PORT, () => {
+      logger.info(
+        { port: PORT, authMode: getAuthProvider().mode },
+        `Mission Hub listening on http://localhost:${PORT}`
       );
-    }
+      warnIfInsecureAuth();
+      if (process.env.ENABLE_TEST_HOOKS) {
+        logger.warn(
+          { testHooks: true },
+          'ENABLE_TEST_HOOKS is set — test-only routes (/api/test/*) are exposed and feedback gating is runtime-injectable. NEVER enable this in production.'
+        );
+      }
+    });
   });
-});
