@@ -70,6 +70,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:staff-auth');
 
+  // Login rate limit — 5 failures/username/15min → 429, no existence leak.
+  // (Resets the in-memory limiter at the end so later logins are unaffected.)
+  run('npm run verify:login-ratelimit');
+
   // Logging (Item 2) — request id, error shape, redaction. No reseed needed.
   run('npm run verify:logging');
 

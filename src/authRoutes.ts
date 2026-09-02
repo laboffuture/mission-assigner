@@ -4,6 +4,7 @@ import { pool } from './db.js';
 import { logger } from './logger.js';
 import { sendError } from './httpError.js';
 import { requireAuth, STAFF_ROLES, type Role } from './auth.js';
+import { isRateLimited, retryAfterSeconds, recordFailure, clearAttempts } from './rateLimit.js';
 
 /**
  * Staff authentication routes (username + password → signed session cookie).
@@ -24,6 +25,13 @@ export function registerAuthRoutes(app: Express): void {
     if (!username || !password) {
       return sendError(req, res, 400, 'validation_error', 'username and password are required');
     }
+    // Rate limit BEFORE touching the DB, keyed on the submitted username. Because
+    // the check and its 429 are identical whether or not the user exists, it
+    // never reveals account existence.
+    if (isRateLimited(username)) {
+      res.setHeader('Retry-After', String(retryAfterSeconds(username)));
+      return sendError(req, res, 429, 'too_many_attempts', 'too many login attempts — try again later');
+    }
     try {
       const [rows] = await pool.query<any[]>(
         `SELECT id, display_name, role, password_hash FROM students WHERE username = ? LIMIT 1`,
@@ -36,8 +44,10 @@ export function registerAuthRoutes(app: Express): void {
       const ok = await bcrypt.compare(password, hash);
       const isStaff = user && (STAFF_ROLES as readonly string[]).includes(user.role);
       if (!user || !ok || !isStaff) {
+        recordFailure(username); // count failures per username, existing or not
         return sendError(req, res, 401, 'invalid_credentials', 'invalid username or password');
       }
+      clearAttempts(username); // a correct login resets the window
       req.session = { uid: Number(user.id) };
       rlog(req).info({ userId: Number(user.id), role: user.role }, 'staff login');
       res.json({ id: Number(user.id), display_name: user.display_name, role: user.role as Role });

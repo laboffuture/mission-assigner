@@ -25,6 +25,7 @@
     "verify:stage5": "tsx verify-stage5.mjs",
     "verify:auth": "node verify-auth.mjs",
     "verify:staff-auth": "node verify-staff-auth.mjs",
+    "verify:login-ratelimit": "node verify-login-ratelimit.mjs",
     "verify:logging": "node verify-logging.mjs",
     "verify:validation": "node verify-validation.mjs",
     "verify:migrations": "tsx verify-migrations.mjs",

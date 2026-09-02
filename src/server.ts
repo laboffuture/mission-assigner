@@ -37,6 +37,7 @@ import { validateEnv } from './env.js';
 import { sessionMiddleware } from './session.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import { assertProductionSecurity } from './securityChecks.js';
+import { resetRateLimiter } from './rateLimit.js';
 import {
   studentIdParams,
   slotIdParams,
@@ -809,6 +810,11 @@ if (process.env.ENABLE_TEST_HOOKS) {
   app.get('/api/test/logs', (req, res) => {
     const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
     res.json(getTestLogs(requestId));
+  });
+  app.post('/api/test/reset-rate-limit', (req, res) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username : undefined;
+    resetRateLimiter(username);
+    res.json({ ok: true });
   });
 }
 
