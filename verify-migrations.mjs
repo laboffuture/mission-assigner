@@ -52,7 +52,7 @@ await root.query(`CREATE DATABASE \`${SCRATCH}\` CHARACTER SET utf8mb4 COLLATE u
 const pool = makePool(SCRATCH);
 const umzug = buildUmzug(pool);
 
-const EXPECTED = 6;
+const EXPECTED = 7;
 console.log('\n[Migrating a fresh database applies every migration]');
 const applied1 = await umzug.up();
 check(`all ${EXPECTED} migrations applied`, applied1.length === EXPECTED, `(applied=${applied1.length})`);

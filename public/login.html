@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mission Hub — Staff sign in</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: #f6f8fa; color: #1c1e21;
+    }
+    .card { background: #fff; border: 1px solid #d0d7de; border-radius: 12px; padding: 28px; width: 340px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    h1 { font-size: 1.4rem; margin: 0 0 2px; }
+    .sub { color: #57606a; font-size: 0.9rem; margin: 0 0 20px; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 12px 0 4px; }
+    input { width: 100%; font: inherit; padding: 9px 11px; border: 1px solid #d0d7de; border-radius: 8px; }
+    input:focus { outline: 2px solid #1f6feb; border-color: #1f6feb; }
+    button { width: 100%; margin-top: 18px; font: inherit; font-weight: 600; padding: 10px; border: none; border-radius: 8px; background: #1f6feb; color: #fff; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: default; }
+    .err { color: #cf222e; font-size: 0.88rem; margin-top: 12px; min-height: 1.1em; }
+    .foot { color: #8c959f; font-size: 0.78rem; margin-top: 18px; text-align: center; }
+  </style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="on">
+    <h1>Mission Hub</h1>
+    <p class="sub">Staff sign in — SME, QC &amp; admin</p>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" autofocus required />
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+    <button id="submit" type="submit">Sign in</button>
+    <div class="err" id="err"></div>
+    <p class="foot">Students sign in through Moodle — no account needed here.</p>
+  </form>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // Already signed in? Skip straight to the staff view.
+    (async () => {
+      try {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+          const me = await res.json();
+          if (me.role && me.role !== 'student') location.href = '/quality';
+        }
+      } catch { /* not signed in — show the form */ }
+    })();
+
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('err').textContent = '';
+      $('submit').disabled = true;
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: $('username').value, password: $('password').value }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = body && body.error ? (body.error.message || body.error) : 'Sign in failed';
+          $('err').textContent = msg;
+          $('submit').disabled = false;
+          return;
+        }
+        location.href = '/quality';
+      } catch (err) {
+        $('err').textContent = 'Network error — please try again.';
+        $('submit').disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

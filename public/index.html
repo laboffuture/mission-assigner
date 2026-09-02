@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mission Demo — Stage 5</title>
+  <title>Mission Hub</title>
   <style>
     :root { --up: #1a7f37; --hold: #9a6700; --lock: #8c959f; --xp: #8250df; }
     * { box-sizing: border-box; }
@@ -74,17 +74,21 @@
 </head>
 <body>
   <header>
-    <h1>Student Mission Demo <span class="pill">Stage 5</span></h1>
+    <h1>Mission Hub</h1>
     <div class="row">
       <span>XP</span><span class="xp-counter" id="xpCounter">0</span>
-      <a href="/quality" title="SME mission-quality report">Quality report →</a>
     </div>
   </header>
 
   <div class="card">
     <div class="row">
-      <label for="student">Student:</label>
-      <select id="student"></select>
+      <!-- Dev-only student switcher; hidden once a real student session (Moodle SSO) is present. -->
+      <span id="devPicker" class="row hidden">
+        <label for="student">Preview as:</label>
+        <select id="student"></select>
+        <span class="muted">(dev)</span>
+      </span>
+      <span id="whoami" class="hidden"></span>
       <span id="levelBadge" class="pill"></span>
       <span class="muted">Segment:</span> <span class="seg-name" id="segName">—</span>
     </div>
@@ -145,21 +149,28 @@
       const m = Math.floor(s / 60); return m + 'm ' + (s % 60) + 's';
     }
 
-    // Dev login roster (AUTH_MODE=dev only). Picking a user sets the identity
-    // (X-User-Id) sent on every request — the demo stand-in for a login / LTI
-    // launch token. Staff users are tagged with their role.
+    // Dev-only student switcher (AUTH_MODE=dev). Picking a user sets the identity
+    // (X-User-Id) sent on every request — the local stand-in for a Moodle SSO
+    // launch. Only students are listed here; staff sign in at /login. Returns
+    // false when the dev roster isn't available (e.g. production / LTI mode).
     async function loadUsers() {
-      const users = await (await fetch('/api/dev/users')).json();
+      let res;
+      try { res = await fetch('/api/dev/users'); } catch { return false; }
+      if (!res.ok) return false;
+      const users = (await res.json()).filter((u) => u.role === 'student');
+      if (!users.length) return false;
       const sel = $('student');
       sel.innerHTML = '';
       for (const u of users) {
         const opt = document.createElement('option');
         opt.value = u.id;
-        opt.textContent = u.display_name + (u.role !== 'student' ? ` [${u.role}]` : '');
+        opt.textContent = u.display_name;
         sel.appendChild(opt);
       }
       currentStudentId = Number(sel.value);
       localStorage.setItem('devUserId', String(currentStudentId));
+      $('devPicker').classList.remove('hidden');
+      return true;
     }
 
     async function refreshHeader() {
@@ -389,13 +400,44 @@
       await loadHistory();
     });
 
-    (async () => {
-      await loadUsers();
+    async function loadAll() {
       await refreshHeader();
       await loadProgress();
       await loadWeek();
       await loadSubmissions();
       await loadHistory();
+    }
+
+    // Identity resolution:
+    //  1. A real session (Moodle SSO student, or staff) via /api/me.
+    //     - student → show their dashboard.
+    //     - staff   → this is the student view; send them to the staff report.
+    //  2. No session → dev student switcher (local only).
+    //  3. Neither  → send to the staff login.
+    (async () => {
+      let me = null;
+      try {
+        const res = await fetch('/api/me');
+        if (res.ok) me = await res.json();
+      } catch { /* fall through to dev/login */ }
+
+      if (me && me.role && me.role !== 'student') { location.href = '/quality'; return; }
+
+      if (me && me.role === 'student') {
+        currentStudentId = Number(me.id);
+        localStorage.setItem('devUserId', String(currentStudentId));
+        $('whoami').textContent = me.display_name || 'Signed in';
+        $('whoami').classList.remove('hidden');
+        await loadAll();
+        return;
+      }
+
+      // No session — local dev preview, or nowhere to go.
+      if (await loadUsers()) {
+        await loadAll();
+      } else {
+        location.href = '/login';
+      }
     })();
   </script>
 </body>

@@ -34,6 +34,8 @@ import {
 import { validate } from './validate.js';
 import { sendError } from './httpError.js';
 import { validateEnv } from './env.js';
+import { sessionMiddleware } from './session.js';
+import { registerAuthRoutes } from './authRoutes.js';
 import {
   studentIdParams,
   slotIdParams,
@@ -75,7 +77,13 @@ app.use((req, _res, next) => {
 });
 
 app.use(express.json());
+// Signed staff session cookie (login / LTI launch). Must precede any route that
+// resolves identity from the session.
+app.use(sessionMiddleware());
 app.use(express.static(join(__dirname, '..', 'public')));
+
+// Staff auth: POST /api/login, POST /api/logout, GET /api/me.
+registerAuthRoutes(app);
 
 // ---------------------------------------------------------------------------
 // Dev-only login roster. Logging in is inherently pre-auth (you can't pick who
@@ -749,6 +757,12 @@ app.get('/quality', (_req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'quality.html'));
 });
 
+/** GET /login — the staff login page (Mission Hub). Public shell; the actual
+ *  credential check is POST /api/login. */
+app.get('/login', (_req, res) => {
+  res.sendFile(join(__dirname, '..', 'public', 'login.html'));
+});
+
 /**
  * POST /api/test/feedback-gating  body { enabled: boolean | null }
  * Test hook (ENABLE_TEST_HOOKS only): inject FEEDBACK_GATES_UNLOCK at runtime so
@@ -814,7 +828,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 const PORT = Number(process.env.PORT) || 3000;
 initSentry().finally(() => {
   app.listen(PORT, () => {
-    logger.info({ port: PORT, authMode: getAuthProvider().mode }, `Mission demo listening on http://localhost:${PORT}`);
+    logger.info({ port: PORT, authMode: getAuthProvider().mode }, `Mission Hub listening on http://localhost:${PORT}`);
     warnIfInsecureAuth();
     if (process.env.ENABLE_TEST_HOOKS) {
       logger.warn(

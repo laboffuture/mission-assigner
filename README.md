@@ -1,7 +1,9 @@
-# Mission Demo
+# Mission Hub
 
-A production-schema demo of an automated student-mission platform. It has three
-stages, all sharing one MySQL database:
+An automated student-mission platform. Students reach it through **Moodle SSO**
+(LTI launch — no separate login); **staff** (SME, QC, admin) sign in directly at
+`/login` with a username and password. It has three stages, all sharing one
+MySQL database:
 
 - **Stage 1** — the adaptive mission loop: a student is assigned a mission,
   submits, is auto-graded, and their level moves. **A level never decreases** —
@@ -118,24 +120,45 @@ XP is in the header, and the student's segment is shown.
 | env var | meaning |
 |---------|---------|
 | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME`/`PORT` | connection + server port |
-| `AUTH_MODE` | `dev` (header identity, insecure) or `lti` (launch token, stub) — see Authentication |
+| `AUTH_MODE` | `dev` (header identity, insecure) or `lti` (student launch token, stub) — see Authentication |
+| `NODE_ENV` | `development` (default) / `test` / `production`. In production `SESSION_SECRET` is required and the session cookie is `Secure`. |
+| `SESSION_SECRET` | signs the staff session cookie. Optional locally (a dev key is used, with a warning); **required, 32+ chars, in production**. |
+| `STAFF_DEFAULT_PASSWORD` | password the seed gives staff accounts (default `changeme`). Change per account with `npm run set-password`. |
 | `COLD_START_STRATEGY` | how a brand-new student is placed — see below |
 | `FEEDBACK_GATES_UNLOCK` | whether feedback is required before the next slot unlocks — see below |
 
-## Authentication & authorisation (Item 1)
+## Authentication & authorisation
 
-Identity is resolved by a pluggable provider (`src/auth.ts`) selected by
-`AUTH_MODE`:
+There are two ways identity is established, resolved in this order by
+`requireAuth` (`src/auth.ts`):
 
-- **`dev`** (default) — `DevAuthProvider` reads an **`X-User-Id`** header
-  (`X-Student-Id` accepted as an alias) and loads the user's role/subject from
-  the DB. This trusts a client-set header and is **INSECURE**; the server logs a
-  loud warning at boot. The dev login roster (`GET /api/dev/users`) exists only
-  in this mode and is the one unauthenticated API route (logging in is
-  inherently pre-auth). The UI's dropdown is that login.
-- **`lti`** — `LtiAuthProvider` will read the LTI 1.3 launch token. It is a
-  **stub** that throws until we have LTI access, so selecting it fails loudly
-  rather than allowing access.
+1. **Signed session cookie** (`mh_session`) — the primary path for the hosted
+   app. It is minted two ways:
+   - **Staff login.** SME/QC/admin/instructor sign in at **`/login`** with a
+     username + password (`POST /api/login`). Passwords are **bcrypt**-hashed in
+     `students.password_hash`; the session stores only the user id and is signed
+     with `SESSION_SECRET`. `POST /api/logout` clears it; `GET /api/me` returns
+     the current user (401 when signed out, so the UI can redirect to `/login`).
+   - **Student Moodle SSO** *(scaffold)*. Students never have a local password —
+     they arrive via an **LTI 1.3 launch** from Moodle, which will validate the
+     launch token and mint the same session cookie server-side. The provider is
+     currently a **stub** (`LtiAuthProvider`); the session mechanism it will use
+     is already in place.
+2. **Fallback provider**, selected by `AUTH_MODE`, when there is no session:
+   - **`dev`** (default) — `DevAuthProvider` reads an **`X-User-Id`** header and
+     loads the user's role/subject. Trusts a client-set header, so it is
+     **INSECURE** and for local dev + the test harnesses only (loud boot
+     warning). The dev roster (`GET /api/dev/users`) exists only in this mode and
+     powers the local "preview as student" switcher on the student page.
+   - **`lti`** — the student SSO stub above; throws until wired to Moodle.
+
+**Staff accounts.** `npm run db:seed` creates one account per staff role with
+usernames `sme` / `qc` / `instructor` / `admin` and the `STAFF_DEFAULT_PASSWORD`
+(default `changeme`). Change one with:
+
+```
+npm run set-password -- <username> <newpassword>
+```
 
 **Roles** live on `students.role`: `student`, `sme`, `qc`, `instructor`,
 `admin`. `requireAuth` populates `req.auth`; `requireRole(...)` gates endpoints.

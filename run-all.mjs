@@ -66,6 +66,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:auth');
 
+  // Staff login — username/password → signed session cookie, /api/me, logout.
+  run('npm run db:seed');
+  run('npm run verify:staff-auth');
+
   // Logging (Item 2) — request id, error shape, redaction. No reseed needed.
   run('npm run verify:logging');
 

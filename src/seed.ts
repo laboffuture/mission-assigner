@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
 import { assignSegment } from './segmentation.js';
 import { publishWeek } from './weekPublisher.js';
@@ -262,9 +263,9 @@ async function main() {
       interests: string[];
       courses: string[];
     }> = [
-      { name: 'Demo Student A', age: 15, level: 2, interests: ['loops', 'sorting'], courses: ['CS-101'] },
-      { name: 'Demo Student B', age: 16, level: 3, interests: ['recursion'], courses: ['CS-101', 'CS-201'] },
-      { name: 'Demo Student C', age: 14, level: 0, interests: ['strings'], courses: [] },
+      { name: 'Aarav Sharma', age: 15, level: 2, interests: ['loops', 'sorting'], courses: ['CS-101'] },
+      { name: 'Priya Patel', age: 16, level: 3, interests: ['recursion'], courses: ['CS-101', 'CS-201'] },
+      { name: 'Rohan Verma', age: 14, level: 0, interests: ['strings'], courses: [] },
     ];
 
     const studentIds: number[] = [];
@@ -289,22 +290,34 @@ async function main() {
       }
     }
 
-    // ---- Staff users (Item 1: one per non-student role) ------------------
-    // These live in the users (students) table with a non-student role. They
-    // have no missions/weeks; they exist so role-gated endpoints can be exercised.
-    const staff: Array<{ name: string; role: string }> = [
-      { name: 'SME User', role: 'sme' },
-      { name: 'QC User', role: 'qc' },
-      { name: 'Instructor User', role: 'instructor' },
-      { name: 'Admin User', role: 'admin' },
+    // ---- Staff users (one per non-student role) --------------------------
+    // Staff live in the users (students) table with a non-student role and sign
+    // in to the hosted app with a username + password (students use Moodle SSO).
+    // The default password is a PLACEHOLDER for local/pilot setup — override it
+    // per environment via STAFF_DEFAULT_PASSWORD and change it in production
+    // (npm run set-password -- <username> <newpassword>).
+    const defaultPassword = process.env.STAFF_DEFAULT_PASSWORD || 'changeme';
+    const staffHash = await bcrypt.hash(defaultPassword, 10);
+    const staff: Array<{ name: string; role: string; username: string }> = [
+      { name: 'Subject-Matter Expert', role: 'sme', username: 'sme' },
+      { name: 'Quality Control', role: 'qc', username: 'qc' },
+      { name: 'Instructor', role: 'instructor', username: 'instructor' },
+      { name: 'Administrator', role: 'admin', username: 'admin' },
     ];
     for (const st of staff) {
       await conn.query<any>(
         `INSERT INTO students
            (moodle_user_id, display_name, age, subject, current_level, consecutive_wrong,
-            total_xp, placement_status, stall_count, role)
-         VALUES (NULL, ?, 30, ?, 0, 0, 0, 'complete', 0, ?)`,
-        [st.name, SUBJECT, st.role]
+            total_xp, placement_status, stall_count, role, username, password_hash)
+         VALUES (NULL, ?, 30, ?, 0, 0, 0, 'complete', 0, ?, ?, ?)`,
+        [st.name, SUBJECT, st.role, st.username, staffHash]
+      );
+    }
+    if (!process.env.STAFF_DEFAULT_PASSWORD) {
+      logger.warn(
+        { usernames: staff.map((s) => s.username) },
+        `staff seeded with the DEFAULT password "${defaultPassword}" — change it before any non-local use ` +
+          `(npm run set-password -- <username> <newpassword>)`
       );
     }
 

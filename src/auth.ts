@@ -86,6 +86,26 @@ export class LtiAuthProvider implements AuthProvider {
   }
 }
 
+/** Load a user's AuthContext by id (used by session auth after login/LTI). */
+export async function loadUserById(userId: number): Promise<AuthContext | null> {
+  if (!Number.isInteger(userId) || userId <= 0) return null;
+  const [rows] = await pool.query<any[]>(`SELECT id, role, subject FROM students WHERE id = ?`, [userId]);
+  if (rows.length === 0) return null;
+  return { userId: Number(rows[0].id), role: rows[0].role as Role, subject: rows[0].subject ?? null };
+}
+
+/**
+ * Resolve identity from the signed staff session cookie (set at login / LTI
+ * launch). Returns null when there is no session — callers then fall back to the
+ * configured AuthProvider (dev header / LTI). This is the primary auth path for
+ * the hosted app; the header provider remains for local dev and the tests.
+ */
+export async function authFromSession(req: Request): Promise<AuthContext | null> {
+  const uid = req.session?.uid;
+  if (uid == null) return null;
+  return loadUserById(Number(uid));
+}
+
 let providerSingleton: AuthProvider | null = null;
 
 export function getAuthProvider(): AuthProvider {
@@ -107,7 +127,9 @@ function unauthenticated(req: Request, res: Response) {
 /** Populate req.auth or reject with 401. */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const auth = await getAuthProvider().authenticate(req);
+    // Session cookie (staff login / LTI launch) takes precedence; otherwise fall
+    // back to the configured provider (dev header in dev, LTI token in lti mode).
+    const auth = (await authFromSession(req)) ?? (await getAuthProvider().authenticate(req));
     if (!auth) {
       unauthenticated(req, res);
       return;
