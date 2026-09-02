@@ -74,6 +74,9 @@ try {
   // (Resets the in-memory limiter at the end so later logins are unaffected.)
   run('npm run verify:login-ratelimit');
 
+  // Session cookie flags — HttpOnly / SameSite / Secure policy across envs.
+  run('npm run verify:cookie-flags');
+
   // Logging (Item 2) — request id, error shape, redaction. No reseed needed.
   run('npm run verify:logging');
 

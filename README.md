@@ -170,6 +170,48 @@ read their own progress/submissions/XP/attempts/etc. (a cross-student read is a
 behind `/quality`) is **SME/QC/admin only**; `/api/students` (the full roster) is
 staff-only.
 
+**Login rate limit.** `POST /api/login` allows **5 failed attempts per username
+per 15 minutes**; the next attempt gets a generic **429** (`Retry-After` set).
+The check runs before the DB lookup and is keyed on the submitted username, so
+it behaves identically for real and non-existent usernames — a 429 never reveals
+whether an account exists. A successful login clears the window. The counter is
+in-process (correct for one instance); a scaled deployment needs a shared store
+(`src/rateLimit.ts` is the swap point).
+
+**Production password guard.** In `NODE_ENV=production` the server refuses to
+boot if any staff account still has the seed default password, printing a FATAL
+message that names the accounts (`src/securityChecks.ts`). No-op in dev/test.
+
+### Session cookie
+
+The staff session is a **signed** (not encrypted) cookie named `mh_session`
+carrying only `{ uid }`, signed with `SESSION_SECRET`. Flags are computed in one
+place — `cookieFlags()` in `src/session.ts`:
+
+| Flag | Value | Why |
+|------|-------|-----|
+| **HttpOnly** | **always on** | the cookie is never readable by page JavaScript (XSS can't steal it). |
+| **SameSite** | **`lax`** (default; `SESSION_SAMESITE`) | fine for the current top-level staff login. |
+| **Secure** | **on in production**, and **forced on whenever `SameSite=none`** | a `SameSite=None` cookie MUST be `Secure` or the browser drops it; production is HTTPS-only. |
+
+**The SameSite decision for LTI — decided now, not later.** Today it is **`lax`**,
+which is correct while only staff log in over a top-level page. **The Moodle LTI
+launch will require changing it to `none`** (`SESSION_SAMESITE=none`, which forces
+`Secure`, i.e. **HTTPS is mandatory**), for two independent reasons:
+
+1. The LTI 1.3 launch returns the `id_token` via a **cross-site POST** to our
+   `/lti/launch`. `SameSite=Lax` cookies are **not** sent on cross-site POSTs, so
+   the OIDC state/nonce cookie set during `/lti/login` would be missing at launch
+   and the flow would fail.
+2. Moodle typically **embeds the tool in an iframe**, so our app runs in a
+   third-party context; `Lax`/`Strict` cookies are not sent there at all, which
+   would break every in-app request after launch.
+
+So the plan is explicit: keep `lax` for the staff-only phase; flip
+`SESSION_SAMESITE=none` (over HTTPS) when the LTI launch is wired up. Because it
+is a single env var read through `cookieFlags()`, this is a **configuration
+change, not a code change**. Confirmed by `npm run verify:cookie-flags`.
+
 ### `COLD_START_STRATEGY`
 
 Chosen in exactly one place (`src/coldstart.ts::resolveStrategy`), never

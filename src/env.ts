@@ -20,6 +20,11 @@ const EnvSchema = z
     // Signs the staff session cookie. Required in production (min 32 chars); a
     // known dev value is used otherwise so local runs work out of the box.
     SESSION_SECRET: z.string().optional(),
+    // SameSite policy for the session cookie. 'lax' (default) suits the current
+    // top-level staff login. The LTI launch is a cross-site POST and Moodle
+    // usually embeds the tool in an iframe, both of which require 'none' (which
+    // forces Secure/HTTPS) — see the Session cookie section in the README.
+    SESSION_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
     COLD_START_STRATEGY: z.enum(['SEGMENT_START', 'PLACEMENT']).default('SEGMENT_START'),
     FEEDBACK_GATES_UNLOCK: z.string().optional(),
