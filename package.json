@@ -26,6 +26,7 @@
     "verify:auth": "node verify-auth.mjs",
     "verify:staff-auth": "node verify-staff-auth.mjs",
     "verify:api-shape": "node verify-api-shape.mjs",
+    "verify:assistance": "node verify-assistance.mjs",
     "verify:csrf": "tsx verify-csrf.mjs",
     "verify:login-ratelimit": "node verify-login-ratelimit.mjs",
     "verify:cookie-flags": "tsx verify-cookie-flags.mjs",

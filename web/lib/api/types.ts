@@ -284,3 +284,64 @@ export interface DevUser {
   display_name: string;
   role: Role;
 }
+
+// ---------------------------------------------------------------------------
+// Instructor assistance queue — GET /api/assistance[/:id], POST ack/resolve
+// ---------------------------------------------------------------------------
+export interface AssistanceListItem {
+  id: number;
+  student_id: number;
+  student_name: string;
+  current_level: number;
+  segment_name: string | null;
+  trigger_reason: string;
+  level_at_trigger: number;
+  tags_involved: string[];
+  status: string;
+  created_at: string;
+  waiting_seconds: number;
+}
+
+export interface AssistanceFailedMission {
+  assignment_id: number;
+  mission_id: number;
+  title: string;
+  body: string;
+  options: MissionOption[];
+  selected_key: string | null;
+  selected_text: string | null;
+  correct_key: string;
+  correct_text: string | null;
+  explanation: string;
+  score_band: string | null;
+  submitted_at: string | null;
+  tags: string[];
+}
+
+export interface AssistanceDetail extends AssistanceListItem {
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+  resolution_note: string | null;
+  failed_missions: AssistanceFailedMission[];
+  level_history: LevelEvent[];
+}
+
+// ---------------------------------------------------------------------------
+// Mission review — GET /api/assignment/:id/review
+// ---------------------------------------------------------------------------
+export interface AssignmentReview {
+  assignment_id: number;
+  mission_id: number;
+  title: string;
+  body: string;
+  difficulty: number;
+  options: MissionOption[];
+  selected_key: string | null;
+  selected_text: string | null;
+  correct_key: string;
+  correct_text: string | null;
+  explanation: string;
+  correct: boolean;
+  score_band: ScoreBand;
+  submitted_at: string | null;
+}

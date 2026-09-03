@@ -75,6 +75,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:api-shape');
 
+  // Instructor assistance queue — list/detail/acknowledge/resolve, role-gated.
+  run('npm run db:seed');
+  run('npm run verify:assistance');
+
   // CSRF — double-submit token issue + enforcement (in-process; no server/DB).
   run('npm run verify:csrf');
 

@@ -14,6 +14,11 @@ export const studentIdParams = z.object({ studentId: posInt });
 export const slotIdParams = z.object({ slotId: posInt });
 export const missionIdParams = z.object({ missionId: posInt });
 export const assignmentIdParams = z.object({ assignmentId: posInt });
+export const idParams = z.object({ id: posInt });
+
+export const resolveAssistanceBody = z.object({
+  note: z.string().trim().min(1, 'a resolution note is required').max(1000),
+});
 
 export const submitBody = z.object({
   assignmentId: posInt,

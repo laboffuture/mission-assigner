@@ -48,7 +48,16 @@ import {
   submitBody,
   feedbackBody,
   listQuery,
+  idParams,
+  resolveAssistanceBody,
 } from './schemas.js';
+import {
+  listOpenAssistance,
+  getAssistanceDetail,
+  acknowledgeAssistance,
+  resolveAssistance,
+  AssistanceError,
+} from './assistance.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -595,23 +604,81 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
   }
 });
 
-/** GET /api/assistance — open assistance events (instructor/admin view). */
-app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme', 'qc'), async (req, res) => {
-  try {
-    const [rows] = await pool.query<any[]>(
-      `SELECT ae.id, ae.student_id, s.display_name, ae.trigger_reason,
-              ae.level_at_trigger, ae.context, ae.status, ae.created_at
-         FROM assistance_events ae
-         JOIN students s ON s.id = ae.student_id
-        WHERE ae.status = 'open'
-        ORDER BY ae.created_at DESC, ae.id DESC`
-    );
-    res.json({ items: rows });
-  } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load assistance events');
+// ===========================================================================
+// Instructor assistance queue — surfaces the assistance_events raised when a
+// student stalls. Instructor/admin only.
+// ===========================================================================
+
+/** GET /api/assistance — open events, OLDEST first, cursor-paginated. */
+app.get(
+  '/api/assistance',
+  requireAuth,
+  requireRole('instructor', 'admin'),
+  validate({ query: listQuery }),
+  async (req, res) => {
+    try {
+      const page = await listOpenAssistance({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
+      res.json(page);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load assistance events');
+    }
   }
-});
+);
+
+/** GET /api/assistance/:id — full detail for one event. */
+app.get(
+  '/api/assistance/:id',
+  requireAuth,
+  requireRole('instructor', 'admin'),
+  validate({ params: idParams }),
+  async (req, res) => {
+    try {
+      const detail = await getAssistanceDetail(req.valid!.params.id);
+      if (!detail) return sendError(req, res, 404, 'not_found', 'assistance event not found');
+      res.json(detail);
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load assistance event');
+    }
+  }
+);
+
+/** POST /api/assistance/:id/acknowledge — the instructor has seen it. */
+app.post(
+  '/api/assistance/:id/acknowledge',
+  requireAuth,
+  requireRole('instructor', 'admin'),
+  validate({ params: idParams }),
+  async (req, res) => {
+    try {
+      const detail = await acknowledgeAssistance(req.valid!.params.id, req.auth!.userId);
+      res.json(detail);
+    } catch (err: any) {
+      if (err instanceof AssistanceError) return sendError(req, res, err.status, 'assistance_error', err.message);
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to acknowledge');
+    }
+  }
+);
+
+/** POST /api/assistance/:id/resolve  body { note } — resolve with a required note. */
+app.post(
+  '/api/assistance/:id/resolve',
+  requireAuth,
+  requireRole('instructor', 'admin'),
+  validate({ params: idParams, body: resolveAssistanceBody }),
+  async (req, res) => {
+    try {
+      const detail = await resolveAssistance(req.valid!.params.id, req.auth!.userId, req.valid!.body.note);
+      res.json(detail);
+    } catch (err: any) {
+      if (err instanceof AssistanceError) return sendError(req, res, err.status, 'assistance_error', err.message);
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to resolve');
+    }
+  }
+);
 
 /** GET /api/history/:studentId — last 5 level events, newest first. Own data only. */
 app.get('/api/history/:studentId', requireAuth, validate({ params: studentIdParams }), async (req, res) => {
