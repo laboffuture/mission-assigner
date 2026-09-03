@@ -29,6 +29,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
   }
   const res = await fetch(path, { ...init, method, headers, credentials: 'same-origin' });
+
+  // Session expiry / not authenticated: bounce to the login entry rather than
+  // surfacing a generic error to the student. Guard against a redirect loop if
+  // we're already on /login. The returned promise never resolves — navigation is
+  // already in flight, so the caller stays in its loading state until unmount.
+  if (res.status === 401 && typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+    return new Promise<T>(() => {});
+  }
+
   return unwrap<T>(res);
 }
 

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { clientApi } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/error';
 import {
@@ -10,47 +10,55 @@ import {
   type SubmitResponse,
 } from '@/lib/api/types';
 import { Badge, Button, Card, Muted } from '@/components/ui';
+import { ErrorState } from '@/components/states';
 import { ResultView } from './ResultView';
 
 type Phase =
   | { name: 'loading' }
   | { name: 'empty'; message: string }
+  | { name: 'loadError'; message: string }
   | { name: 'answering'; mission: OpenSlotResponse }
   | { name: 'submitting'; mission: OpenSlotResponse }
-  | { name: 'result'; mission: OpenSlotResponse; selectedKey: string; result: SubmitResponse }
-  | { name: 'error'; message: string };
+  | { name: 'result'; mission: OpenSlotResponse; selectedKey: string; result: SubmitResponse };
 
 export function MissionRunner({ slotId }: { slotId: number }) {
   const [phase, setPhase] = useState<Phase>({ name: 'loading' });
   const [selected, setSelected] = useState<string>('');
+  const [submitError, setSubmitError] = useState('');
 
-  const openedRef = useRef(false); // open the slot exactly once
   const submittingRef = useRef(false); // synchronous double-tap lock
-  const idemKeyRef = useRef<string | null>(null); // one key per attempt, reused on retry
+  const idemKeyRef = useRef<string | null>(null); // ONE key per attempt, reused on retry
 
-  useEffect(() => {
-    if (openedRef.current) return;
-    openedRef.current = true;
+  // Open the slot (lazy-fill + attempt XP). Reusable so a failed open can retry.
+  const loadOpen = useCallback(() => {
+    setPhase({ name: 'loading' });
     clientApi
       .post<OpenSlotPayload>(`/api/slot/${slotId}/open`)
       .then((res) =>
         setPhase(isOpenSlotEmpty(res) ? { name: 'empty', message: res.message } : { name: 'answering', mission: res })
       )
       .catch((e) =>
-        setPhase({ name: 'error', message: e instanceof ApiError ? e.message : 'Could not load this mission.' })
+        setPhase({ name: 'loadError', message: e instanceof ApiError ? e.message : 'Could not load this mission.' })
       );
   }, [slotId]);
 
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (openedRef.current) return;
+    openedRef.current = true;
+    loadOpen();
+  }, [loadOpen]);
+
   async function submit(mission: OpenSlotResponse) {
-    // Double-tap safety: bail synchronously if a submit is already in flight, so
-    // a second tap before React re-renders can't fire a second request.
+    // Double-tap safety: bail synchronously if a submit is already in flight.
     if (submittingRef.current || !selected) return;
     submittingRef.current = true;
+    setSubmitError('');
     setPhase({ name: 'submitting', mission });
 
-    // Reuse one Idempotency-Key: if two requests still slip through (or a retry),
-    // the server returns the ORIGINAL graded result instead of creating another
-    // attempt.
+    // Reuse ONE Idempotency-Key across retries: if the network dropped after the
+    // server graded (but before we saw the response), retrying with the same key
+    // returns the ORIGINAL result instead of creating a second attempt.
     if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
 
     try {
@@ -61,8 +69,14 @@ export function MissionRunner({ slotId }: { slotId: number }) {
       );
       setPhase({ name: 'result', mission, selectedKey: selected, result });
     } catch (e) {
+      // Keep the mission and the chosen answer so the student can simply retry —
+      // the reused key makes that safe. Only genuine (non-401) failures land here;
+      // a 401 is intercepted in the client and redirects to /login.
       submittingRef.current = false;
-      setPhase({ name: 'error', message: e instanceof ApiError ? e.message : 'Submit failed. Please try again.' });
+      setSubmitError(
+        e instanceof ApiError ? `${e.message}. Your answer is safe — try again.` : 'Network problem — your answer is safe, try again.'
+      );
+      setPhase({ name: 'answering', mission });
     }
   }
 
@@ -74,16 +88,24 @@ export function MissionRunner({ slotId }: { slotId: number }) {
     );
   }
 
-  if (phase.name === 'empty') {
-    return (
-      <BackNotice title="No mission available right now">
-        {phase.message || 'There’s no mission ready for this slot yet — please contact your instructor.'}
-      </BackNotice>
-    );
+  if (phase.name === 'loadError') {
+    return <ErrorState title="Couldn’t load this mission" message={phase.message} onRetry={loadOpen} />;
   }
 
-  if (phase.name === 'error') {
-    return <BackNotice title="Something went wrong">{phase.message}</BackNotice>;
+  if (phase.name === 'empty') {
+    return (
+      <Card className="p-6">
+        <h1 className="text-xl font-bold">No mission available right now</h1>
+        <Muted className="mt-2">
+          {phase.message || 'There’s no mission ready for this slot yet — please contact your instructor.'}
+        </Muted>
+        <div className="mt-4">
+          <Link href="/week">
+            <Button variant="ghost">Back to this week</Button>
+          </Link>
+        </div>
+      </Card>
+    );
   }
 
   if (phase.name === 'result') {
@@ -127,9 +149,12 @@ export function MissionRunner({ slotId }: { slotId: number }) {
           })}
         </fieldset>
       </Card>
+      {submitError && (
+        <p className="rounded border border-border bg-danger-muted p-3 text-sm text-danger">{submitError}</p>
+      )}
       <div>
         <Button onClick={() => submit(mission)} disabled={!selected || submitting}>
-          {submitting ? 'Submitting…' : 'Submit answer'}
+          {submitting ? 'Submitting…' : submitError ? 'Try again' : 'Submit answer'}
         </Button>
       </div>
     </div>
@@ -142,19 +167,5 @@ function MissionHeader({ mission }: { mission: OpenSlotResponse }) {
       <h1 className="text-xl font-bold">{mission.title}</h1>
       <Badge tone="neutral">Level {mission.difficulty}</Badge>
     </div>
-  );
-}
-
-function BackNotice({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Card className="p-6">
-      <h1 className="text-xl font-bold">{title}</h1>
-      <Muted className="mt-2">{children}</Muted>
-      <div className="mt-4">
-        <Link href="/week">
-          <Button variant="ghost">Back to this week</Button>
-        </Link>
-      </div>
-    </Card>
   );
 }
