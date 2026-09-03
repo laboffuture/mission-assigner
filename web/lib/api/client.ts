@@ -34,6 +34,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const clientApi = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, data?: unknown) =>
-    request<T>(path, { method: 'POST', body: data == null ? undefined : JSON.stringify(data) }),
+  post: <T>(path: string, data?: unknown, headers?: Record<string, string>) =>
+    request<T>(path, {
+      method: 'POST',
+      body: data == null ? undefined : JSON.stringify(data),
+      headers,
+    }),
 };
