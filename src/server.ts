@@ -222,12 +222,18 @@ app.get('/api/week/:studentId', requireAuth, validate({ params: studentIdParams 
     if (weekRows.length === 0) return res.json({ empty: true });
     const week = weekRows[0];
 
+    // is_weekly lives on the template slot; surface it so the UI can render the
+    // weekly mission outside the daily sequence. LEFT JOIN keeps slots even if a
+    // template row is missing (defaults to not-weekly).
     const [slotRows] = await pool.query<any[]>(
-      `SELECT id, slot_index, day_label, mission_type, time_band, status, assignment_id
-         FROM week_slots
-        WHERE student_week_id = ?
-        ORDER BY slot_index ASC`,
-      [week.id]
+      `SELECT ws.id, ws.slot_index, ws.day_label, ws.mission_type, ws.time_band,
+              ws.status, ws.assignment_id, COALESCE(wts.is_weekly, 0) AS is_weekly
+         FROM week_slots ws
+         LEFT JOIN week_template_slots wts
+                ON wts.template_id = ? AND wts.slot_index = ws.slot_index
+        WHERE ws.student_week_id = ?
+        ORDER BY ws.slot_index ASC`,
+      [week.template_id, week.id]
     );
 
     // Mission content ONLY for non-locked, filled slots. Locked rows are
@@ -273,6 +279,7 @@ app.get('/api/week/:studentId', requireAuth, validate({ params: studentIdParams 
         time_band: s.time_band,
         status: s.status,
         assignment_id: s.assignment_id != null ? Number(s.assignment_id) : null,
+        is_weekly: Boolean(Number(s.is_weekly)),
       };
       if (s.status === 'locked') return base; // metadata only — NEVER content
       const content = contentBySlot.get(Number(s.id));

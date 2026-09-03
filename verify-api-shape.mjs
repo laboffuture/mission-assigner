@@ -73,6 +73,15 @@ console.log('\n[The session cookie authenticates the student (same path LTI will
   const qb = await q.json();
   check('GET /api/feedback/questions -> { items }', isItems(qb));
   check('feedback questions still carry the 5 keys', (qb.items ?? []).length === 5, `(got ${qb.items?.length})`);
+
+  // The week board needs is_weekly to render the weekly mission outside the
+  // daily sequence.
+  const wk = await (await fetch(`${BASE}/api/week/${firstStudentId}`, { headers: { Cookie: studentCookie } })).json();
+  check('GET /api/week has slots', isArr(wk.slots) && wk.slots.length > 0, `(slots=${wk.slots?.length})`);
+  check('every slot carries a boolean is_weekly', (wk.slots ?? []).every((s) => typeof s.is_weekly === 'boolean'));
+  check('exactly one weekly slot in the week', (wk.slots ?? []).filter((s) => s.is_weekly).length === 1);
+  const lockedWithContent = (wk.slots ?? []).filter((s) => s.status === 'locked' && s.mission != null);
+  check('locked slots never carry mission content', lockedWithContent.length === 0, `(offenders=${lockedWithContent.length})`);
 }
 
 // ---------------------------------------------------------------------------

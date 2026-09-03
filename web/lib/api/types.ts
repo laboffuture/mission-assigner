@@ -55,6 +55,7 @@ export interface RawSlot {
   time_band: string;
   status: string;
   assignment_id: number | null;
+  is_weekly: boolean;
   mission?: Mission | null;
 }
 
@@ -87,6 +88,7 @@ interface SlotFields {
   time_band: string;
   status: string;
   assignment_id: number | null;
+  is_weekly: boolean;
 }
 
 export type Slot =
@@ -94,6 +96,14 @@ export type Slot =
   | (SlotFields & { kind: 'empty'; mission: null })
   | (SlotFields & { kind: 'filled'; mission: Mission });
 
+/**
+ * Map the raw API slot into the discriminated union.
+ *
+ * Note the belt-and-braces on locked slots: the `locked` variant has NO
+ * `mission` property, and we DROP any mission the raw payload might carry. So
+ * even if the server were (incorrectly) to send question content on a locked
+ * slot, it is discarded here and there is no type-legal path to render it.
+ */
 export function normalizeSlot(raw: RawSlot): Slot {
   const base: SlotFields = {
     slot_id: raw.slot_id,
@@ -103,6 +113,7 @@ export function normalizeSlot(raw: RawSlot): Slot {
     time_band: raw.time_band,
     status: raw.status,
     assignment_id: raw.assignment_id,
+    is_weekly: raw.is_weekly,
   };
   if (raw.status === 'locked') return { ...base, kind: 'locked' };
   if (!raw.mission) return { ...base, kind: 'empty', mission: null };
