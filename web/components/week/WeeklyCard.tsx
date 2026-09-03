@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import type { Slot } from '@/lib/api/types';
-import { slotState, STATE_LABEL, titleCase, type SlotState } from '@/lib/week';
+import { slotState, STATE_LABEL, STATE_SYMBOL, titleCase, type SlotState } from '@/lib/week';
 import { Badge, Card } from '@/components/ui';
 
 const STATE_TONE: Record<SlotState, 'success' | 'primary' | 'locked'> = {
@@ -17,12 +17,16 @@ export function WeeklyCard({ slot }: { slot: Slot }) {
 
   return (
     <Card className="p-5">
+      {locked && <span className="sr-only">Weekly mission, locked. Unlocks later this week.</span>}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-sm font-bold uppercase tracking-wide text-primary">Weekly mission</span>
           <Badge tone="primary">Outside the daily sequence</Badge>
         </div>
-        <Badge tone={STATE_TONE[state]}>{STATE_LABEL[state]}</Badge>
+        <Badge tone={STATE_TONE[state]}>
+          <span aria-hidden="true">{STATE_SYMBOL[state]} </span>
+          {STATE_LABEL[state]}
+        </Badge>
       </div>
 
       <div className="mt-3 flex items-center gap-2">

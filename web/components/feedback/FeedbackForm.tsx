@@ -5,6 +5,7 @@ import { clientApi } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/error';
 import type { FeedbackQuestion, FeedbackSubmitResponse } from '@/lib/api/types';
 import { Button, Card, Muted } from '@/components/ui';
+import { RadioGroup, type RadioOption } from '@/components/RadioGroup';
 
 /**
  * Data-driven feedback form. Every prompt, answer type and option comes from the
@@ -15,41 +16,35 @@ import { Button, Card, Muted } from '@/components/ui';
  * an incomplete submission atomically and saves nothing).
  */
 
-const SCALE = ['1', '2', '3', '4', '5'];
-
-function Choice({
-  label,
-  active,
-  onClick,
-  disabled,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={`rounded-full border px-4 py-1.5 text-sm font-medium transition disabled:opacity-50 ${
-        active ? 'border-primary bg-primary text-primary-fg' : 'border-border bg-surface hover:border-primary'
-      }`}
-    >
-      {label}
-    </button>
-  );
+/** Build the radio options for a question's answer type. */
+function optionsFor(q: FeedbackQuestion): RadioOption[] {
+  switch (q.answer_type) {
+    case 'scale_1_5':
+      // Endpoint anchors in the accessible name so a scale isn't just bare numbers.
+      return ['1', '2', '3', '4', '5'].map((n) => ({
+        value: n,
+        label: n,
+        ariaLabel: n === '1' ? '1, lowest' : n === '5' ? '5, highest' : n,
+      }));
+    case 'yes_no':
+      return [
+        { value: 'yes', label: 'Yes' },
+        { value: 'no', label: 'No' },
+      ];
+    default:
+      return (q.options ?? []).map((o) => ({ value: o, label: o }));
+  }
 }
 
 function QuestionControl({
   q,
+  labelId,
   value,
   onChange,
   disabled,
 }: {
   q: FeedbackQuestion;
+  labelId: string;
   value: string | undefined;
   onChange: (v: string) => void;
   disabled: boolean;
@@ -61,26 +56,25 @@ function QuestionControl({
         maxLength={500}
         value={value ?? ''}
         disabled={disabled}
+        aria-labelledby={labelId}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Optional"
-        className="w-full resize-none rounded border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-primary"
+        className="w-full resize-none rounded border border-border bg-surface px-3 py-2 text-sm"
       />
     );
   }
-  const choices =
-    q.answer_type === 'scale_1_5' ? SCALE : q.answer_type === 'yes_no' ? ['yes', 'no'] : (q.options ?? []);
+  const isScale = q.answer_type === 'scale_1_5';
   return (
-    <div className="flex flex-wrap gap-2">
-      {choices.map((c) => (
-        <Choice
-          key={c}
-          label={q.answer_type === 'yes_no' ? (c === 'yes' ? 'Yes' : 'No') : c}
-          active={value === c}
-          onClick={() => onChange(c)}
-          disabled={disabled}
-        />
-      ))}
-    </div>
+    <RadioGroup
+      name={q.question_key}
+      legendId={labelId}
+      options={optionsFor(q)}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      startCaption={isScale ? 'Low' : undefined}
+      endCaption={isScale ? 'High' : undefined}
+    />
   );
 }
 
@@ -163,31 +157,45 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
       <Muted className="mt-1">A few taps and your next mission unlocks.</Muted>
 
       <div className="mt-5 flex flex-col gap-4">
-        {ordered.map((q) => (
-          <div key={q.question_key} data-testid={`fq-${q.question_key}`}>
-            <label className="text-sm font-semibold">
-              {q.prompt}
-              {q.required && <span className="text-danger"> *</span>}
-            </label>
-            <div className="mt-1.5">
-              <QuestionControl
-                q={q}
-                value={answers[q.question_key]}
-                onChange={(v) => setAnswer(q.question_key, v)}
-                disabled={disabled}
-              />
+        {ordered.map((q) => {
+          const labelId = `fql-${q.question_key}`;
+          const isMissing = missing.has(q.question_key);
+          return (
+            <div key={q.question_key} data-testid={`fq-${q.question_key}`}>
+              <span id={labelId} className="text-sm font-semibold">
+                {q.prompt}
+                {q.required && (
+                  <span className="text-danger">
+                    {' '}
+                    *<span className="sr-only"> (required)</span>
+                  </span>
+                )}
+              </span>
+              <div className="mt-1.5">
+                <QuestionControl
+                  q={q}
+                  labelId={labelId}
+                  value={answers[q.question_key]}
+                  onChange={(v) => setAnswer(q.question_key, v)}
+                  disabled={disabled}
+                />
+              </div>
+              {isMissing && <p className="mt-1 text-xs text-danger">Please answer this one.</p>}
             </div>
-            {missing.has(q.question_key) && <p className="mt-1 text-xs text-danger">Please answer this one.</p>}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
-      {phase === 'error' && (
-        <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-danger">{errorMsg}</p>
-      )}
-      {missing.size > 0 && (
-        <p className="mt-4 text-sm text-danger">Please answer the highlighted question{missing.size > 1 ? 's' : ''}.</p>
-      )}
+      <div aria-live="polite">
+        {phase === 'error' && (
+          <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-danger">{errorMsg}</p>
+        )}
+        {missing.size > 0 && (
+          <p className="mt-4 text-sm text-danger">
+            Please answer the highlighted question{missing.size > 1 ? 's' : ''}.
+          </p>
+        )}
+      </div>
 
       <div className="mt-5">
         <Button onClick={submit} disabled={disabled}>

@@ -22,26 +22,36 @@ export function ResultView({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Compact verdict — intentionally understated. */}
-      <div className="flex items-center gap-3">
-        <Badge tone={result.correct ? 'success' : 'danger'}>{result.correct ? 'Correct' : 'Not quite'}</Badge>
-        {result.xp.points_earned > 0 && (
-          <span className="text-sm text-text-muted">+{result.xp.points_earned} XP</span>
-        )}
+      {/* Compact verdict — understated, but announced and not colour-only. The
+          leading symbol (✓ / ✗) plus the word carry the result without colour. */}
+      <div className="flex items-center gap-3" role="status">
+        <Badge tone={result.correct ? 'success' : 'danger'}>
+          <span aria-hidden="true">{result.correct ? '✓ ' : '✗ '}</span>
+          {result.correct ? 'Correct' : 'Not quite'}
+        </Badge>
+        {result.xp.points_earned > 0 && <span className="text-sm text-text-muted">+{result.xp.points_earned} XP</span>}
       </div>
 
-      {/* Options recap — mark the correct answer, and the student's choice if different. */}
+      {/* Options recap — mark the correct answer, and the student's choice if
+          different. Each marker is a symbol + text label, never colour alone. */}
       <ul className="flex flex-col gap-2">
         {options.map((o) => {
           const isCorrect = o.option_key === correctKey;
           const isChosen = o.option_key === selectedKey;
-          const tone = isCorrect ? 'border-success bg-success-muted' : isChosen ? 'border-danger bg-danger-muted' : 'border-border bg-surface';
+          const tone = isCorrect
+            ? 'border-success bg-success-muted'
+            : isChosen
+              ? 'border-danger bg-danger-muted'
+              : 'border-border bg-surface';
           return (
-            <li key={o.option_key} className={`flex items-center justify-between rounded border px-4 py-2 ${tone}`}>
+            <li key={o.option_key} className={`flex items-center justify-between gap-3 rounded border px-4 py-2 ${tone}`}>
               <span>
+                <span aria-hidden="true" className="mr-1 font-bold">
+                  {isCorrect ? '✓' : isChosen ? '✗' : ' '}
+                </span>
                 <span className="font-semibold uppercase">{o.option_key}.</span> {o.option_text}
               </span>
-              <span className="flex gap-1">
+              <span className="flex shrink-0 gap-1">
                 {isCorrect && <Badge tone="success">Correct answer</Badge>}
                 {isChosen && !isCorrect && <Badge tone="danger">Your answer</Badge>}
               </span>

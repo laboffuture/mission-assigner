@@ -25,19 +25,28 @@
   --color-primary-fg: #ffffff;
   --color-primary-muted: #e7ecfd;
 
-  /* ---- Semantic states ---- */
-  --color-success: #2f9e44;
+  /* ---- Semantic states ----
+     Text colours are darkened so same-hue text on the matching *-muted
+     background (e.g. a success Badge) clears WCAG AA 4.5:1 for small text, and
+     white-on-solid (bg-success + text-*-fg) clears it too. Verified by the axe
+     colour-contrast checks in the e2e suite. */
+  --color-success: #167a37;
   --color-success-fg: #ffffff;
   --color-success-muted: #e6f4ea;
 
-  --color-danger: #e03131;
+  --color-danger: #c31f1f;
   --color-danger-fg: #ffffff;
   --color-danger-muted: #fce8e8;
 
-  --color-warning: #e8830c;
+  --color-warning: #8a5300;
   --color-warning-muted: #fdf0dc;
 
-  --color-locked: #aeb6c2;
+  --color-locked: #565f6b;
+
+  /* ---- Focus ring (keyboard navigation) ---- */
+  --color-focus: #1c3fc4;
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 2px;
 
   /* ---- Typography ---- */
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;

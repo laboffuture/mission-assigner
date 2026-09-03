@@ -29,6 +29,7 @@ const config: Config = {
         warning: 'var(--color-warning)',
         'warning-muted': 'var(--color-warning-muted)',
         locked: 'var(--color-locked)',
+        focus: 'var(--color-focus)',
       },
       fontFamily: {
         sans: 'var(--font-sans)',

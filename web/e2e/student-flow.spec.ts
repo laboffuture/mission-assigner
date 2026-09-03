@@ -31,7 +31,8 @@ test('week → mission → result → feedback → progress', async ({ page }) =
   // Feedback — answer every required question (first choice in each block).
   await expect(page.getByRole('heading', { name: 'Quick feedback' })).toBeVisible();
   for (const key of ['perceived_difficulty', 'time_taken', 'clarity', 'confidence']) {
-    await page.getByTestId(`fq-${key}`).getByRole('button').first().click();
+    // Each option is a native radio inside a label; click the label pill.
+    await page.getByTestId(`fq-${key}`).locator('label').first().click();
   }
   await page.getByRole('button', { name: 'Submit & continue' }).click();
 

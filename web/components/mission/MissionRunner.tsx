@@ -126,6 +126,7 @@ export function MissionRunner({ slotId }: { slotId: number }) {
       <Card className="p-6">
         <p className="text-lg leading-relaxed">{mission.body}</p>
         <fieldset className="mt-4 flex flex-col gap-2" disabled={submitting}>
+          <legend className="sr-only">Choose your answer</legend>
           {mission.options.map((o) => {
             const active = selected === o.option_key;
             return (
@@ -139,9 +140,10 @@ export function MissionRunner({ slotId }: { slotId: number }) {
                   value={o.option_key}
                   checked={active}
                   onChange={() => setSelected(o.option_key)}
-                  className="accent-primary"
+                  aria-label={`Option ${o.option_key.toUpperCase()}: ${o.option_text}`}
+                  className="h-4 w-4 accent-primary"
                 />
-                <span>
+                <span aria-hidden="true">
                   <span className="font-semibold uppercase">{o.option_key}.</span> {o.option_text}
                 </span>
               </label>

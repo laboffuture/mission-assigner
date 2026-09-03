@@ -21,6 +21,13 @@ export const STATE_LABEL: Record<SlotState, string> = {
   locked: 'Coming up',
 };
 
+/** A non-colour glyph per state, so the state never depends on colour alone. */
+export const STATE_SYMBOL: Record<SlotState, string> = {
+  done: '✓',
+  open: '▶',
+  locked: '🔒',
+};
+
 /** Human label for a mission type / time band chip. */
 export function titleCase(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;

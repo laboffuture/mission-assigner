@@ -13,7 +13,11 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 }
 
 export function PageShell({ children }: { children: ReactNode }) {
-  return <main className="mx-auto w-full max-w-content px-4 py-8">{children}</main>;
+  return (
+    <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-content px-4 py-8">
+      {children}
+    </main>
+  );
 }
 
 type Variant = 'primary' | 'ghost' | 'danger';

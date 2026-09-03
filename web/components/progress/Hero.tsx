@@ -10,26 +10,35 @@ export function Hero({ progress }: { progress: Progress }) {
   const streak = progress.current_streak;
   return (
     <Card className="p-6">
+      <h1 className="sr-only">Your progress</h1>
       <div className="grid grid-cols-2 gap-4">
         <div className="text-center">
-          <p className="text-5xl font-extrabold text-primary">{progress.current_level}</p>
-          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted">Level</p>
+          <p className="text-5xl font-extrabold text-primary">
+            <span className="sr-only">Level </span>
+            {progress.current_level}
+          </p>
+          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted" aria-hidden="true">
+            Level
+          </p>
         </div>
         <div className="text-center">
-          <p className="text-5xl font-extrabold text-warning">{streak > 0 ? `🔥 ${streak}` : '0'}</p>
-          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted">
+          <p className="text-5xl font-extrabold text-warning">
+            <span aria-hidden="true">{streak > 0 ? `🔥 ${streak}` : '0'}</span>
+            <span className="sr-only">{streak} day streak</span>
+          </p>
+          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted" aria-hidden="true">
             {streak > 0 ? `Day streak` : 'Start your streak'}
           </p>
         </div>
       </div>
 
-      <div className="mt-5 flex items-center justify-center gap-2 border-t border-border pt-4">
+      <p className="mt-5 flex items-center justify-center gap-2 border-t border-border pt-4">
         <span className="text-2xl font-bold">{progress.total_xp}</span>
         <span className="text-sm text-text-muted">XP total</span>
         {progress.longest_streak > 0 && (
           <span className="ml-3 text-sm text-text-muted">· best streak {progress.longest_streak}</span>
         )}
-      </div>
+      </p>
     </Card>
   );
 }
