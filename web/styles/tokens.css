@@ -1,0 +1,58 @@
+/*
+ * DESIGN TOKENS — the single source of truth for the visual theme.
+ *
+ * This is the ONE file permitted to contain raw hex / rgb / font-family / size
+ * values. Every component references only the semantic Tailwind names that map
+ * to these variables (see tailwind.config.ts). To re-skin the app with the LMS
+ * palette, edit ONLY this file (or ship a :root override stylesheet) — no
+ * component changes required.
+ *
+ * Enforced by:  npm run check:tokens  (fails if a component contains a raw value)
+ */
+:root {
+  /* ---- Surfaces & lines ---- */
+  --color-bg: #f3f5fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef1f7;
+  --color-border: #d9dfea;
+
+  /* ---- Text ---- */
+  --color-text: #1b2430;
+  --color-text-muted: #5b6675;
+
+  /* ---- Primary (brand) ---- */
+  --color-primary: #3b5bdb;
+  --color-primary-fg: #ffffff;
+  --color-primary-muted: #e7ecfd;
+
+  /* ---- Semantic states ---- */
+  --color-success: #2f9e44;
+  --color-success-fg: #ffffff;
+  --color-success-muted: #e6f4ea;
+
+  --color-danger: #e03131;
+  --color-danger-fg: #ffffff;
+  --color-danger-muted: #fce8e8;
+
+  --color-warning: #e8830c;
+  --color-warning-muted: #fdf0dc;
+
+  --color-locked: #aeb6c2;
+
+  /* ---- Typography ---- */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* ---- Radius ---- */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+
+  /* ---- Elevation ---- */
+  --shadow-card: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
+
+  /* ---- Layout ---- */
+  --width-content: 880px;
+}
