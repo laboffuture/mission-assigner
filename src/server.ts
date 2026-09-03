@@ -35,7 +35,9 @@ import { validate } from './validate.js';
 import { sendError } from './httpError.js';
 import { validateEnv } from './env.js';
 import { sessionMiddleware } from './session.js';
+import { csrfMiddleware } from './csrf.js';
 import { registerAuthRoutes } from './authRoutes.js';
+import type { SubmitResponse } from './dto.js';
 import { assertProductionSecurity } from './securityChecks.js';
 import { resetRateLimiter } from './rateLimit.js';
 import {
@@ -82,6 +84,9 @@ app.use(express.json());
 // Signed staff session cookie (login / LTI launch). Must precede any route that
 // resolves identity from the session.
 app.use(sessionMiddleware());
+// Issue/verify the double-submit CSRF token. Placed after the session cookie so
+// both cookies are set together; enforcement is gated by CSRF_ENFORCED.
+app.use(csrfMiddleware());
 app.use(express.static(join(__dirname, '..', 'public')));
 
 // Staff auth: POST /api/login, POST /api/logout, GET /api/me.
@@ -99,10 +104,33 @@ if (getAuthProvider().mode === 'dev') {
       const [rows] = await pool.query<any[]>(
         `SELECT id, display_name, role FROM students ORDER BY FIELD(role,'student') DESC, id`
       );
-      res.json(rows);
+      res.json({ items: rows });
     } catch (err) {
       rlog(req).error({ err }, 'request failed');
       sendError(req, res, 500, 'internal_error', 'failed to load users');
+    }
+  });
+
+  // POST /api/dev/login-as { studentId } — set the real signed session cookie for
+  // a chosen user, WITHOUT a password. This is the same session path the LTI
+  // launch will use once implemented, so the frontend we build against it needs
+  // no rework. Dev-only (registered only when AUTH_MODE=dev); it lets us exercise
+  // the student UI end-to-end before Moodle SSO exists. NEVER available in prod.
+  app.post('/api/dev/login-as', async (req, res) => {
+    const studentId = Number(req.body?.studentId);
+    if (!Number.isInteger(studentId) || studentId <= 0) {
+      return sendError(req, res, 400, 'validation_error', 'studentId must be a positive integer');
+    }
+    try {
+      const [rows] = await pool.query<any[]>(`SELECT id, display_name, role FROM students WHERE id = ?`, [studentId]);
+      const u = rows[0];
+      if (!u) return sendError(req, res, 404, 'not_found', 'no such user');
+      req.session = { uid: Number(u.id) };
+      rlog(req).warn({ userId: Number(u.id), role: u.role }, 'DEV login-as (no password) — insecure, dev only');
+      res.json({ id: Number(u.id), display_name: u.display_name, role: u.role });
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'login-as failed');
     }
   });
 }
@@ -115,7 +143,7 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, r
          FROM students
         ORDER BY id`
     );
-    res.json(rows);
+    res.json({ items: rows });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
     sendError(req, res, 500, 'internal_error', 'failed to load students');
@@ -125,6 +153,10 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, r
 /**
  * GET /api/current/:studentId  (Stage 1 free-play — unchanged behaviour)
  * Student-only, own data.
+ *
+ * @deprecated for the new (Mission Hub) UI — the week board (GET /api/week/:id +
+ * POST /api/slot/:id/open) supersedes free-play. Retained only for the Stage 1
+ * harness (verify.mjs). Do NOT build new UI against this endpoint.
  */
 app.get(
   '/api/current/:studentId',
@@ -357,7 +389,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * runs the XP award + unlock, each additionally guarded); the loser throws
  * 'not open' before touching XP or slots.
  */
-async function runSubmit(assignmentId: number, selected: string) {
+async function runSubmit(assignmentId: number, selected: string): Promise<SubmitResponse> {
   const result = await submitAndGrade(assignmentId, selected);
   const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
   let correctXp = null;
@@ -374,9 +406,16 @@ async function runSubmit(assignmentId: number, selected: string) {
   const totalXp = xpRow.length ? Number(xpRow[0].total_xp) : 0;
   const pointsEarned = (submitXp.awarded ? submitXp.points : 0) + (correctXp?.awarded ? correctXp.points : 0);
 
+  // Build the pinned DTO explicitly — never spread the internal GradeResult, so
+  // service-internal fields (studentId, stallCount, timings…) never leak.
   return {
-    ...result,
-    xp: { submit: submitXp, correct: correctXp, pointsEarned, totalXp },
+    assignment_id: result.assignmentId,
+    correct: result.correct,
+    score_band: result.band,
+    correct_option_key: result.correctAnswer,
+    explanation: result.correctExplanation,
+    level: { from: result.fromLevel, to: result.toLevel, reason: result.reason },
+    xp: { submit: submitXp, correct: correctXp, points_earned: pointsEarned, total_xp: totalXp },
     unlock,
     feedback: {
       required: feedbackStatus !== 'not_required' && feedbackStatus !== 'complete',
@@ -560,7 +599,7 @@ app.get('/api/assistance', requireAuth, requireRole('instructor', 'admin', 'sme'
         WHERE ae.status = 'open'
         ORDER BY ae.created_at DESC, ae.id DESC`
     );
-    res.json(rows);
+    res.json({ items: rows });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
     sendError(req, res, 500, 'internal_error', 'failed to load assistance events');
@@ -580,7 +619,7 @@ app.get('/api/history/:studentId', requireAuth, validate({ params: studentIdPara
         LIMIT 5`,
       [studentId]
     );
-    res.json(rows);
+    res.json({ items: rows });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
     sendError(req, res, 500, 'internal_error', 'failed to load history');
@@ -595,7 +634,7 @@ app.get('/api/history/:studentId', requireAuth, validate({ params: studentIdPara
 app.get('/api/feedback/questions', requireAuth, async (req, res) => {
   try {
     const questions = await getQuestions();
-    res.json(questions);
+    res.json({ items: questions });
   } catch (err) {
     rlog(req).error({ err }, 'request failed');
     sendError(req, res, 500, 'internal_error', 'failed to load feedback questions');

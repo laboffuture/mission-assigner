@@ -46,8 +46,8 @@ console.log('\n[Criterion 4] Student B answers correctly');
   const k = await keyFor(c.assignment_id);
   const r = await submit(c.assignment_id, k.correct, 2);
   check('correct=true', r.correct === true);
-  check('3 -> 4', r.fromLevel === 3 && r.toLevel === 4, `(${r.fromLevel}->${r.toLevel})`);
-  check("reason pass_level_up", r.reason === 'pass_level_up', `(${r.reason})`);
+  check('3 -> 4', r.level.from === 3 && r.level.to === 4, `(${r.level.from}->${r.level.to})`);
+  check("reason pass_level_up", r.level.reason === 'pass_level_up', `(${r.level.reason})`);
   // Criterion 9: next mission at new level
   const n = await current(2); track(2, (await keyFor(n.assignment_id)).missionId);
   check('[C9] next mission at level 4', n.difficulty === 4, `(difficulty=${n.difficulty})`);
@@ -61,13 +61,13 @@ console.log('\n[Criterion 5] Student A fails twice (never demotes)');
   const c1 = await current(1); const k1 = await keyFor(c1.assignment_id); track(1, k1.missionId);
   check('served at level 2', c1.difficulty === 2, `(difficulty=${c1.difficulty})`);
   const r1 = await submit(c1.assignment_id, wrong(k1.correct), 1);
-  check('first fail holds 2 -> 2', r1.fromLevel === 2 && r1.toLevel === 2, `(${r1.fromLevel}->${r1.toLevel})`);
-  check('reason wrong_retry_same_level', r1.reason === 'wrong_retry_same_level', `(${r1.reason})`);
+  check('first fail holds 2 -> 2', r1.level.from === 2 && r1.level.to === 2, `(${r1.level.from}->${r1.level.to})`);
+  check('reason wrong_retry_same_level', r1.level.reason === 'wrong_retry_same_level', `(${r1.level.reason})`);
   const c2 = await current(1); const k2 = await keyFor(c2.assignment_id); track(1, k2.missionId);
   check('[C9] still level 2 after first miss', c2.difficulty === 2, `(difficulty=${c2.difficulty})`);
   const r2 = await submit(c2.assignment_id, wrong(k2.correct), 1);
-  check('second fail STILL holds 2 -> 2 (no demotion)', r2.fromLevel === 2 && r2.toLevel === 2, `(${r2.fromLevel}->${r2.toLevel})`);
-  check('reason wrong_retry_same_level', r2.reason === 'wrong_retry_same_level', `(${r2.reason})`);
+  check('second fail STILL holds 2 -> 2 (no demotion)', r2.level.from === 2 && r2.level.to === 2, `(${r2.level.from}->${r2.level.to})`);
+  check('reason wrong_retry_same_level', r2.level.reason === 'wrong_retry_same_level', `(${r2.level.reason})`);
   const c3 = await current(1); track(1, (await keyFor(c3.assignment_id)).missionId);
   check('[C9] next mission STILL at level 2', c3.difficulty === 2, `(difficulty=${c3.difficulty})`);
 }
@@ -78,10 +78,10 @@ console.log('\n[Criterion 6] Student C fails twice at level 0 (stays at 0)');
   const c1 = await current(3); const k1 = await keyFor(c1.assignment_id); track(3, k1.missionId);
   check('served at level 0', c1.difficulty === 0, `(difficulty=${c1.difficulty})`);
   const r1 = await submit(c1.assignment_id, wrong(k1.correct), 3);
-  check('first fail holds 0 -> 0', r1.fromLevel === 0 && r1.toLevel === 0, `(${r1.fromLevel}->${r1.toLevel})`);
+  check('first fail holds 0 -> 0', r1.level.from === 0 && r1.level.to === 0, `(${r1.level.from}->${r1.level.to})`);
   const c2 = await current(3); const k2 = await keyFor(c2.assignment_id); track(3, k2.missionId);
   const r2 = await submit(c2.assignment_id, wrong(k2.correct), 3);
-  check('second fail stays 0 (never negative)', r2.toLevel === 0, `(${r2.fromLevel}->${r2.toLevel}, reason=${r2.reason})`);
+  check('second fail stays 0 (never negative)', r2.level.to === 0, `(${r2.level.from}->${r2.level.to}, reason=${r2.level.reason})`);
 }
 
 // ---- Criterion 7: no repeated missions -----------------------------------

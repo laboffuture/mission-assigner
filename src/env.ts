@@ -25,6 +25,10 @@ const EnvSchema = z
     // usually embeds the tool in an iframe, both of which require 'none' (which
     // forces Secure/HTTPS) — see the Session cookie section in the README.
     SESSION_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+    // Double-submit CSRF enforcement. Default false while the session cookie is
+    // SameSite=Lax (which already blocks cross-site POSTs). Flip to true in the
+    // same change that sets SESSION_SAMESITE=none for the LTI launch.
+    CSRF_ENFORCED: z.string().optional(),
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
     COLD_START_STRATEGY: z.enum(['SEGMENT_START', 'PLACEMENT']).default('SEGMENT_START'),
     FEEDBACK_GATES_UNLOCK: z.string().optional(),

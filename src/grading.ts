@@ -11,6 +11,10 @@ export interface GradeResult {
   correct: boolean;
   band: ScoreBand;
   correctAnswer: string;
+  /** The explanation from the mission's answer_key — shown to the student after
+   *  grading (right or wrong) because the platform builds ability, not measures
+   *  it. Empty string when the mission has no explanation. */
+  correctExplanation: string;
   fromLevel: number;
   toLevel: number;
   reason: string;
@@ -34,16 +38,17 @@ export function toBand(pct: number): ScoreBand {
  * mysql2 returns JSON columns as a parsed object on some versions and as a raw
  * string on others. Normalise defensively.
  */
-function parseAnswerKey(raw: unknown): { correct: string } {
-  if (raw == null) return { correct: '' };
+function parseAnswerKey(raw: unknown): { correct: string; explanation: string } {
+  const shape = (o: any) => ({ correct: String(o?.correct ?? ''), explanation: String(o?.explanation ?? '') });
+  if (raw == null) return { correct: '', explanation: '' };
   if (typeof raw === 'string') {
     try {
-      return JSON.parse(raw);
+      return shape(JSON.parse(raw));
     } catch {
-      return { correct: '' };
+      return { correct: '', explanation: '' };
     }
   }
-  return raw as { correct: string };
+  return shape(raw);
 }
 
 /**
@@ -129,6 +134,7 @@ export async function submitAndGrade(assignmentId: number, selected: string): Pr
       correct,
       band,
       correctAnswer: answerKey.correct,
+      correctExplanation: answerKey.explanation,
       fromLevel: prog.fromLevel,
       toLevel: prog.toLevel,
       reason: prog.reason,

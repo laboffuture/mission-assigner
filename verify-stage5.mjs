@@ -101,7 +101,7 @@ async function slotStatus(sid, idx) {
 // ---------------------------------------------------------------------------
 console.log('\n[C1] GET /api/feedback/questions returns 5 placeholders in order');
 {
-  const qs = await j('/api/feedback/questions');
+  const qs = (await j('/api/feedback/questions')).items;
   check('5 questions', qs.length === 5, `(got ${qs.length})`);
   const orders = qs.map((q) => q.display_order);
   check('ordered by display_order', JSON.stringify(orders) === JSON.stringify([...orders].sort((a, b) => a - b)), `(${orders})`);

@@ -124,6 +124,8 @@ XP is in the header, and the student's segment is shown.
 | `NODE_ENV` | `development` (default) / `test` / `production`. In production `SESSION_SECRET` is required and the session cookie is `Secure`. |
 | `SESSION_SECRET` | signs the staff session cookie. Optional locally (a dev key is used, with a warning); **required, 32+ chars, in production**. |
 | `STAFF_DEFAULT_PASSWORD` | password the seed gives staff accounts (default `changeme`). Change per account with `npm run set-password`. |
+| `SESSION_SAMESITE` | session-cookie SameSite: `lax` (default) / `strict` / `none`. Use `none` (forces `Secure`/HTTPS) for the LTI launch — see Session cookie. |
+| `CSRF_ENFORCED` | `false` (default) / `true`. Enforce the double-submit CSRF token on mutations. Flip to `true` together with `SESSION_SAMESITE=none` — see CSRF. |
 | `COLD_START_STRATEGY` | how a brand-new student is placed — see below |
 | `FEEDBACK_GATES_UNLOCK` | whether feedback is required before the next slot unlocks — see below |
 
@@ -150,6 +152,10 @@ There are two ways identity is established, resolved in this order by
      **INSECURE** and for local dev + the test harnesses only (loud boot
      warning). The dev roster (`GET /api/dev/users`) exists only in this mode and
      powers the local "preview as student" switcher on the student page.
+     `POST /api/dev/login-as { studentId }` (dev only) mints a real session
+     cookie for a chosen user without a password — the **same session path the
+     LTI launch will use** — so the student UI can be built and tested end-to-end
+     before Moodle SSO exists.
    - **`lti`** — the student SSO stub above; throws until wired to Moodle.
 
 **Staff accounts.** `npm run db:seed` creates one account per staff role with
@@ -211,6 +217,24 @@ So the plan is explicit: keep `lax` for the staff-only phase; flip
 `SESSION_SAMESITE=none` (over HTTPS) when the LTI launch is wired up. Because it
 is a single env var read through `cookieFlags()`, this is a **configuration
 change, not a code change**. Confirmed by `npm run verify:cookie-flags`.
+
+### CSRF (double-submit)
+
+`src/csrf.ts` issues a **readable** (not HttpOnly) `mh_csrf` cookie to every
+client; the client echoes its value in the **`X-CSRF-Token`** header on each
+mutation, and the server rejects any mutation whose header ≠ cookie. A
+cross-site attacker can trigger a request carrying the victim's cookies but
+**cannot read** the cookie to set the matching header (same-origin policy), so
+the request fails.
+
+Enforcement is gated by **`CSRF_ENFORCED` (default `false`)**. Today the session
+cookie is `SameSite=Lax`, which already blocks cross-site POSTs, so CSRF is not
+yet exploitable and the token is only *issued*, never *required*. **When the LTI
+launch forces `SESSION_SAMESITE=none`** that protection disappears — so flip
+**`CSRF_ENFORCED=true` in the same change**. The client layer already sends the
+header, so this is a config flip, not a call-site change. Safe methods
+(`GET`/`HEAD`/`OPTIONS`) and the dev-only `/api/test/*` hooks are never gated.
+Confirmed by `npm run verify:csrf`.
 
 ### `COLD_START_STRATEGY`
 
@@ -335,16 +359,16 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET  | `/api/students` | list students (with level + total_xp) |
-| GET  | `/api/current/:studentId` | Stage 1 free-play mission |
+| GET  | `/api/students` | list students (with level + total_xp). `{ items }` |
+| GET  | `/api/current/:studentId` | **⚠ deprecated** (Stage 1 free-play). The week board supersedes it; retained only for the Stage 1 harness — do not build new UI against it. |
 | GET  | `/api/week/:studentId` | the week with all slots; **locked slots never include question text** |
 | POST | `/api/slot/:slotId/open` | award `attempt` XP (once), return the mission |
-| POST | `/api/submit` | grade, award `submit`/`correct` XP, unlock the next slot. Accepts an optional `Idempotency-Key` header — a retried submit returns the original result instead of re-grading. Concurrency-safe (grading takes a row-level `FOR UPDATE`, so only one of two simultaneous submits grades). |
+| POST | `/api/submit` | grade, award `submit`/`correct` XP, unlock the next slot. Returns the **pinned `SubmitResponse` DTO** (`src/dto.ts`) including post-grade review — `correct_option_key` + `explanation` — because the platform builds ability, so a wrong answer is always shown the right one and why. Accepts an optional `Idempotency-Key` header — a retried submit returns the original result instead of re-grading. Concurrency-safe (grading takes a row-level `FOR UPDATE`, so only one of two simultaneous submits grades). |
 | GET  | `/api/xp/:studentId` | total XP + last 20 events |
 | GET  | `/api/segment/:studentId` | the student's segment and why they were placed |
-| GET  | `/api/assistance` | open assistance events (instructor view) |
-| GET  | `/api/history/:studentId` | last 5 level events |
-| GET  | `/api/feedback/questions` | active feedback questions (type + options) |
+| GET  | `/api/assistance` | open assistance events (instructor view). `{ items }` |
+| GET  | `/api/history/:studentId` | last 5 level events. `{ items }` |
+| GET  | `/api/feedback/questions` | active feedback questions (type + options). `{ items }` |
 | POST | `/api/feedback/:assignmentId` | submit answers; returns XP; releases the gated next slot |
 | GET  | `/api/progress/:studentId` | student progress panel (own data only) |
 | GET  | `/api/submissions/:studentId` | paginated submission log (own data only) |
@@ -363,6 +387,12 @@ log, mission bank, mission-quality) is **cursor-paginated**, keyed on
 `(created_at, id)` — not offset, which shifts as rows are inserted. Response
 shape is `{ items: [...], nextCursor: string | null }`; pass `?cursor=` back (with
 optional `?limit=`, max 100) to fetch the next page.
+
+**Uniform list envelope.** Non-paginated list endpoints (`/api/students`,
+`/api/assistance`, `/api/history/:id`, `/api/feedback/questions`,
+`/api/dev/users`) also return **`{ items: [...] }`** — no bare arrays — so a
+single client data layer handles every list the same way. Confirmed by
+`npm run verify:api-shape`.
 
 ## Safety guarantees
 

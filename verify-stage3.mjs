@@ -209,8 +209,19 @@ console.log('\n[Criterion 9 & 10 & 11] stall -> one assistance; wrong never demo
     if (!o.assignment_id) break;
     const k = await keyFor(o.assignment_id);
     const r = await post('/api/submit', { assignmentId: o.assignment_id, selected: wrong(k.correct) });
-    check(`wrong #${step + 1} holds level (${r.fromLevel}->${r.toLevel})`, r.toLevel === r.fromLevel);
-    lastLevel = r.toLevel;
+    check(`wrong #${step + 1} holds level (${r.level.from}->${r.level.to})`, r.level.to === r.level.from);
+    lastLevel = r.level.to;
+    if (step === 0) {
+      // Pinned submit DTO — post-grade review data. A wrong answer must still be
+      // shown the correct option and why (the platform builds ability).
+      check('[DTO] submit returns correct=false', r.correct === false);
+      check('[DTO] submit returns score_band=fail', r.score_band === 'fail', `(got ${r.score_band})`);
+      check('[DTO] submit returns the correct option key', r.correct_option_key === k.correct, `(got ${r.correct_option_key})`);
+      check('[DTO] submit returns a non-empty explanation', typeof r.explanation === 'string' && r.explanation.length > 0);
+      check('[DTO] submit nests level {from,to,reason}', typeof r.level?.from === 'number' && typeof r.level?.to === 'number' && typeof r.level?.reason === 'string');
+      check('[DTO] submit reports xp.total_xp / points_earned', typeof r.xp?.total_xp === 'number' && typeof r.xp?.points_earned === 'number');
+      check('[DTO] submit does NOT leak internal studentId', r.studentId === undefined && r.correctAnswer === undefined);
+    }
   }
   const [[{ n }]] = await db.query(`SELECT COUNT(*) n FROM assistance_events WHERE student_id=?`, [s]);
   check('[C9] exactly one assistance_events row after 3 wrongs', Number(n) === 1, `(rows=${n})`);
@@ -230,7 +241,7 @@ console.log('\n[Criterion 9 & 10 & 11] stall -> one assistance; wrong never demo
     if (o.assignment_id) {
       const k = await keyFor(o.assignment_id);
       const r = await post('/api/submit', { assignmentId: o.assignment_id, selected: k.correct });
-      check('[C11] correct at max level stays at max (4)', r.toLevel === 4, `(${r.fromLevel}->${r.toLevel})`);
+      check('[C11] correct at max level stays at max (4)', r.level.to === 4, `(${r.level.from}->${r.level.to})`);
     } else check('[C11] mission available at max', false, `(${o.message})`);
   }
 }

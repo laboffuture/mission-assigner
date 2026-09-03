@@ -70,6 +70,14 @@ try {
   run('npm run db:seed');
   run('npm run verify:staff-auth');
 
+  // API surface adjustments — dev/login-as sets the real session cookie, and
+  // list endpoints return a uniform { items } envelope.
+  run('npm run db:seed');
+  run('npm run verify:api-shape');
+
+  // CSRF — double-submit token issue + enforcement (in-process; no server/DB).
+  run('npm run verify:csrf');
+
   // Login rate limit — 5 failures/username/15min → 429, no existence leak.
   // (Resets the in-memory limiter at the end so later logins are unaffected.)
   run('npm run verify:login-ratelimit');

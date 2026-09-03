@@ -157,7 +157,7 @@
       let res;
       try { res = await fetch('/api/dev/users'); } catch { return false; }
       if (!res.ok) return false;
-      const users = (await res.json()).filter((u) => u.role === 'student');
+      const users = ((await res.json()).items ?? []).filter((u) => u.role === 'student');
       if (!users.length) return false;
       const sel = $('student');
       sel.innerHTML = '';
@@ -315,7 +315,7 @@
     }
 
     async function renderFeedbackForm(slotId, assignmentId, gates) {
-      if (!feedbackQuestions) feedbackQuestions = await api('/api/feedback/questions');
+      if (!feedbackQuestions) feedbackQuestions = (await api('/api/feedback/questions')).items;
       const host = document.createElement('div');
       host.className = 'feedback';
       host.id = 'fb-' + slotId;
@@ -378,7 +378,7 @@
     }
 
     async function loadHistory() {
-      const events = await api('/api/history/' + currentStudentId);
+      const events = (await api('/api/history/' + currentStudentId)).items;
       const ul = $('history');
       if (!events.length) { ul.innerHTML = '<li class="muted">No events yet.</li>'; return; }
       ul.innerHTML = '';

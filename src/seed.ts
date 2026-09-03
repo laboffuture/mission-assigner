@@ -88,7 +88,18 @@ async function main() {
            (version, subject, title, body, mission_type, grading_mode,
             difficulty, age_min, age_max, time_band, answer_key, rubric, status)
          VALUES (?, ?, ?, ?, 'quiz', 'auto', ?, 12, 18, ?, ?, NULL, 'live')`,
-        [1, SUBJECT, title, body, difficulty, timeBand, JSON.stringify({ correct })]
+        [
+          1,
+          SUBJECT,
+          title,
+          body,
+          difficulty,
+          timeBand,
+          JSON.stringify({
+            correct,
+            explanation: `Option ${correct.toUpperCase()} is correct: it matches the ${tag} concept this mission tests.`,
+          }),
+        ]
       );
       const missionId = res.insertId as number;
       missionCount++;
