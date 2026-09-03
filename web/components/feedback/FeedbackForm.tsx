@@ -164,7 +164,7 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
 
       <div className="mt-5 flex flex-col gap-4">
         {ordered.map((q) => (
-          <div key={q.question_key}>
+          <div key={q.question_key} data-testid={`fq-${q.question_key}`}>
             <label className="text-sm font-semibold">
               {q.prompt}
               {q.required && <span className="text-danger"> *</span>}

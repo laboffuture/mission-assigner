@@ -1,0 +1,4 @@
+{
+  "//": "Scope Playwright specs to CommonJS so the shared helper import doesn't hit the Node ESM require() race. The app itself stays ESM.",
+  "type": "commonjs"
+}
