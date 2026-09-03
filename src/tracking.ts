@@ -5,6 +5,92 @@ import { type Page, clampLimit, decodeCursor, encodeCursor, buildPage } from './
 
 export type AttemptEvent = 'opened' | 'viewed' | 'submitted' | 'graded' | 'feedback_submitted';
 
+/** JSON column normaliser (mysql2 may return a string or a parsed object). */
+function parseJsonCol<T>(raw: unknown, fallback: T): T {
+  if (raw == null) return fallback;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return raw as T;
+}
+
+export interface AssignmentReview {
+  assignment_id: number;
+  mission_id: number;
+  title: string;
+  body: string;
+  difficulty: number;
+  options: Array<{ option_key: string; option_text: string }>;
+  selected_key: string | null;
+  selected_text: string | null;
+  correct_key: string;
+  correct_text: string | null;
+  explanation: string;
+  correct: boolean;
+  score_band: string | null;
+  submitted_at: string | null;
+}
+
+export type ReviewResult =
+  { kind: 'ok'; review: AssignmentReview } | { kind: 'not_found' } | { kind: 'forbidden' } | { kind: 'not_graded' };
+
+/**
+ * Build a read-only review of a completed assignment. Ownership is enforced in
+ * SQL by the ownerId lookup: a student may only review their OWN assignment
+ * (cross-student → forbidden, not an empty result). Staff (ownerId omitted) may
+ * review any. Only graded assignments are reviewable.
+ */
+export async function getAssignmentReview(
+  assignmentId: number,
+  requesterStudentId: number | null
+): Promise<ReviewResult> {
+  const [[a]] = await pool.query<any[]>(
+    `SELECT a.id AS assignment_id, a.student_id, a.mission_id, a.status, a.response,
+            a.score_band, a.submitted_at, m.title, m.body, m.difficulty, m.answer_key
+       FROM assignments a JOIN missions m ON m.id = a.mission_id
+      WHERE a.id = ?`,
+    [assignmentId]
+  );
+  if (!a) return { kind: 'not_found' };
+  // Ownership: a student may only review their own assignment.
+  if (requesterStudentId != null && Number(a.student_id) !== requesterStudentId) return { kind: 'forbidden' };
+  if (a.status !== 'graded') return { kind: 'not_graded' };
+
+  const [opts] = await pool.query<any[]>(
+    `SELECT option_key, option_text FROM mission_options WHERE mission_id = ? ORDER BY option_key ASC`,
+    [a.mission_id]
+  );
+  const key = parseJsonCol<{ correct?: string; explanation?: string }>(a.answer_key, {});
+  const resp = parseJsonCol<{ selected?: string }>(a.response, {});
+  const correctKey = String(key.correct ?? '');
+  const selectedKey = resp.selected ?? null;
+  const byKey = new Map(opts.map((o: any) => [o.option_key, o.option_text]));
+
+  return {
+    kind: 'ok',
+    review: {
+      assignment_id: Number(a.assignment_id),
+      mission_id: Number(a.mission_id),
+      title: a.title,
+      body: a.body,
+      difficulty: Number(a.difficulty),
+      options: opts.map((o: any) => ({ option_key: o.option_key, option_text: o.option_text })),
+      selected_key: selectedKey,
+      selected_text: selectedKey != null ? (byKey.get(selectedKey) ?? null) : null,
+      correct_key: correctKey,
+      correct_text: byKey.get(correctKey) ?? null,
+      explanation: String(key.explanation ?? ''),
+      correct: selectedKey != null && selectedKey === correctKey,
+      score_band: a.score_band ?? null,
+      submitted_at: a.submitted_at ?? null,
+    },
+  };
+}
+
 /**
  * logAttempt — the single audit-trail helper, called from slot open, mission
  * view, submit, grade and feedback submit. Pass a `conn` to write inside an

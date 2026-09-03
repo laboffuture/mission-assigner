@@ -79,6 +79,10 @@ try {
   run('npm run db:seed');
   run('npm run verify:assistance');
 
+  // Mission review — a student reviews their own completed assignment.
+  run('npm run db:seed');
+  run('npm run verify:review');
+
   // CSRF — double-submit token issue + enforcement (in-process; no server/DB).
   run('npm run verify:csrf');
 

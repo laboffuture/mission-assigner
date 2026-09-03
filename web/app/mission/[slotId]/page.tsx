@@ -2,16 +2,17 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
-import { isEmptyWeek, normalizeSlot, type WeekPayload } from '@/lib/api/types';
+import { isEmptyWeek, normalizeSlot, type AssignmentReview, type Slot, type WeekPayload } from '@/lib/api/types';
 import { Header } from '@/components/Header';
 import { PageShell, Card, Muted, Button } from '@/components/ui';
 import { MissionRunner } from '@/components/mission/MissionRunner';
+import { ReviewView } from '@/components/mission/ReviewView';
 
 /**
  * Mission view. Server component: resolves identity and looks up the slot's
  * status from the week (a GET — no mutation on render). It then dispatches:
  *   locked    → metadata-only notice (never reached from the board, defensive)
- *   submitted → already-completed notice (avoids a dead re-submit)
+ *   submitted → a read-only review of the completed mission (Piece 2)
  *   open      → the interactive runner (client) that opens + answers the slot
  * Opening the slot (the POST that lazy-fills and awards attempt XP) happens
  * exactly once, inside the runner, on user arrival — never on every SSR pass.
@@ -25,6 +26,13 @@ export default async function MissionPage({ params }: { params: { slotId: string
   const week = await serverApi.get<WeekPayload>(`/api/week/${me.id}`);
 
   const raw = isEmptyWeek(week) ? undefined : week.slots.find((s) => s.slot_id === slotId);
+  const slot = raw ? normalizeSlot(raw) : null;
+
+  // A completed slot opens a read-only review — fetched server-side.
+  let review: AssignmentReview | null = null;
+  if (slot && slot.status === 'submitted' && slot.assignment_id != null) {
+    review = await serverApi.get<AssignmentReview>(`/api/assignment/${slot.assignment_id}/review`);
+  }
 
   return (
     <>
@@ -36,27 +44,25 @@ export default async function MissionPage({ params }: { params: { slotId: string
           </Link>
         </div>
 
-        {!raw ? (
+        {!slot ? (
           <Notice title="Mission not found" body="This mission isn’t part of your current week." />
+        ) : review ? (
+          <ReviewView review={review} />
         ) : (
-          <MissionDispatch slot={normalizeSlot(raw)} slotId={slotId} />
+          <MissionDispatch slot={slot} slotId={slotId} />
         )}
       </PageShell>
     </>
   );
 }
 
-function MissionDispatch({ slot, slotId }: { slot: ReturnType<typeof normalizeSlot>; slotId: number }) {
+function MissionDispatch({ slot, slotId }: { slot: Slot; slotId: number }) {
   if (slot.kind === 'locked') {
     return <Notice title="Locked" body="This mission unlocks later. Come back when it opens." />;
   }
   if (slot.status === 'submitted') {
-    return (
-      <Notice
-        title="Already completed"
-        body="You’ve finished this mission. Head back to see what’s open now."
-      />
-    );
+    // Submitted but no assignment id to review — defensive fallback.
+    return <Notice title="Already completed" body="You’ve finished this mission." />;
   }
   return <MissionRunner slotId={slotId} />;
 }

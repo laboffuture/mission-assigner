@@ -20,6 +20,7 @@ import {
   getMissionBank,
   getMissionQuality,
   getMissionQualityPage,
+  getAssignmentReview,
   logAttempt,
 } from './tracking.js';
 import { feedbackGatesUnlock, setFeedbackGatesUnlock } from './config.js';
@@ -861,6 +862,39 @@ app.get(
     } catch (err) {
       rlog(req).error({ err }, 'request failed');
       sendError(req, res, 500, 'internal_error', 'failed to load attempt log');
+    }
+  }
+);
+
+/**
+ * GET /api/assignment/:assignmentId/review — a read-only review of the student's
+ * OWN completed assignment: the question, options, their answer, the correct key,
+ * the explanation, band and when submitted. Ownership enforced by the owner
+ * lookup (student cross-access → 403). Only graded assignments are reviewable.
+ */
+app.get(
+  '/api/assignment/:assignmentId/review',
+  requireAuth,
+  validate({ params: assignmentIdParams }),
+  async (req, res) => {
+    const assignmentId = req.valid!.params.assignmentId;
+    // Students are constrained to their own id; staff may review any (null owner).
+    const requesterStudentId = req.auth!.role === 'student' ? req.auth!.userId : null;
+    try {
+      const result = await getAssignmentReview(assignmentId, requesterStudentId);
+      switch (result.kind) {
+        case 'ok':
+          return res.json(result.review);
+        case 'not_found':
+          return sendError(req, res, 404, 'not_found', 'assignment not found');
+        case 'forbidden':
+          return sendError(req, res, 403, 'forbidden', "cannot access another user's data");
+        case 'not_graded':
+          return sendError(req, res, 409, 'not_graded', 'this mission has not been completed yet');
+      }
+    } catch (err) {
+      rlog(req).error({ err }, 'request failed');
+      sendError(req, res, 500, 'internal_error', 'failed to load review');
     }
   }
 );
