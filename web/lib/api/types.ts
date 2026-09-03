@@ -201,10 +201,11 @@ export interface FeedbackAnswer {
   value: string;
 }
 
-export interface FeedbackResult {
-  ok?: boolean;
-  alreadyComplete?: boolean;
-  status?: string;
+/** POST /api/feedback/:assignmentId response ({ ...FeedbackResult, unlock }). */
+export interface FeedbackSubmitResponse {
+  alreadyComplete: boolean;
+  responsesSaved: number;
+  xp: XpAward;
   unlock: UnlockResult | null;
 }
 

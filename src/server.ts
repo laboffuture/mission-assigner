@@ -11,7 +11,7 @@ import { submitAndGrade } from './grading.js';
 import { fillSlot } from './slotFiller.js';
 import { unlockNext } from './slotUnlock.js';
 import { awardXp } from './xp.js';
-import { getQuestions, submitFeedback, FeedbackError } from './feedback.js';
+import { getQuestions, submitFeedback, FeedbackError, clearQuestionCache } from './feedback.js';
 import {
   getStudentProgress,
   getSubmissionLog,
@@ -860,6 +860,13 @@ if (process.env.ENABLE_TEST_HOOKS) {
   app.post('/api/test/reset-rate-limit', (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username : undefined;
     resetRateLimiter(username);
+    res.json({ ok: true });
+  });
+  // Drop the in-process feedback-question cache so an edited prompt/option is
+  // picked up without restarting (the questions are otherwise cached for the
+  // process lifetime).
+  app.post('/api/test/clear-feedback-cache', (_req, res) => {
+    clearQuestionCache();
     res.json({ ok: true });
   });
 }
