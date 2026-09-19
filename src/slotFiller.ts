@@ -2,6 +2,9 @@ import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
 import { logAttempt } from './tracking.js';
 import { logger } from './logger.js';
+import { selectionMode } from './config.js';
+import { chooseCurriculumMission, logCurriculumSelection } from './selection.js';
+import { MIN_LEVEL, MAX_LEVEL } from './grading.js';
 
 export interface FillResult {
   weekSlotId: number;
@@ -10,6 +13,9 @@ export interface FillResult {
   targetLevel: number;
   relaxations: string[]; // ordered log of each relaxation applied
   gap: boolean; // true = no mission available, coverage gap recorded
+  /** Curriculum mode only: the chosen mission's session, and whether it is a revision repeat. */
+  sessionId?: number | null;
+  revision?: boolean;
 }
 
 interface Candidate {
@@ -100,6 +106,69 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
     const targetLevel = Math.max(minLevel, Math.min(rawTarget, maxLevel));
 
     const studentId = Number(slot.student_id);
+
+    // Curriculum mode: the session pool is the first hard filter; difficulty is
+    // only a ranking within it. The slot row lock above (which also locks the
+    // student row via the join) serialises fills per student.
+    if (selectionMode() === 'curriculum') {
+      // Segments are demoted: they seed the cold-start level and nothing else, so
+      // the curriculum target clamps to the global 0..4 ladder rather than a
+      // segment's min/max. (A subject with no segments behaves identically.)
+      const curriculumTarget = Math.max(MIN_LEVEL, Math.min(rawTarget, MAX_LEVEL));
+      const choice = await chooseCurriculumMission(conn, {
+        studentId,
+        subject: slot.subject,
+        age: Number(slot.age),
+        targetLevel: curriculumTarget,
+        missionType: slot.mission_type,
+        timeBands: [slot.time_band],
+      });
+      const extra = { mission_type: slot.mission_type, time_band: slot.time_band, target_level: curriculumTarget };
+      if (!choice.chosen) {
+        await logCurriculumSelection(conn, studentId, choice, extra);
+        await conn.commit();
+        logger.warn({ weekSlotId, studentId, relaxations: choice.relaxations }, 'slotFiller: curriculum coverage gap');
+        return {
+          weekSlotId,
+          assignmentId: null,
+          missionId: null,
+          targetLevel: curriculumTarget,
+          relaxations: choice.relaxations,
+          gap: true,
+          sessionId: null,
+          revision: false,
+        };
+      }
+      const top = choice.chosen;
+      const [cIns] = await conn.query<any>(
+        `INSERT INTO assignments
+           (student_id, mission_id, mission_version, level_at_assign, status, revision_seq, is_revision)
+         VALUES (?, ?, ?, ?, 'open', ?, ?)`,
+        [studentId, top.mission_id, top.mission_version, Number(slot.current_level), top.revision_seq, choice.revision]
+      );
+      const cAssignmentId = Number(cIns.insertId);
+      await conn.query(`UPDATE week_slots SET assignment_id = ? WHERE id = ?`, [cAssignmentId, weekSlotId]);
+      await logAttempt(
+        cAssignmentId,
+        studentId,
+        'opened',
+        { weekSlotId, targetLevel: curriculumTarget, sessionId: top.session_id, revision: choice.revision },
+        conn
+      );
+      await logCurriculumSelection(conn, studentId, choice, extra);
+      await conn.commit();
+      return {
+        weekSlotId,
+        assignmentId: cAssignmentId,
+        missionId: top.mission_id,
+        targetLevel: curriculumTarget,
+        relaxations: choice.relaxations,
+        gap: false,
+        sessionId: top.session_id,
+        revision: choice.revision,
+      };
+    }
+
     const relaxations: string[] = [];
 
     // Attempt the base filters, then relax step by step.
