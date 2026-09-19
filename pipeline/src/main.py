@@ -19,35 +19,99 @@ import argparse
 import json
 import sys
 
-from . import db, reader, chunker, generator, validator, importer, export_review, import_review
+from . import db, reader, chunker, generator, validator, importer, export_review, import_review, curriculum
 
 QUEUE_FILE = db.LOGS_DIR / "pending_generation.json"
 COVERAGE_MIN = 5
 
 
-def _ensure_schema():
-    actions = db.ensure_schema(dry_run=False)
-    for a in actions:
-        print(f"  [schema] {a}")
+class IngestFailed(Exception):
+    """One or more files were rejected at ingest. Raised after the good files are
+    processed, so the command exits non-zero and `run` stops before generating."""
+
+
+def _check_schema():
+    """Verify the schema the migration chain owns, and stop clearly if it is
+    missing. The pipeline no longer creates schema (see db.py) — a missing
+    object means migrations have not been run, which is an operator action, not
+    something to paper over at runtime."""
+    try:
+        checked = db.verify_schema()
+    except db.SchemaOutOfDate as e:
+        sys.exit(f"FATAL: {e}")
+    # Individually noisy and identical on every run; one line is enough.
+    print(f"  [schema] {len(checked)} required objects present")
+
+
+# Kept so the older name still resolves at the call sites below.
+_ensure_schema = _check_schema
+
+
+def _group_by_file(sections: list[dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for s in sections:
+        grouped.setdefault(s["source_file"], []).append(s)
+    return grouped
+
+
+def chunks_for_file(file_name: str, sections: list[dict], config: dict, conn, legacy_subject: str) -> list[dict]:
+    """Session-tag one file's sections and turn them into chunks. Raises
+    CurriculumError / SessionBoundaryError when the file cannot be placed safely."""
+    mapping = curriculum.mapping_for(file_name, config)
+    if mapping == curriculum.LEGACY:
+        print(f"  WARNING: {file_name} is a legacy file — its missions carry no session and are "
+              f"never served in curriculum selection mode.")
+        return chunker.sections_to_chunks(sections, subject=legacy_subject)
+
+    project = curriculum.resolve_project(conn, mapping, file_name)
+    tagged, untagged = chunker.assign_sessions(
+        sections, project["session_count"], curriculum.session_pattern(config), file_name
+    )
+    for s in tagged:
+        s["session_id"] = project["sessions"][s["session_number"]]
+    if untagged:
+        headings = ", ".join(repr(s["heading"]) for s in untagged)
+        print(f"  NOTE: {file_name}: {len(untagged)} section(s) outside any session, not used: {headings}")
+    print(f"  {file_name}: {project['session_count']} sessions -> "
+          f"{project['track']} / {project['credit']} / P{project['project']}")
+    return chunker.sections_to_chunks(tagged, subject=project["subject"])
 
 
 # --- commands ----------------------------------------------------------------
 def cmd_ingest(args) -> list[dict]:
     _ensure_schema()
     levels = db.load_levels()
-    print("Ingesting documents from input/ ...")
+    config = db.load_curriculum_config()
+    print(f"Ingesting documents from {db.INPUT_DIR} ...")
     sections = reader.read_input_dir(db.INPUT_DIR)
-    chunks = chunker.sections_to_chunks(sections, subject=levels["subject"])
+
+    chunks: list[dict] = []
+    failures: list[tuple[str, str]] = []
+    conn = db.get_connection()
+    try:
+        for file_name, file_sections in _group_by_file(sections).items():
+            try:
+                chunks.extend(chunks_for_file(file_name, file_sections, config, conn, levels["subject"]))
+            except (curriculum.CurriculumError, chunker.SessionBoundaryError) as e:
+                failures.append((file_name, str(e)))
+                print(f"  FAILED {e}")
+    finally:
+        conn.close()
+
     result = chunker.upsert_and_classify(chunks, dry_run=args.dry_run)
     print("  " + chunker.summarize(result))
 
     queue = result["new"] + result["changed"]
     if not args.dry_run:
         db.LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        QUEUE_FILE.write_text(json.dumps(queue, indent=2), encoding="utf-8")
+        QUEUE_FILE.write_text(json.dumps(queue, indent=2, default=str), encoding="utf-8")
         print(f"  Wrote generation queue: {len(queue)} chunk(s) -> {QUEUE_FILE.name}")
     else:
         print(f"  [dry-run] would queue {len(queue)} chunk(s) for generation")
+
+    if failures:
+        names = ", ".join(f for f, _ in failures)
+        raise IngestFailed(f"{len(failures)} file(s) rejected at ingest and not queued: {names}")
     return queue
 
 
@@ -157,7 +221,85 @@ def cmd_coverage(args):
         print(row)
     print("-" * len(header))
     print(f"\n{evln['gaps']} gap cell(s) with fewer than {COVERAGE_MIN} live missions.")
-    return {"gaps": evln["gaps"]}
+
+    session_gaps = print_session_coverage()
+    thin = print_session_difficulty_coverage()
+    return {"gaps": evln["gaps"], "session_gaps": session_gaps, "thin_sessions": thin}
+
+
+def print_session_coverage() -> int:
+    """Live missions per curriculum session. A session with none is a HARD gap:
+    curriculum selection never serves content from a later session, so a student
+    who reaches it gets nothing new from it."""
+    conn = db.get_connection()
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT t.name AS track, c.code AS credit, p.sequence AS project, s.sequence AS session,
+                      s.credit_sequence, COUNT(m.id) AS live
+                 FROM sessions s
+                 JOIN projects p ON p.id = s.project_id
+                 JOIN credits c ON c.id = p.credit_id
+                 JOIN tracks t ON t.id = c.track_id AND t.active = TRUE
+                 LEFT JOIN missions m ON m.session_id = s.id AND m.status = 'live'
+                GROUP BY t.id, t.name, c.id, c.code, c.sequence, p.sequence, s.id, s.sequence, s.credit_sequence
+                ORDER BY t.id, c.sequence, s.credit_sequence"""
+        )
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    evln = curriculum.evaluate_session_coverage(rows)
+    print("\nLive missions per curriculum session (GAP = none; students reaching it get nothing new):\n")
+    last = None
+    for r in rows:
+        key = (r["track"], r["credit"])
+        if key != last:
+            print(f"  {r['track']} / {r['credit']}")
+            last = key
+        mark = "  GAP" if int(r["live"]) == 0 else ""
+        print(f"    P{r['project']} S{r['session']} (credit #{r['credit_sequence']}): {r['live']}{mark}")
+    print(f"\n{evln['gaps']} of {evln['sessions']} session(s) have no live missions.")
+    return evln["gaps"]
+
+
+def print_session_difficulty_coverage() -> int:
+    """Distinct live difficulties per session. Selection ranks difficulty WITHIN a
+    session, so a session with only one variant cannot adapt to the student's
+    level at all."""
+    conn = db.get_connection()
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """SELECT t.name AS track, c.code AS credit, p.sequence AS project, s.sequence AS session,
+                      s.credit_sequence, COUNT(DISTINCT m.difficulty) AS variants
+                 FROM sessions s
+                 JOIN projects p ON p.id = s.project_id
+                 JOIN credits c ON c.id = p.credit_id
+                 JOIN tracks t ON t.id = c.track_id AND t.active = TRUE
+                 LEFT JOIN missions m ON m.session_id = s.id AND m.status = 'live'
+                GROUP BY t.id, t.name, c.id, c.code, c.sequence, p.sequence, s.id, s.sequence, s.credit_sequence
+                ORDER BY t.id, c.sequence, s.credit_sequence"""
+        )
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    evln = curriculum.evaluate_session_difficulty_coverage(rows)
+    print(
+        f"\nDistinct live difficulties per session "
+        f"(THIN = fewer than {evln['minimum_variants']}; difficulty cannot adapt):\n"
+    )
+    for r in evln["thin_sessions"]:
+        print(f"    {r['track']} / {r['credit']} P{r['project']} S{r['session']} "
+              f"(credit #{r['credit_sequence']}): {r['variants']} variant(s)  THIN")
+    if not evln["thin_sessions"]:
+        print("    none — every session carries a difficulty spread.")
+    print(f"\n{evln['thin']} of {evln['sessions']} session(s) carry fewer than "
+          f"{evln['minimum_variants']} difficulty variants.")
+    return evln["thin"]
 
 
 # --- arg parsing -------------------------------------------------------------
