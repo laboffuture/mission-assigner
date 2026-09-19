@@ -1,9 +1,16 @@
-"""Shared infrastructure: paths, config loading, DB connection, and an
-idempotent schema migration.
+"""Shared infrastructure: paths, config loading, DB connection, and a schema
+CHECK.
 
-The migration is deliberately additive and safe to run against the live
-database: it uses CREATE TABLE IF NOT EXISTS and checks information_schema
-before adding columns/indexes, so it never drops or rewrites existing data.
+This module does not create schema. It used to: `ensure_schema` ran
+CREATE TABLE IF NOT EXISTS and ALTER TABLE ... ADD COLUMN at pipeline runtime,
+which put six objects outside the Node migration chain and made
+`verify:migrations` — whose job is catching drift — structurally unable to see
+the largest drift in the project. Those objects now belong to migration
+010_adopt_pipeline_schema.
+
+`verify_schema` therefore only looks, and raises SchemaOutOfDate naming the
+missing objects and the command to fix them. The database schema has exactly
+one owner: the umzug chain in mission-demo/src/migrations.
 """
 from __future__ import annotations
 
@@ -17,10 +24,13 @@ from dotenv import load_dotenv
 # --- Paths -------------------------------------------------------------------
 PIPELINE_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = PIPELINE_ROOT / "config"
-INPUT_DIR = PIPELINE_ROOT / "input"
-LOGS_DIR = PIPELINE_ROOT / "logs"
 
 load_dotenv(PIPELINE_ROOT / ".env")
+
+# Input and working directories can be pointed elsewhere (the curriculum pipeline
+# harness runs against a throwaway directory so it never touches real SME drops).
+INPUT_DIR = Path(os.getenv("PIPELINE_INPUT_DIR") or PIPELINE_ROOT / "input")
+LOGS_DIR = Path(os.getenv("PIPELINE_LOGS_DIR") or PIPELINE_ROOT / "logs")
 
 
 # --- Config loaders ----------------------------------------------------------
@@ -53,6 +63,20 @@ def load_active_template() -> dict:
     return active[0]
 
 
+def load_curriculum_config() -> dict:
+    """config/curriculum.json (or PIPELINE_CURRICULUM_FILE): which track, credit and
+    project each SME file represents, plus the session heading pattern. Missing
+    file = no mappings, so every input file must be listed as legacy."""
+    path = Path(os.getenv("PIPELINE_CURRICULUM_FILE") or CONFIG_DIR / "curriculum.json")
+    if not path.exists():
+        return {"files": {}, "legacy_files": []}
+    with path.open("r", encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    cfg.setdefault("files", {})
+    cfg.setdefault("legacy_files", [])
+    return cfg
+
+
 # --- Database ----------------------------------------------------------------
 def get_connection():
     return mysql.connector.connect(
@@ -65,31 +89,37 @@ def get_connection():
     )
 
 
-CONTENT_CHUNKS_DDL = """
-CREATE TABLE IF NOT EXISTS content_chunks (
-  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  source_file   VARCHAR(255) NOT NULL,
-  chunk_ref     VARCHAR(120) NOT NULL,
-  heading       VARCHAR(255) NOT NULL,
-  body          MEDIUMTEXT NOT NULL,
-  content_hash  CHAR(64) NOT NULL,
-  subject       VARCHAR(60) NOT NULL,
-  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_chunk (source_file, chunk_ref),
-  KEY idx_chunk_hash (content_hash)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-"""
+# What migration 010_adopt_pipeline_schema (and 009_curriculum) must have put in
+# place before the pipeline can run. Checked, never created — see the module
+# docstring. Keep in step with src/migrations/ in the Node tree.
+REQUIRED_TABLES = ("content_chunks",)
 
-# columns to add to the existing missions table: name -> DDL fragment
-MISSIONS_NEW_COLUMNS = {
-    "source_chunk_id": "ADD COLUMN source_chunk_id BIGINT UNSIGNED NULL",
-    "generated_at": "ADD COLUMN generated_at TIMESTAMP NULL",
-    "review_notes": "ADD COLUMN review_notes TEXT NULL",
-    # records WHICH version (content_hash) of the chunk a mission was generated
-    # from, so a repeat import of identical content is a no-op rather than churn.
-    "source_chunk_hash": "ADD COLUMN source_chunk_hash CHAR(64) NULL",
-}
+REQUIRED_COLUMNS = (
+    ("content_chunks", "session_id"),
+    ("missions", "source_chunk_id"),
+    ("missions", "generated_at"),
+    ("missions", "review_notes"),
+    ("missions", "source_chunk_hash"),
+    # Owned by 009_curriculum: without it, generated missions cannot be
+    # curriculum-scoped and would be unservable in curriculum mode.
+    ("missions", "session_id"),
+)
+
+REQUIRED_INDEXES = (("missions", "idx_missions_source_chunk"),)
+
+MIGRATE_HINT = (
+    "Run `npm run db:migrate` in mission-demo (migrations 009_curriculum and "
+    "010_adopt_pipeline_schema) before running the pipeline."
+)
+
+
+class SchemaOutOfDate(RuntimeError):
+    """The database is missing objects the migration chain owns.
+
+    Raised instead of creating them: a pipeline that silently patches the schema
+    hides drift from verify:migrations, which is how this went unnoticed through
+    31 commits.
+    """
 
 
 def _column_exists(cur, table: str, column: str) -> bool:
@@ -97,6 +127,15 @@ def _column_exists(cur, table: str, column: str) -> bool:
         """SELECT COUNT(*) FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s AND COLUMN_NAME = %s""",
         (table, column),
+    )
+    return cur.fetchone()[0] > 0
+
+
+def _table_exists(cur, table: str) -> bool:
+    cur.execute(
+        """SELECT COUNT(*) FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s""",
+        (table,),
     )
     return cur.fetchone()[0] > 0
 
@@ -110,44 +149,58 @@ def _index_exists(cur, table: str, index: str) -> bool:
     return cur.fetchone()[0] > 0
 
 
-def ensure_schema(dry_run: bool = False) -> list[str]:
-    """Apply the additive Stage 2 schema changes. Returns a list of the actions
-    taken (or that would be taken under dry_run)."""
-    actions: list[str] = []
+def verify_schema(dry_run: bool = False) -> list[str]:
+    """Check that every object the pipeline depends on exists.
+
+    Returns a list of human-readable confirmations (so `--dry-run` and the CLI
+    can still report what was inspected). Raises SchemaOutOfDate listing every
+    missing object if anything is absent — it never creates or alters anything.
+
+    `dry_run` is accepted for signature compatibility with the callers and makes
+    no difference: this function only ever reads.
+    """
+    checked: list[str] = []
+    missing: list[str] = []
     conn = get_connection()
     try:
         cur = conn.cursor()
 
-        # 1. content_chunks table
-        cur.execute(
-            """SELECT COUNT(*) FROM information_schema.TABLES
-                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'content_chunks'"""
-        )
-        if cur.fetchone()[0] == 0:
-            actions.append("CREATE TABLE content_chunks")
-            if not dry_run:
-                cur.execute(CONTENT_CHUNKS_DDL)
+        for table in REQUIRED_TABLES:
+            if _table_exists(cur, table):
+                checked.append(f"table {table}: present")
+            else:
+                missing.append(f"table {table}")
 
-        # 2. new columns on missions
-        for col, ddl in MISSIONS_NEW_COLUMNS.items():
-            if not _column_exists(cur, "missions", col):
-                actions.append(f"ALTER TABLE missions {ddl}")
-                if not dry_run:
-                    cur.execute(f"ALTER TABLE missions {ddl}")
+        for table, column in REQUIRED_COLUMNS:
+            # A missing table already reported above would make every one of its
+            # columns "missing" too; only report the table once.
+            if table not in REQUIRED_TABLES or _table_exists(cur, table):
+                if _column_exists(cur, table, column):
+                    checked.append(f"column {table}.{column}: present")
+                else:
+                    missing.append(f"column {table}.{column}")
 
-        # 3. index on missions.source_chunk_id
-        if not _index_exists(cur, "missions", "idx_missions_source_chunk"):
-            # only add once the column is guaranteed to exist
-            if _column_exists(cur, "missions", "source_chunk_id") or not dry_run:
-                actions.append("CREATE INDEX idx_missions_source_chunk")
-                if not dry_run:
-                    cur.execute(
-                        "ALTER TABLE missions ADD INDEX idx_missions_source_chunk (source_chunk_id)"
-                    )
+        for table, index in REQUIRED_INDEXES:
+            if _index_exists(cur, table, index):
+                checked.append(f"index {table}.{index}: present")
+            else:
+                missing.append(f"index {table}.{index}")
 
-        if not dry_run:
-            conn.commit()
         cur.close()
     finally:
         conn.close()
-    return actions
+
+    if missing:
+        lines = [
+            f"The database is missing {len(missing)} object(s) owned by the migration chain:",
+            *(f"  - {m}" for m in missing),
+            "",
+            MIGRATE_HINT,
+        ]
+        raise SchemaOutOfDate("\n".join(lines))
+    return checked
+
+
+# Back-compat alias. The name is kept so existing callers and any operator
+# muscle memory still work, but it no longer ensures anything — it verifies.
+ensure_schema = verify_schema

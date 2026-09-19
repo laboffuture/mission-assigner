@@ -24,6 +24,8 @@ export interface GradeResult {
   difficulty: number;
   stallCount: number;
   assistanceRaised: boolean;
+  /** Curriculum revision repeat: earns attempt/submit XP but never 'correct'. */
+  isRevision: boolean;
   timeToSubmitSeconds: number | null;
 }
 
@@ -65,6 +67,7 @@ export async function submitAndGrade(assignmentId: number, selected: string): Pr
     const [rows] = await conn.query<any[]>(
       `SELECT a.id            AS assignment_id,
               a.status        AS status,
+              a.is_revision   AS is_revision,
               a.student_id    AS student_id,
               a.opened_at     AS opened_at,
               a.assigned_at   AS assigned_at,
@@ -143,6 +146,7 @@ export async function submitAndGrade(assignmentId: number, selected: string): Pr
       difficulty,
       stallCount: prog.stallCount,
       assistanceRaised: prog.assistanceRaised,
+      isRevision: Boolean(Number(row.is_revision)),
       timeToSubmitSeconds,
     };
   } catch (err) {

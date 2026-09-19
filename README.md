@@ -77,6 +77,12 @@ recorded in a `schema_migrations` table:
 | `002_stage3_segments_weeks_xp` | Stage 3: segments, weekly templates/slots, XP, cold start |
 | `003_stage5_feedback_tracking` | Stage 5: feedback questions/responses, attempt log |
 | `004_auth_roles` | `students.role` |
+| `005_student_timezone` | `students.timezone` |
+| `006_idempotency_keys` | `idempotency_keys` |
+| `007_staff_credentials` | staff username/password login |
+| `008_assistance_workflow` | `assistance_events` |
+| `009_curriculum` | tracks/credits/projects/sessions, `student_positions`, `missions.session_id`, `assignments.revision_seq` |
+| `010_adopt_pipeline_schema` | `content_chunks`, and the Stage 2 pipeline's four columns + index on `missions` |
 
 **Why umzug (not db-migrate):** umzug is a thin, framework-agnostic migration
 runner — it imposes no ORM and no DB driver of its own, so every migration is
@@ -296,6 +302,69 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 > suite green in a single pass with no env change or restart. The hook only works
 > when the server is started with `ENABLE_TEST_HOOKS=1`, so it is never exposed in
 > production.
+
+## Curriculum-scoped selection (migration 009)
+
+Missions are scoped to where a student is in the curriculum, so nobody is served
+content they have not been taught yet.
+
+```
+Subject → Track ("Tesla's Track") → Credit (C1..C5) → Project (ordered) → Session (ordered)
+```
+
+A project usually has 8 sessions and the first project of a credit 9, so a credit
+with 3 projects has 25. Each session has a `credit_sequence`, its running position
+across the credit's projects (C1/P2/S1 is 10). A student's position is one session
+per track (`student_positions`); a mission belongs to one session (`missions.session_id`).
+
+- **Load a curriculum** — `npm run curriculum:load -- curriculum/teslas-track.json`.
+  Idempotent; additive only (it refuses to remove credits, projects or sessions).
+- **Pool** (`src/curriculum.ts::getSessionPool`) — the current session plus earlier
+  sessions of the current credit (`POOL_LOOKBACK_SESSIONS`, 0 = all of them).
+- **Selection** (`src/selection.ts::chooseCurriculumMission`, used by `slotFiller`
+  and free-play) — hard filters: session in pool, live, slot type/band, not seen.
+  Ranking: current session, then later sessions before earlier ones, then difficulty
+  closest to the student's level, then interest overlap, then random. Difficulty only
+  chooses *within* the session scope: a struggling student gets an easier question on
+  the same content, not an older session.
+- **Never ahead, enforced in SQL** — every candidate query also joins the student's
+  position and excludes sessions after it and later credits, independent of the pool.
+- **Exhaustion** (each step logged, and recorded in `selection_log`): widen to the
+  whole credit (if lookback limited it) → earlier credits → widen the time band
+  upward → repeat the completed mission seen longest ago as revision
+  (`assignments.revision_seq`) → empty. The time band stays a hard filter for
+  normal selection; it only widens here, one step before repeating, so a student
+  is never handed a repeat while unseen content of a different length exists.
+- **Deliberate revision** — `REVISION_MIX_PERCENT` (default 20) of selections are
+  drawn from an earlier session even when the current session still has unseen
+  missions, so earlier content keeps coming back. The roll happens once per
+  selection and falls through to the current session when nothing earlier
+  qualifies; the pick is logged and recorded as `revision_mix`, distinct from an
+  exhaustion `repeat_oldest`.
+- **Revision XP** — a revision repeat of a mission awards `attempt` and `submit`
+  XP but never `correct`: the student was already paid for getting it right the
+  first time (`assignments.is_revision`, guarded in `src/server.ts`).
+- **Position from the LMS** — explicit positions win. When only a completion
+  percentage exists, `resolvePosition` derives one under `PERCENT_SCOPE`
+  (credit | project | track), rounding **down** (39% of 25 sessions is session 9),
+  and stores the inputs in `source_detail`.
+- **Modes** — `SELECTION_MODE=legacy` (default) or `curriculum`. Legacy is the
+  default until every live student has a backfilled position; flip it once the
+  Robotics positions are in. In curriculum mode a student with no position is
+  served **nothing** and an alert is logged
+  (`alert=missing_curriculum_position`) — there is deliberately no silent
+  fallback to legacy, because a fallback would quietly serve unseen content.
+  Suites written for difficulty + interest selection set `legacy` for their own
+  run through `POST /api/test/selection-mode`; the curriculum suites set
+  `curriculum`.
+- **Segments are demoted** — they now seed the cold-start level only. In
+  curriculum mode the target level clamps to the global 0–4 ladder, not a
+  segment's min/max, and the session pool (not the segment) decides what content
+  is eligible. New subjects need a curriculum, not segments.
+
+Seed data adds Tesla's Track (Robotics) with missions on C1 sessions 1–24 and C2/S1,
+and two students: *Ananya Rao* at C1/P1/S4 and *Kabir Mehta* at C1/P3/S2. Tests:
+`npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
 
 ## How Stage 3 works
 

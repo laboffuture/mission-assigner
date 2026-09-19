@@ -23,7 +23,18 @@ import {
   getAssignmentReview,
   logAttempt,
 } from './tracking.js';
-import { feedbackGatesUnlock, setFeedbackGatesUnlock } from './config.js';
+import {
+  feedbackGatesUnlock,
+  setFeedbackGatesUnlock,
+  selectionMode,
+  setSelectionMode,
+  poolLookbackSessions,
+  setPoolLookbackSessions,
+  percentScope,
+  setPercentScope,
+  revisionMixPercent,
+  setRevisionMixPercent,
+} from './config.js';
 import {
   requireAuth,
   requireRole,
@@ -410,7 +421,9 @@ async function runSubmit(assignmentId: number, selected: string): Promise<Submit
   const result = await submitAndGrade(assignmentId, selected);
   const submitXp = await awardXp(result.studentId, result.assignmentId, 'submit', result.difficulty);
   let correctXp = null;
-  if (result.correct) {
+  // A revision repeat earns 'attempt' and 'submit' XP but never 'correct': the
+  // student has already been paid for getting this mission right once.
+  if (result.correct && !result.isRevision) {
     correctXp = await awardXp(result.studentId, result.assignmentId, 'correct', result.difficulty);
   }
   const unlock = await unlockNext(result.assignmentId);
@@ -929,6 +942,45 @@ app.post('/api/test/feedback-gating', (req, res) => {
   res.json({ feedbackGatesUnlock: feedbackGatesUnlock() });
 });
 
+/**
+ * POST /api/test/selection-mode  body { mode: 'legacy' | 'curriculum' | null }
+ * Test hook (ENABLE_TEST_HOOKS only): each harness sets the selection mode it was
+ * written for, so legacy and curriculum suites run green in one pass.
+ */
+app.post('/api/test/selection-mode', (req, res) => {
+  if (!process.env.ENABLE_TEST_HOOKS) {
+    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
+  }
+  const mode = req.body?.mode;
+  if (mode !== 'legacy' && mode !== 'curriculum' && mode !== null) {
+    return sendError(req, res, 400, 'validation_error', "mode must be 'legacy', 'curriculum' or null");
+  }
+  setSelectionMode(mode);
+  res.json({ selectionMode: selectionMode() });
+});
+
+/**
+ * POST /api/test/curriculum-config  body { poolLookbackSessions?: number|null, percentScope?: string|null }
+ * Test hook (ENABLE_TEST_HOOKS only).
+ */
+app.post('/api/test/curriculum-config', (req, res) => {
+  if (!process.env.ENABLE_TEST_HOOKS) {
+    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
+  }
+  try {
+    if (req.body && 'poolLookbackSessions' in req.body) setPoolLookbackSessions(req.body.poolLookbackSessions);
+    if (req.body && 'percentScope' in req.body) setPercentScope(req.body.percentScope);
+    if (req.body && 'revisionMixPercent' in req.body) setRevisionMixPercent(req.body.revisionMixPercent);
+  } catch (err: any) {
+    return sendError(req, res, 400, 'validation_error', err?.message ?? 'invalid curriculum config');
+  }
+  res.json({
+    poolLookbackSessions: poolLookbackSessions(),
+    percentScope: percentScope(),
+    revisionMixPercent: revisionMixPercent(),
+  });
+});
+
 /** Shared: mission content (title/body/difficulty + options). */
 async function loadMissionContent(missionId: number) {
   const [missionRows] = await pool.query<any[]>(`SELECT id, title, body, difficulty FROM missions WHERE id = ?`, [
@@ -998,7 +1050,7 @@ initSentry()
   .then(() => {
     app.listen(PORT, () => {
       logger.info(
-        { port: PORT, authMode: getAuthProvider().mode },
+        { port: PORT, authMode: getAuthProvider().mode, selectionMode: selectionMode() },
         `Mission Hub listening on http://localhost:${PORT}`
       );
       warnIfInsecureAuth();

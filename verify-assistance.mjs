@@ -10,28 +10,35 @@ import mysql from 'mysql2/promise';
 const BASE = 'http://localhost:3000';
 const PW = process.env.STAFF_DEFAULT_PASSWORD || 'changeme';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
   cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 const cookieOf = (r) => (r.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
 async function staffLogin(username) {
   const r = await fetch(`${BASE}/api/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password: PW }),
   });
   return cookieOf(r);
 }
 async function devLogin(studentId) {
   const r = await fetch(`${BASE}/api/dev/login-as`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId }),
   });
   return cookieOf(r);
 }
 const j = async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) });
 
 const db = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER, password: process.env.DB_PASS, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
 });
 
 // ---- Fabricate: N failed graded assignments for a student, then an open event.
@@ -40,7 +47,8 @@ async function failedAssignments(studentId, n) {
   const refs = [];
   for (let i = 0; i < missions.length; i++) {
     const m = missions[i];
-    let key = m.answer_key; if (typeof key === 'string') key = JSON.parse(key);
+    let key = m.answer_key;
+    if (typeof key === 'string') key = JSON.parse(key);
     const wrong = ['a', 'b', 'c', 'd'].find((k) => k !== key.correct);
     const [tagRows] = await db.query(`SELECT tag FROM mission_tags WHERE mission_id = ?`, [m.id]);
     const [r] = await db.query(
@@ -79,7 +87,10 @@ console.log('\n[Role gating: instructor/admin only]');
   check('student -> 403', (await fetch(`${BASE}/api/assistance`, { headers: { Cookie: student } })).status === 403);
   const sme = await staffLogin('sme');
   check('sme -> 403', (await fetch(`${BASE}/api/assistance`, { headers: { Cookie: sme } })).status === 403);
-  check('instructor -> 200', (await fetch(`${BASE}/api/assistance`, { headers: { Cookie: instructor } })).status === 200);
+  check(
+    'instructor -> 200',
+    (await fetch(`${BASE}/api/assistance`, { headers: { Cookie: instructor } })).status === 200
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -91,8 +102,15 @@ console.log('\n[List: open events, oldest first, { items, nextCursor }]');
   check('oldest first (3-day wait leads)', body.items[0].id === oldEventId, `(first=${body.items[0].id})`);
   const first = body.items[0];
   check('item has student name', first.student_name === 'Rohan Verma', `(${first.student_name})`);
-  check('item has current level + segment', typeof first.current_level === 'number' && first.segment_name === 'CS Foundation');
-  check('item has waiting_seconds (~3 days)', first.waiting_seconds >= 3 * 24 * 3600 - 120, `(${first.waiting_seconds})`);
+  check(
+    'item has current level + segment',
+    typeof first.current_level === 'number' && first.segment_name === 'CS Foundation'
+  );
+  check(
+    'item has waiting_seconds (~3 days)',
+    first.waiting_seconds >= 3 * 24 * 3600 - 120,
+    `(${first.waiting_seconds})`
+  );
   check('item carries tags_involved', Array.isArray(first.tags_involved));
   check('item has created_at', typeof first.created_at === 'string');
 }
@@ -103,14 +121,22 @@ console.log('\n[Pagination: limit=1 pages via nextCursor]');
   const p1 = (await j(await fetch(`${BASE}/api/assistance?limit=1`, { headers: { Cookie: instructor } }))).body;
   check('page1: 1 item + a cursor', p1.items.length === 1 && !!p1.nextCursor, `(n=${p1.items.length})`);
   check('page1 is the oldest event', p1.items[0].id === oldEventId);
-  const p2 = (await j(await fetch(`${BASE}/api/assistance?limit=1&cursor=${encodeURIComponent(p1.nextCursor)}`, { headers: { Cookie: instructor } }))).body;
+  const p2 = (
+    await j(
+      await fetch(`${BASE}/api/assistance?limit=1&cursor=${encodeURIComponent(p1.nextCursor)}`, {
+        headers: { Cookie: instructor },
+      })
+    )
+  ).body;
   check('page2: the newer event, cursor null', p2.items[0].id === newEventId && p2.nextCursor === null);
 }
 
 // ---------------------------------------------------------------------------
 console.log('\n[Detail: full intervention context]');
 {
-  const { status, body } = await j(await fetch(`${BASE}/api/assistance/${oldEventId}`, { headers: { Cookie: instructor } }));
+  const { status, body } = await j(
+    await fetch(`${BASE}/api/assistance/${oldEventId}`, { headers: { Cookie: instructor } })
+  );
   check('GET detail -> 200', status === 200);
   check('3 failed missions expanded', body.failed_missions.length === 3, `(n=${body.failed_missions?.length})`);
   const fm = body.failed_missions[0];
@@ -122,13 +148,18 @@ console.log('\n[Detail: full intervention context]');
   check('has score_band fail', fm.score_band === 'fail', `(${fm.score_band})`);
   check('has tags array', Array.isArray(fm.tags));
   check('includes level_history', Array.isArray(body.level_history));
-  check('unknown id -> 404', (await fetch(`${BASE}/api/assistance/999999`, { headers: { Cookie: instructor } })).status === 404);
+  check(
+    'unknown id -> 404',
+    (await fetch(`${BASE}/api/assistance/999999`, { headers: { Cookie: instructor } })).status === 404
+  );
 }
 
 // ---------------------------------------------------------------------------
 console.log('\n[Acknowledge]');
 {
-  const { status, body } = await j(await fetch(`${BASE}/api/assistance/${newEventId}/acknowledge`, { method: 'POST', headers: { Cookie: instructor } }));
+  const { status, body } = await j(
+    await fetch(`${BASE}/api/assistance/${newEventId}/acknowledge`, { method: 'POST', headers: { Cookie: instructor } })
+  );
   check('acknowledge -> 200', status === 200);
   check('status now acknowledged', body.status === 'acknowledged', `(${body.status})`);
   check('acknowledged_at is set', body.acknowledged_at != null);
@@ -141,29 +172,43 @@ console.log('\n[Acknowledge]');
 console.log('\n[Resolve requires a note]');
 {
   const noNote = await fetch(`${BASE}/api/assistance/${oldEventId}/resolve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: instructor }, body: JSON.stringify({}),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: instructor },
+    body: JSON.stringify({}),
   });
   check('resolve without note -> 400', noNote.status === 400, `(got ${noNote.status})`);
   const blank = await fetch(`${BASE}/api/assistance/${oldEventId}/resolve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: instructor }, body: JSON.stringify({ note: '   ' }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: instructor },
+    body: JSON.stringify({ note: '   ' }),
   });
   check('resolve with blank note -> 400', blank.status === 400, `(got ${blank.status})`);
 
-  const ok = await j(await fetch(`${BASE}/api/assistance/${oldEventId}/resolve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: admin },
-    body: JSON.stringify({ note: 'Called the student; re-explained loops and set an easier warm-up.' }),
-  }));
+  const ok = await j(
+    await fetch(`${BASE}/api/assistance/${oldEventId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: admin },
+      body: JSON.stringify({ note: 'Called the student; re-explained loops and set an easier warm-up.' }),
+    })
+  );
   check('resolve with note -> 200', ok.status === 200);
   check('status now resolved', ok.body.status === 'resolved', `(${ok.body.status})`);
   check('resolution_note stored', /re-explained loops/.test(ok.body.resolution_note ?? ''));
-  check('resolved event left the open list', !(await j(await fetch(`${BASE}/api/assistance`, { headers: { Cookie: instructor } }))).body.items.some((e) => e.id === oldEventId));
+  check(
+    'resolved event left the open list',
+    !(await j(await fetch(`${BASE}/api/assistance`, { headers: { Cookie: instructor } }))).body.items.some(
+      (e) => e.id === oldEventId
+    )
+  );
   // resolved_by recorded in the DB.
   const [[row]] = await db.query(`SELECT resolved_by FROM assistance_events WHERE id = ?`, [oldEventId]);
   check('resolved_by recorded', Number(row.resolved_by) === 7, `(by=${row.resolved_by})`);
 
   // Re-resolving a resolved event is a conflict.
   const again = await fetch(`${BASE}/api/assistance/${oldEventId}/resolve`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: admin }, body: JSON.stringify({ note: 'again' }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: admin },
+    body: JSON.stringify({ note: 'again' }),
   });
   check('re-resolve -> 409', again.status === 409, `(got ${again.status})`);
 }

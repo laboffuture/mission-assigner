@@ -2,18 +2,24 @@
 // Requires the server running on :3000 with AUTH_MODE=dev and a fresh seed
 // (which creates one user per non-student role). Run: npm run verify:auth
 import 'dotenv/config';
+import { useSelectionMode } from './test-support/selection-mode.mjs';
 import mysql from 'mysql2/promise';
+
+// Written for difficulty + interest selection; see test-support/selection-mode.mjs.
+await useSelectionMode('legacy');
 
 const BASE = 'http://localhost:3000';
 const db = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER,
-  password: process.env.DB_PASS, database: process.env.DB_NAME,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
 });
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 // Status-only request. `as` sets the X-User-Id header (omit for unauthenticated).
@@ -30,7 +36,10 @@ const [[a]] = await db.query(`SELECT id FROM students WHERE role='student' ORDER
 const [[b]] = await db.query(`SELECT id FROM students WHERE role='student' ORDER BY id LIMIT 1 OFFSET 1`);
 const [[sme]] = await db.query(`SELECT id FROM students WHERE role='sme' LIMIT 1`);
 const [[admin]] = await db.query(`SELECT id FROM students WHERE role='admin' LIMIT 1`);
-const A = a.id, B = b.id, SME = sme.id, ADMIN = admin.id;
+const A = a.id,
+  B = b.id,
+  SME = sme.id,
+  ADMIN = admin.id;
 
 console.log(`\n[setup] student A=${A}, student B=${B}, SME=${SME}, admin=${ADMIN}`);
 
@@ -40,9 +49,12 @@ let bAssignment = null;
   const wk = await (await fetch(`${BASE}/api/week/${B}`, { headers: { 'X-User-Id': String(B) } })).json();
   const slot1 = wk.slots ? wk.slots.find((s) => s.slot_index === 1) : null;
   if (slot1) {
-    const open = await (await fetch(`${BASE}/api/slot/${slot1.slot_id}/open`, {
-      method: 'POST', headers: { 'X-User-Id': String(B) },
-    })).json();
+    const open = await (
+      await fetch(`${BASE}/api/slot/${slot1.slot_id}/open`, {
+        method: 'POST',
+        headers: { 'X-User-Id': String(B) },
+      })
+    ).json();
     bAssignment = open.assignment_id ?? null;
   }
 }
@@ -50,11 +62,20 @@ let bAssignment = null;
 console.log('\n[Every endpoint rejects an unauthenticated request]');
 {
   const endpoints = [
-    ['GET', `/api/progress/${A}`], ['GET', `/api/submissions/${A}`], ['GET', `/api/xp/${A}`],
-    ['GET', `/api/week/${A}`], ['GET', `/api/history/${A}`], ['GET', `/api/segment/${A}`],
-    ['GET', `/api/current/${A}`], ['GET', '/api/feedback/questions'], ['GET', '/api/mission-quality'],
-    ['GET', '/api/students'], ['GET', '/api/assistance'],
-    ['POST', '/api/submit'], ['POST', '/api/slot/1/open'], ['POST', '/api/feedback/1'],
+    ['GET', `/api/progress/${A}`],
+    ['GET', `/api/submissions/${A}`],
+    ['GET', `/api/xp/${A}`],
+    ['GET', `/api/week/${A}`],
+    ['GET', `/api/history/${A}`],
+    ['GET', `/api/segment/${A}`],
+    ['GET', `/api/current/${A}`],
+    ['GET', '/api/feedback/questions'],
+    ['GET', '/api/mission-quality'],
+    ['GET', '/api/students'],
+    ['GET', '/api/assistance'],
+    ['POST', '/api/submit'],
+    ['POST', '/api/slot/1/open'],
+    ['POST', '/api/feedback/1'],
   ];
   for (const [method, p] of endpoints) {
     const s = await code(p, { method });
@@ -62,7 +83,7 @@ console.log('\n[Every endpoint rejects an unauthenticated request]');
   }
 }
 
-console.log('\n[A student cannot read another student\'s data — 403, not empty 200]');
+console.log("\n[A student cannot read another student's data — 403, not empty 200]");
 {
   check('A -> B progress = 403', (await code(`/api/progress/${B}`, { as: A })) === 403);
   check('A -> B submissions = 403', (await code(`/api/submissions/${B}`, { as: A })) === 403);
@@ -87,7 +108,11 @@ console.log('\n[A student cannot reach /quality]');
 console.log('\n[An SME can reach /quality but cannot submit a mission]');
 {
   check('SME -> mission-quality = 200', (await code('/api/mission-quality', { as: SME })) === 200);
-  const submitStatus = await code('/api/submit', { method: 'POST', as: SME, body: { assignmentId: bAssignment ?? 1, selected: 'a' } });
+  const submitStatus = await code('/api/submit', {
+    method: 'POST',
+    as: SME,
+    body: { assignmentId: bAssignment ?? 1, selected: 'a' },
+  });
   check('SME -> submit = 403 (student-only)', submitStatus === 403, `(got ${submitStatus})`);
   check('admin -> /api/students (staff roster) = 200', (await code('/api/students', { as: ADMIN })) === 200);
 }

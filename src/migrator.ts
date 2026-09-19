@@ -11,6 +11,8 @@ import * as m005 from './migrations/005_student_timezone.js';
 import * as m006 from './migrations/006_idempotency_keys.js';
 import * as m007 from './migrations/007_staff_credentials.js';
 import * as m008 from './migrations/008_assistance_workflow.js';
+import * as m009 from './migrations/009_curriculum.js';
+import * as m010 from './migrations/010_adopt_pipeline_schema.js';
 
 /**
  * Versioned migrations (Item 4).
@@ -38,6 +40,8 @@ const MIGRATIONS: Migration[] = [
   { name: '006_idempotency_keys', up: m006.up, down: m006.down },
   { name: '007_staff_credentials', up: m007.up, down: m007.down },
   { name: '008_assistance_workflow', up: m008.up, down: m008.down },
+  { name: '009_curriculum', up: m009.up, down: m009.down },
+  { name: '010_adopt_pipeline_schema', up: m010.up, down: m010.down },
 ];
 
 /** A pool bound to `dbName` with multi-statement SQL enabled (migrations need it). */

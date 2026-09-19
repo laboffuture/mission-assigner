@@ -59,7 +59,9 @@ done
 [ "$fail" = "0" ] || { echo "row-count check FAILED"; exit 1; }
 
 echo "[5/6] Stage 1 suite against the restored DB (temp server on :$PORT)"
-DB_NAME="$RESTORE" PORT="$PORT" AUTH_MODE=dev npx tsx src/server.ts >/tmp/bkpverify-server.log 2>&1 &
+# Stage 1 was written for difficulty + interest selection; this temp server has no
+# test hooks, so the mode is set by env rather than by the harness.
+DB_NAME="$RESTORE" PORT="$PORT" AUTH_MODE=dev SELECTION_MODE=legacy npx tsx src/server.ts >/tmp/bkpverify-server.log 2>&1 &
 SRV="$!"
 for i in $(seq 1 30); do
   if curl -s -o /dev/null "http://localhost:${PORT}/api/dev/users"; then break; fi

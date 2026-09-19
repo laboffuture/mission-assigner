@@ -6,10 +6,10 @@
 import express from 'express';
 import { csrfMiddleware, csrfEnforced, readCookie, CSRF_COOKIE, CSRF_HEADER } from './src/csrf.js';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 // ---- Unit: env parsing -----------------------------------------------------
@@ -79,12 +79,14 @@ try {
     check('obtained a token from a GET', typeof token === 'string' && token.length > 0);
 
     const wrong = await fetch(`${BASE}/thing`, {
-      method: 'POST', headers: { Cookie: `${CSRF_COOKIE}=${token}`, [CSRF_HEADER]: 'not-the-token' },
+      method: 'POST',
+      headers: { Cookie: `${CSRF_COOKIE}=${token}`, [CSRF_HEADER]: 'not-the-token' },
     });
     check('POST with mismatched header -> 403', wrong.status === 403, `(got ${wrong.status})`);
 
     const good = await fetch(`${BASE}/thing`, {
-      method: 'POST', headers: { Cookie: `${CSRF_COOKIE}=${token}`, [CSRF_HEADER]: token },
+      method: 'POST',
+      headers: { Cookie: `${CSRF_COOKIE}=${token}`, [CSRF_HEADER]: token },
     });
     check('POST with matching header+cookie -> 200', good.status === 200, `(got ${good.status})`);
 
