@@ -1,0 +1,9 @@
+{
+  "session_heading_pattern": "^Session\\s+(\\d+)",
+  "files": {
+    "tesla-c1-p1.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "project": 1 },
+    "tesla-c1-p2.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "project": 2 },
+    "tesla-c1-p3.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "project": 3 }
+  },
+  "legacy_files": ["sample-cs.md"]
+}

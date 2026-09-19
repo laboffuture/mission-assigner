@@ -1,10 +1,15 @@
 """Read SME documents from input/ into a flat list of sections.
 
-Each section is a dict: { source_file, heading, heading_path, body }.
+Each section is a dict: { source_file, heading, heading_path, body, structured }.
 heading_path is a breadcrumb built from the document's heading hierarchy
 (e.g. "Loops > Counting loops"). It is derived from CONTENT, never from
 position, so inserting text early in a document does not renumber later
 sections.
+
+structured is True when heading_path reflects a real heading hierarchy (markdown
+headings, Word heading styles) and False for the blank-line fallback (PDFs and
+unstyled documents), where each block's first line stands in for a heading. The
+chunker needs the difference to decide which session a block belongs to.
 """
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ def _split_markdown(text: str, source_file: str) -> list[dict]:
                     "heading": cur_heading,
                     "heading_path": cur_path,
                     "body": body,
+                    "structured": True,
                 }
             )
 
@@ -77,6 +83,7 @@ def _split_plaintext_blocks(text: str, source_file: str) -> list[dict]:
                 "heading": heading,
                 "heading_path": heading,
                 "body": block,
+                "structured": False,
             }
         )
     return sections
@@ -111,6 +118,7 @@ def _read_docx(path: Path) -> list[dict]:
                     "heading": cur_heading,
                     "heading_path": cur_path,
                     "body": body,
+                    "structured": True,
                 }
             )
 

@@ -15,16 +15,37 @@ AGE_MIN = 12
 AGE_MAX = 18
 
 
+def mission_row(m: dict, *, subject: str, session_id, template: dict, chunk_id, content_hash) -> dict:
+    """The missions row for one validated draft. Pure, so the tagging rules are
+    unit-testable: a mapped file's missions carry the chunk's session_id and the
+    track's subject; a legacy file's carry neither session nor track subject."""
+    return {
+        "subject": subject,
+        "title": m["title"],
+        "body": m["body"],
+        "mission_type": template["type"],
+        "grading_mode": template["grading_mode"],
+        "difficulty": int(m["difficulty"]),
+        "age_min": AGE_MIN,
+        "age_max": AGE_MAX,
+        "time_band": template["time_band"],
+        # source_quote is kept in answer_key as provenance so reviewers can verify
+        # the key against the source in the review sheet.
+        "answer_key": json.dumps(
+            {"correct": m["correct"], "explanation": m.get("explanation", ""), "source_quote": m.get("source_quote", "")}
+        ),
+        "source_chunk_id": chunk_id,
+        "source_chunk_hash": content_hash,
+        "session_id": session_id,
+    }
+
+
 def import_validated(dry_run: bool = False) -> dict:
     """Import every staged, validated draft. Returns counts."""
     from .validator import VALIDATED_DIR
 
     levels = db.load_levels()
-    subject = levels["subject"]
     template = db.load_active_template()
-    mission_type = template["type"]
-    grading_mode = template["grading_mode"]
-    time_band = template["time_band"]
 
     inserted = 0
     retired = 0
@@ -47,12 +68,19 @@ def import_validated(dry_run: bool = False) -> dict:
                 continue
 
             # Incoming content version. Prefer the hash staged with the draft;
-            # fall back to the chunk's current hash in the DB.
+            # fall back to the chunk's current hash in the DB. The session comes
+            # from the chunk row (authoritative: it reflects the current mapping),
+            # falling back to what was staged.
             incoming_hash = record.get("content_hash")
-            if chunk_id is not None and not incoming_hash:
-                cur.execute("SELECT content_hash FROM content_chunks WHERE id = %s", (chunk_id,))
+            session_id = record.get("session_id")
+            subject = record.get("subject") or levels["subject"]
+            if chunk_id is not None:
+                cur.execute("SELECT content_hash, session_id, subject FROM content_chunks WHERE id = %s", (chunk_id,))
                 r = cur.fetchone()
-                incoming_hash = r[0] if r else None
+                if r:
+                    incoming_hash = incoming_hash or r[0]
+                    session_id = r[1]
+                    subject = r[2] or subject
 
             # Idempotency + changed-chunk rule: look at existing non-retired
             # missions for this chunk.
@@ -81,17 +109,13 @@ def import_validated(dry_run: bool = False) -> dict:
             chunks_touched += 1
 
             for m in missions:
-                # source_quote is kept in answer_key as provenance so reviewers
-                # can verify the key against the source in the review sheet.
-                answer_key = json.dumps(
-                    {
-                        "correct": m["correct"],
-                        "explanation": m.get("explanation", ""),
-                        "source_quote": m.get("source_quote", ""),
-                    }
+                row = mission_row(
+                    m, subject=subject, session_id=session_id, template=template,
+                    chunk_id=chunk_id, content_hash=incoming_hash,
                 )
                 if dry_run:
-                    print(f"  [dry-run] would insert draft '{m['title']}' (L{m['difficulty']}) for chunk_id {chunk_id}")
+                    print(f"  [dry-run] would insert draft '{m['title']}' (L{m['difficulty']}) for chunk_id {chunk_id}"
+                          f" session_id {session_id}")
                     inserted += 1
                     continue
 
@@ -99,22 +123,13 @@ def import_validated(dry_run: bool = False) -> dict:
                     """INSERT INTO missions
                          (version, subject, title, body, mission_type, grading_mode,
                           difficulty, age_min, age_max, time_band, answer_key,
-                          status, source_chunk_id, source_chunk_hash, generated_at)
+                          status, source_chunk_id, source_chunk_hash, session_id, generated_at)
                        VALUES
-                         (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, NOW())""",
+                         (1, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'draft', %s, %s, %s, NOW())""",
                     (
-                        subject,
-                        m["title"],
-                        m["body"],
-                        mission_type,
-                        grading_mode,
-                        int(m["difficulty"]),
-                        AGE_MIN,
-                        AGE_MAX,
-                        time_band,
-                        answer_key,
-                        chunk_id,
-                        incoming_hash,
+                        row["subject"], row["title"], row["body"], row["mission_type"], row["grading_mode"],
+                        row["difficulty"], row["age_min"], row["age_max"], row["time_band"], row["answer_key"],
+                        row["source_chunk_id"], row["source_chunk_hash"], row["session_id"],
                     ),
                 )
                 mission_id = cur.lastrowid
