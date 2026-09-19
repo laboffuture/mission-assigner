@@ -4,6 +4,14 @@ import { pool } from './db.js';
 import { assignSegment } from './segmentation.js';
 import { publishWeek } from './weekPublisher.js';
 import { logger } from './logger.js';
+import { loadCurriculum, findSession, setPosition } from './curriculum.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import type { PoolConnection } from 'mysql2/promise';
+
+const CURRICULUM_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'curriculum', 'teslas-track.json');
+const ROBOTICS = 'Robotics';
+const ROBOTICS_TAGS = ['sensors', 'motors', 'circuits'] as const;
 
 /**
  * Wipes and re-seeds the demo data for Stage 1 + Stage 3.
@@ -42,6 +50,11 @@ async function main() {
     // Wipe in FK-safe order (Stage 3 tables first, then Stage 1).
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     for (const t of [
+      'student_positions',
+      'sessions',
+      'projects',
+      'credits',
+      'tracks',
       'idempotency_keys',
       'feedback_responses',
       'attempt_logs',
@@ -346,11 +359,14 @@ async function main() {
       'base seed complete (feedback questions are PLACEHOLDERS)'
     );
 
+    // ---- Robotics curriculum (after staff, so seeded ids 1..7 are unchanged) --
+    const roboticsStudentIds = await seedRobotics(conn);
+
     conn.release();
 
     // ---- Segment assignment + week publication (use the real modules) ----
     const weekStart = mondayOf(new Date());
-    for (const sid of studentIds) {
+    for (const sid of [...studentIds, ...roboticsStudentIds]) {
       const decision = await assignSegment(sid);
       const wk = await publishWeek(sid, weekStart);
       logger.info(
@@ -361,6 +377,126 @@ async function main() {
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Robotics / Tesla's Track, for curriculum-scoped selection:
+ *  - the track from curriculum/teslas-track.json (5 credits; C1 = 9+8+8 sessions)
+ *  - 5 missions (difficulty 0..4) on every C1 session except S25, which is left
+ *    empty on purpose so the coverage report has a real gap
+ *  - 5 missions on C2 session 1, to prove C1 students never receive them
+ *  - a week template, and two students: one at C1/P1/S4, one at C1/P3/S2
+ * Inserts are batched: the seed runs before nearly every harness.
+ */
+async function seedRobotics(conn: PoolConnection): Promise<number[]> {
+  const load = await loadCurriculum(CURRICULUM_FILE);
+  const trackId = load.trackId;
+
+  const [sessionRows] = await conn.query<any[]>(
+    `SELECT s.id, s.credit_sequence, c.code
+       FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
+      WHERE c.track_id = ?
+        AND ((c.code = 'C1' AND s.credit_sequence <= 24) OR (c.code = 'C2' AND s.credit_sequence = 1))
+      ORDER BY c.sequence, s.credit_sequence`,
+    [trackId]
+  );
+
+  const missionValues: any[] = [];
+  const titles: string[] = [];
+  for (const s of sessionRows) {
+    const seq = String(s.credit_sequence).padStart(2, '0');
+    for (let difficulty = 0; difficulty <= 4; difficulty++) {
+      const correct = LETTERS[(Number(s.credit_sequence) + difficulty) % LETTERS.length];
+      const title = `Robotics ${s.code} S${seq} L${difficulty}`;
+      titles.push(title);
+      missionValues.push(
+        1,
+        ROBOTICS,
+        title,
+        `A ${s.code} session ${s.credit_sequence} robotics question at difficulty ${difficulty}. Pick the correct answer.`,
+        difficulty,
+        JSON.stringify({
+          correct,
+          explanation: `Option ${correct.toUpperCase()} is correct for ${s.code} session ${s.credit_sequence}.`,
+        }),
+        Number(s.id)
+      );
+    }
+  }
+  const rowPh = `(?, ?, ?, ?, 'quiz', 'auto', ?, 12, 18, 'short', ?, NULL, 'live', ?)`;
+  await conn.query(
+    `INSERT INTO missions
+       (version, subject, title, body, mission_type, grading_mode,
+        difficulty, age_min, age_max, time_band, answer_key, rubric, status, session_id)
+     VALUES ${titles.map(() => rowPh).join(', ')}`,
+    missionValues
+  );
+
+  const [missionRows] = await conn.query<any[]>(`SELECT id, title FROM missions WHERE subject = ? ORDER BY id`, [
+    ROBOTICS,
+  ]);
+  const optionValues: any[] = [];
+  const tagValues: any[] = [];
+  missionRows.forEach((m, i) => {
+    for (const key of LETTERS) {
+      optionValues.push(Number(m.id), key, `Option ${key.toUpperCase()} for ${m.title}`);
+    }
+    tagValues.push(Number(m.id), ROBOTICS_TAGS[i % ROBOTICS_TAGS.length]);
+  });
+  await conn.query(
+    `INSERT INTO mission_options (mission_id, option_key, option_text) VALUES ${missionRows
+      .flatMap(() => LETTERS.map(() => '(?, ?, ?)'))
+      .join(', ')}`,
+    optionValues
+  );
+  await conn.query(
+    `INSERT INTO mission_tags (mission_id, tag) VALUES ${missionRows.map(() => '(?, ?)').join(', ')}`,
+    tagValues
+  );
+
+  // Week template: all quiz/short, matching what the Stage 2 pipeline generates.
+  const [wt] = await conn.query<any>(
+    `INSERT INTO week_templates (name, subject, segment_id, active) VALUES ('Robotics Standard Week', ?, NULL, TRUE)`,
+    [ROBOTICS]
+  );
+  for (let idx = 1; idx <= 8; idx++) {
+    await conn.query(
+      `INSERT INTO week_template_slots
+         (template_id, slot_index, day_label, mission_type, time_band, level_offset, is_weekly)
+       VALUES (?, ?, ?, 'quiz', 'short', 0, ?)`,
+      [wt.insertId, idx, idx === 8 ? 'Weekly' : `Day ${idx}`, idx === 8]
+    );
+  }
+
+  const students: Array<{ name: string; position: [string, number, number]; interests: string[] }> = [
+    { name: 'Ananya Rao', position: ['C1', 1, 4], interests: ['sensors'] },
+    { name: 'Kabir Mehta', position: ['C1', 3, 2], interests: ['motors'] },
+  ];
+  const ids: number[] = [];
+  for (const s of students) {
+    const [res] = await conn.query<any>(
+      `INSERT INTO students
+         (moodle_user_id, display_name, age, subject, current_level, consecutive_wrong,
+          total_xp, placement_status, stall_count, role)
+       VALUES (NULL, ?, 14, ?, 2, 0, 0, 'complete', 0, 'student')`,
+      [s.name, ROBOTICS]
+    );
+    const id = Number(res.insertId);
+    ids.push(id);
+    for (const tag of s.interests) {
+      await conn.query(`INSERT INTO student_interests (student_id, tag) VALUES (?, ?)`, [id, tag]);
+    }
+    const [credit, project, session] = s.position;
+    const sessionId = await findSession(trackId, credit, project, session);
+    if (sessionId == null) throw new Error(`seed: no session ${credit}/P${project}/S${session}`);
+    await setPosition(id, trackId, sessionId, 'explicit', { seeded: true });
+  }
+
+  logger.info(
+    { trackId, curriculum: load.created, robotics_missions: missionRows.length, robotics_students: ids.length },
+    'robotics curriculum seeded'
+  );
+  return ids;
 }
 
 function capitalize(s: string): string {

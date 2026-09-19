@@ -32,6 +32,13 @@ const EnvSchema = z
     LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent']).default('info'),
     COLD_START_STRATEGY: z.enum(['SEGMENT_START', 'PLACEMENT']).default('SEGMENT_START'),
     FEEDBACK_GATES_UNLOCK: z.string().optional(),
+    // Curriculum selection (see src/config.ts).
+    SELECTION_MODE: z.enum(['legacy', 'curriculum']).default('legacy'),
+    POOL_LOOKBACK_SESSIONS: z.coerce.number().int().min(0).default(0),
+    PERCENT_SCOPE: z.enum(['credit', 'project', 'track']).default('credit'),
+    REVISION_MIX_PERCENT: z.coerce.number().int().min(0).max(100).default(20),
+    // Local MySQL install (no Docker): mysqldump path used by verify:migrations.
+    MYSQLDUMP: z.string().optional(),
     SENTRY_DSN: z.union([z.string().url(), z.literal('')]).optional(),
     ENABLE_TEST_HOOKS: z.string().optional(),
   })
