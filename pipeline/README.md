@@ -40,20 +40,64 @@ pip install -r requirements.txt
 cp .env.example .env      # then edit .env
 ```
 
-The first command you run applies the additive schema changes automatically
-(creates `content_chunks`, adds `source_chunk_id` / `generated_at` /
-`review_notes` to `missions`). This migration is safe to run against live data —
-it only adds, never drops.
+**Run the Node migrations first.** The pipeline does not create schema; it
+checks for it. Every object it needs (`content_chunks`, and
+`source_chunk_id` / `generated_at` / `review_notes` / `source_chunk_hash` plus
+`idx_missions_source_chunk` on `missions`) belongs to migration
+`010_adopt_pipeline_schema`, with `missions.session_id` coming from
+`009_curriculum`:
+
+```bash
+cd ../  &&  npm run db:migrate      # in mission-demo
+```
+
+If anything is missing, every pipeline command stops before doing any work and
+names the missing objects:
+
+```
+FATAL: The database is missing 2 object(s) owned by the migration chain:
+  - column missions.review_notes
+  - index missions.idx_missions_source_chunk
+
+Run `npm run db:migrate` in mission-demo (migrations 009_curriculum and
+010_adopt_pipeline_schema) before running the pipeline.
+```
+
+It used to create these itself at runtime with `CREATE TABLE IF NOT EXISTS` and
+`ALTER TABLE ... ADD COLUMN`. That put six objects outside the migration chain,
+where `verify:migrations` could not see them — so schema drift went unnoticed
+through 31 commits. The database now has exactly one owner.
 
 ### .env keys
 
 | key | meaning |
 |-----|---------|
 | `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME` | MySQL connection (same DB as the Node app) |
-| `LLM_PROVIDER` | `anthropic` \| `openai` \| `mock` \| `hostile` |
+| `LLM_PROVIDER` | `anthropic` \| `openai` \| `google` \| `mock` \| `hostile` |
 | `LLM_MODEL` | model id for the chosen provider (ignored by `mock`) |
 | `ANTHROPIC_API_KEY` | required when `LLM_PROVIDER=anthropic` |
 | `OPENAI_API_KEY` | required when `LLM_PROVIDER=openai` |
+| `GEMINI_API_KEY` | required when `LLM_PROVIDER=google` (falls back to `GOOGLE_API_KEY`) |
+
+### Sampling parameters are model-conditional
+
+Newer models **removed** the sampling parameters rather than restricting them:
+on Anthropic's Opus 4.7/4.8, Opus 5, Sonnet 5 and the Fable/Mythos 5 family, and
+on OpenAI's reasoning models (o1/o3/o4, gpt-5), sending `temperature` at *any*
+value returns a 400. Lowering it does not help — it has to be omitted.
+
+`generator.accepts_temperature()` is therefore an **allowlist** of the older
+models that take `temperature=0`; everything else omits it and prints a one-time
+note. An allowlist is the safe direction: a model released after this code omits
+the parameter and works, where a denylist would send it and hard-fail. OpenAI
+reasoning models additionally need `max_completion_tokens` instead of
+`max_tokens`, handled at the same call site.
+
+Consequence: on an omitting model drafts are no longer bit-reproducible. That is
+acceptable because correctness never depended on sampling determinism — the
+validator rejects any mission whose `source_quote` is not present verbatim in
+the source chunk. `tests/test_provider_params.py` pins the capability table and
+asserts the exact kwargs each client sends.
 
 **`mock` provider:** an offline, deterministic backend for testing the pipeline
 without an API key. It drafts missions whose `source_quote` is a real sentence
@@ -93,6 +137,52 @@ They pin the LLM-boundary behaviour (fences, truncation→repair, invented quote
 pure coverage-gap logic.
 
 ---
+
+## Curriculum sessions
+
+Every SME file is **one project**, with its sessions marked by headings matching
+`^Session\s+(\d+)` (case-insensitive; change it with `session_heading_pattern` in
+`config/curriculum.json` or `SESSION_HEADING_PATTERN`). `config/curriculum.json`
+says which track, credit and project each file is:
+
+```json
+{
+  "files": { "tesla-c1-p1.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "project": 1 } },
+  "legacy_files": ["sample-cs.md"]
+}
+```
+
+- Every chunk carries its session, and every imported mission gets that `session_id`
+  and the track's subject.
+- The sessions found must be exactly `1..session_count` of the project, in order,
+  each once. Otherwise that file is **rejected** at ingest with its name, the
+  sessions found and the count expected; nothing from it is stored, and `ingest`
+  exits non-zero after processing the other files.
+- A file that is neither mapped nor in `legacy_files` is rejected too. Legacy files
+  import with no session and are never served in curriculum mode.
+- Headings outside any session (a project intro, an appendix) are reported and not
+  used.
+- The curriculum must be loaded into the database first (`npm run curriculum:load`
+  in mission-demo), and migration 009 applied (`npm run db:migrate`).
+- `coverage` now also lists live missions per session. A session with none is a
+  **hard gap**: a student who reaches it gets nothing new from it.
+- `coverage` also reports **session × difficulty**: a session carrying fewer than
+  `MIN_DIFFICULTY_VARIANTS` (3) distinct difficulties is listed as thin. Difficulty
+  survives as the within-session ranking, so a session with one difficulty serves
+  every student the same question regardless of level.
+
+### Generation must target the bands the templates require
+
+Selection filters on `time_band` hard, and only widens it as the last step before
+repeating a mission (see the curriculum section of the app README). A session whose
+missions are all one band therefore drives students straight into repeats whenever a
+week template asks for another band.
+
+So generation is responsible for band spread, not selection: for every session,
+generate missions across the bands the live week templates actually request
+(`week_templates`/`week_template_slots` in mission-demo), not whatever band the
+source text happens to suggest. Check the template slots before a large generation
+run; `coverage` reports the gap after the fact, which is too late for a live week.
 
 ## Commands
 
@@ -159,7 +249,7 @@ pipeline/
   input/               SME documents dropped here (gitignored)
   logs/                LLM request/response logs + working state (gitignored)
   src/
-    db.py              connection, config loaders, additive schema migration
+    db.py              connection, config loaders, schema verification (never creates)
     reader.py          .docx / .pdf / .md / .txt -> sections
     chunker.py         sections -> hashed chunks; new/changed/unchanged
     generator.py       LLM drafting (anthropic | openai | mock)
