@@ -8,10 +8,10 @@ import 'dotenv/config';
 const BASE = 'http://localhost:3000';
 const PW = process.env.STAFF_DEFAULT_PASSWORD || 'changeme';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 function cookieHeader(res) {
   const set = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
@@ -38,17 +38,23 @@ console.log('\n[POST /api/dev/login-as sets a real session cookie]');
 let studentCookie = '';
 {
   const bad = await fetch(`${BASE}/api/dev/login-as`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
   });
   check('missing studentId -> 400', bad.status === 400, `(got ${bad.status})`);
 
   const missing = await fetch(`${BASE}/api/dev/login-as`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 999999 }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId: 999999 }),
   });
   check('unknown user -> 404', missing.status === 404, `(got ${missing.status})`);
 
   const res = await fetch(`${BASE}/api/dev/login-as`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: firstStudentId }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId: firstStudentId }),
   });
   studentCookie = cookieHeader(res);
   const body = await res.json();
@@ -78,17 +84,26 @@ console.log('\n[The session cookie authenticates the student (same path LTI will
   // daily sequence.
   const wk = await (await fetch(`${BASE}/api/week/${firstStudentId}`, { headers: { Cookie: studentCookie } })).json();
   check('GET /api/week has slots', isArr(wk.slots) && wk.slots.length > 0, `(slots=${wk.slots?.length})`);
-  check('every slot carries a boolean is_weekly', (wk.slots ?? []).every((s) => typeof s.is_weekly === 'boolean'));
+  check(
+    'every slot carries a boolean is_weekly',
+    (wk.slots ?? []).every((s) => typeof s.is_weekly === 'boolean')
+  );
   check('exactly one weekly slot in the week', (wk.slots ?? []).filter((s) => s.is_weekly).length === 1);
   const lockedWithContent = (wk.slots ?? []).filter((s) => s.status === 'locked' && s.mission != null);
-  check('locked slots never carry mission content', lockedWithContent.length === 0, `(offenders=${lockedWithContent.length})`);
+  check(
+    'locked slots never carry mission content',
+    lockedWithContent.length === 0,
+    `(offenders=${lockedWithContent.length})`
+  );
 }
 
 // ---------------------------------------------------------------------------
 console.log('\n[Staff list endpoints return { items } too]');
 {
   const login = await fetch(`${BASE}/api/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: PW }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: PW }),
   });
   const adminCookie = cookieHeader(login);
   check('admin login -> 200', login.status === 200, `(got ${login.status})`);

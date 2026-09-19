@@ -6,10 +6,10 @@ import 'dotenv/config';
 const BASE = 'http://localhost:3000';
 const PW = process.env.STAFF_DEFAULT_PASSWORD || 'changeme';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 // Turn Set-Cookie headers into a Cookie request header (name=value pairs only).
@@ -34,7 +34,9 @@ console.log('\n[Login rejects bad credentials — generic 401]');
   const wrong = await login('sme', 'wrong-password');
   check('wrong password -> 401', wrong.status === 401, `(got ${wrong.status})`);
   const missing = await fetch(`${BASE}/api/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'sme' }),
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'sme' }),
   });
   check('missing password -> 400', missing.status === 400, `(got ${missing.status})`);
 }

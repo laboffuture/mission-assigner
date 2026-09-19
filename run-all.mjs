@@ -26,7 +26,8 @@ function run(cmd, opts = {}) {
   let ok = false;
   try {
     const r = await fetch(BASE + '/api/test/feedback-gating', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled: true }),
     });
     ok = r.status === 200;
@@ -39,12 +40,16 @@ function run(cmd, opts = {}) {
     console.error(`FATAL: no server on ${BASE}. Start it with:  ENABLE_TEST_HOOKS=1 npm run dev`);
     process.exit(2);
   }
-  if (!ok) { console.error('FATAL: test hook preflight failed.'); process.exit(2); }
+  if (!ok) {
+    console.error('FATAL: test hook preflight failed.');
+    process.exit(2);
+  }
 }
 
 // Locate the Stage 2 (Python) venv.
 const venvPy = ['pipeline/.venv/Scripts/python.exe', 'pipeline/.venv/bin/python']
-  .map((p) => join(root, p)).find(existsSync);
+  .map((p) => join(root, p))
+  .find(existsSync);
 
 try {
   // Migrations (Item 4) — fresh scratch DB matches current; idempotent; reversible.
@@ -119,17 +124,29 @@ try {
   run('npm run db:seed');
   run('npm run verify:pagination');
 
+  // Curriculum selection — position-scoped pools, SQL ceiling, exhaustion ladder,
+  // percent derivation. Sets SELECTION_MODE=curriculum for its own run.
+  run('npm run db:seed');
+  run('npm run verify:curriculum');
+
   // Stage 2 — offline Python pipeline (independent of the web DB state).
   if (venvPy) {
     run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
+    // Session-aware ingest → import against the real DB, with the mock LLM.
+    run('npm run db:seed');
+    run('npm run verify:curriculum-pipeline');
   } else {
-    console.warn('\n[warn] Stage 2 venv not found (pipeline/.venv). Skipping pytest.');
+    console.warn(
+      '\n[warn] Stage 2 venv not found (pipeline/.venv). Skipping pytest and the curriculum pipeline suite.'
+    );
   }
 
   // Leave the demo DB pristine.
   run('npm run db:seed');
 
-  console.log('\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation + Config) ====\x1b[0m');
+  console.log(
+    '\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation + Config + Curriculum) ====\x1b[0m'
+  );
 } catch (err) {
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);

@@ -9,6 +9,7 @@
     "db:migrate:down": "tsx src/migrator.ts down",
     "db:migrate:status": "tsx src/migrator.ts status",
     "db:seed": "tsx src/seed.ts",
+    "curriculum:load": "tsx src/curriculum.ts load",
     "set-password": "tsx src/setPassword.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
@@ -39,6 +40,8 @@
     "verify:timezone": "tsx verify-timezone.mjs",
     "verify:concurrency": "tsx verify-concurrency.mjs",
     "verify:pagination": "node verify-pagination.mjs",
+    "verify:curriculum": "tsx verify-curriculum.mjs",
+    "verify:curriculum-pipeline": "node verify-curriculum-pipeline.mjs",
     "verify:all": "node run-all.mjs"
   },
   "dependencies": {

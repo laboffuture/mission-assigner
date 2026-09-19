@@ -13,18 +13,22 @@ import { unlockNext } from './src/slotUnlock.ts';
 import { getQuestions, submitFeedback, clearQuestionCache, FeedbackError } from './src/feedback.ts';
 import { computeStreak } from './src/streaks.ts';
 import { getMissionQuality } from './src/tracking.ts';
-import { setFeedbackGatesUnlock } from './src/config.ts';
+import { setFeedbackGatesUnlock, setSelectionMode } from './src/config.ts';
+import { useSelectionMode } from './test-support/selection-mode.mjs';
 
 const BASE = 'http://localhost:3000';
 const db = await mysql.createConnection({
-  host: process.env.DB_HOST, user: process.env.DB_USER,
-  password: process.env.DB_PASS, database: process.env.DB_NAME, multipleStatements: true,
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+  multipleStatements: true,
 });
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 const LETTERS = ['a', 'b', 'c', 'd'];
 const wrong = (c) => LETTERS.find((x) => x !== c);
@@ -41,14 +45,19 @@ async function status(path, opts = {}) {
 // config setter, which governs the unlockNext calls below) and on the server
 // (via the guarded test hook, which also leaves the demo in gating-on state).
 setFeedbackGatesUnlock(true);
+// Written for difficulty + interest selection: in-process fillSlot and the server.
+setSelectionMode('legacy');
+await useSelectionMode('legacy');
 {
   const r = await fetch(BASE + '/api/test/feedback-gating', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled: true }),
   });
   if (r.status !== 200) {
-    console.error(`FATAL: could not enable feedback gating (status ${r.status}). ` +
-      `Start the server with ENABLE_TEST_HOOKS=1.`);
+    console.error(
+      `FATAL: could not enable feedback gating (status ${r.status}). ` + `Start the server with ENABLE_TEST_HOOKS=1.`
+    );
     process.exit(2);
   }
   console.log('[setup] feedback gating enabled for Stage 5 run');
@@ -57,16 +66,22 @@ setFeedbackGatesUnlock(true);
 async function newStudent(name, age, courses = []) {
   const [r] = await db.query(
     `INSERT INTO students (display_name, age, subject, current_level, placement_status) VALUES (?,?,?,?, 'pending')`,
-    [name, age, 'Computer Science', 0]);
+    [name, age, 'Computer Science', 0]
+  );
   const id = r.insertId;
-  for (const c of courses) await db.query(`INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?,?,NOW())`, [id, c]);
+  for (const c of courses)
+    await db.query(`INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?,?,NOW())`, [id, c]);
   await assignSegment(id);
   await applyColdStart(id);
   return id;
 }
 async function answerKey(aid) {
-  const [[row]] = await db.query(`SELECT m.answer_key ak FROM assignments a JOIN missions m ON m.id=a.mission_id WHERE a.id=?`, [aid]);
-  let ak = row.ak; if (typeof ak === 'string') ak = JSON.parse(ak);
+  const [[row]] = await db.query(
+    `SELECT m.answer_key ak FROM assignments a JOIN missions m ON m.id=a.mission_id WHERE a.id=?`,
+    [aid]
+  );
+  let ak = row.ak;
+  if (typeof ak === 'string') ak = JSON.parse(ak);
   return ak.correct;
 }
 // Publish a week, fill + grade slot 1. Returns the assignment id and grade result.
@@ -76,7 +91,10 @@ async function gradeSlot1(sid, weekStart, correct = true, backdateOpenSeconds = 
   const fill = await fillSlot(slot1.id);
   const aid = fill.assignmentId;
   if (backdateOpenSeconds > 0) {
-    await db.query(`UPDATE assignments SET opened_at = DATE_SUB(NOW(), INTERVAL ? SECOND) WHERE id=?`, [backdateOpenSeconds, aid]);
+    await db.query(`UPDATE assignments SET opened_at = DATE_SUB(NOW(), INTERVAL ? SECOND) WHERE id=?`, [
+      backdateOpenSeconds,
+      aid,
+    ]);
   }
   const key = await answerKey(aid);
   const res = await submitAndGrade(aid, correct ? key : wrong(key));
@@ -88,13 +106,19 @@ function fullValid(overrides = {}) {
   return Object.entries(merged).map(([question_key, value]) => ({ question_key, value: String(value) }));
 }
 async function expectReject(fn) {
-  try { await fn(); return { ok: false }; }
-  catch (e) { return { ok: true, status: e.status, msg: e.message }; }
+  try {
+    await fn();
+    return { ok: false };
+  } catch (e) {
+    return { ok: true, status: e.status, msg: e.message };
+  }
 }
 async function slotStatus(sid, idx) {
   const [[row]] = await db.query(
     `SELECT ws.status FROM week_slots ws JOIN student_weeks sw ON sw.id=ws.student_week_id
-      WHERE sw.student_id=? AND ws.slot_index=? ORDER BY sw.id DESC LIMIT 1`, [sid, idx]);
+      WHERE sw.student_id=? AND ws.slot_index=? ORDER BY sw.id DESC LIMIT 1`,
+    [sid, idx]
+  );
   return row ? row.status : null;
 }
 
@@ -104,16 +128,31 @@ console.log('\n[C1] GET /api/feedback/questions returns 5 placeholders in order'
   const qs = (await j('/api/feedback/questions')).items;
   check('5 questions', qs.length === 5, `(got ${qs.length})`);
   const orders = qs.map((q) => q.display_order);
-  check('ordered by display_order', JSON.stringify(orders) === JSON.stringify([...orders].sort((a, b) => a - b)), `(${orders})`);
+  check(
+    'ordered by display_order',
+    JSON.stringify(orders) === JSON.stringify([...orders].sort((a, b) => a - b)),
+    `(${orders})`
+  );
   const keys = qs.map((q) => q.question_key);
-  check('expected keys present', JSON.stringify(keys) === JSON.stringify(['perceived_difficulty', 'time_taken', 'clarity', 'confidence', 'comments']), `(${keys})`);
+  check(
+    'expected keys present',
+    JSON.stringify(keys) ===
+      JSON.stringify(['perceived_difficulty', 'time_taken', 'clarity', 'confidence', 'comments']),
+    `(${keys})`
+  );
 }
 
 console.log('\n[C2] missing required answer is rejected and NOTHING is saved');
 {
   const sid = await newStudent('T5-missing', 13);
   const { aid } = await gradeSlot1(sid, '2026-10-05');
-  const r = await expectReject(() => submitFeedback(aid, sid, fullValid({ clarity: undefined }).filter((a) => a.question_key !== 'clarity')));
+  const r = await expectReject(() =>
+    submitFeedback(
+      aid,
+      sid,
+      fullValid({ clarity: undefined }).filter((a) => a.question_key !== 'clarity')
+    )
+  );
   check('rejected (400)', r.ok && r.status === 400, `(${r.status}: ${r.msg})`);
   const [[{ n }]] = await db.query(`SELECT COUNT(*) n FROM feedback_responses WHERE assignment_id=?`, [aid]);
   check('no rows saved', Number(n) === 0, `(rows=${n})`);
@@ -128,7 +167,11 @@ console.log('\n[C3] scale_1_5: 6 rejected, 3 accepted');
   const bad = await expectReject(() => submitFeedback(aid, sid, fullValid({ clarity: '6' })));
   check('clarity=6 rejected (400)', bad.ok && bad.status === 400, `(${bad.status})`);
   const good = await submitFeedback(aid, sid, fullValid({ clarity: '3' }));
-  check('clarity=3 accepted', good.alreadyComplete === false && good.responsesSaved >= 4, `(saved=${good.responsesSaved})`);
+  check(
+    'clarity=3 accepted',
+    good.alreadyComplete === false && good.responsesSaved >= 4,
+    `(saved=${good.responsesSaved})`
+  );
 }
 
 console.log('\n[C4] single_select not in options is rejected');
@@ -156,7 +199,9 @@ console.log('\n[C6] submitting feedback twice: no duplicate rows, no double XP')
   const first = await submitFeedback(aid, sid, fullValid());
   const second = await submitFeedback(aid, sid, fullValid());
   const [[{ n }]] = await db.query(`SELECT COUNT(*) n FROM feedback_responses WHERE assignment_id=?`, [aid]);
-  const [[{ x }]] = await db.query(`SELECT COUNT(*) x FROM xp_events WHERE assignment_id=? AND event_type='feedback'`, [aid]);
+  const [[{ x }]] = await db.query(`SELECT COUNT(*) x FROM xp_events WHERE assignment_id=? AND event_type='feedback'`, [
+    aid,
+  ]);
   check('first awarded XP', first.xp.awarded === true, `(pts=${first.xp.points})`);
   check('second did not award again', second.alreadyComplete === true && second.xp.awarded === false);
   check('exactly one set of responses', Number(n) === first.responsesSaved, `(rows=${n})`);
@@ -164,7 +209,8 @@ console.log('\n[C6] submitting feedback twice: no duplicate rows, no double XP')
 }
 
 console.log('\n[C7] FEEDBACK_GATES_UNLOCK=TRUE: next slot stays locked until feedback');
-let aidForC10 = null; let sidForC10 = null;
+let aidForC10 = null;
+let sidForC10 = null;
 {
   setFeedbackGatesUnlock(true);
   const sid = await newStudent('T5-gate-on', 13);
@@ -176,7 +222,8 @@ let aidForC10 = null; let sidForC10 = null;
   const u2 = await unlockNext(aid); // server does this after feedback when gating is on
   check('slot 2 opens after feedback', (await slotStatus(sid, 2)) === 'open', `(status=${await slotStatus(sid, 2)})`);
   check('unlock opened a slot', u2.openedSlotId != null);
-  aidForC10 = aid; sidForC10 = sid;
+  aidForC10 = aid;
+  sidForC10 = sid;
 }
 
 console.log('\n[C8] FEEDBACK_GATES_UNLOCK=FALSE: matches Stage 3 (immediate unlock)');
@@ -234,13 +281,15 @@ console.log('\n[C12] computeStreak = 3 for three consecutive days, unbroken by t
   await db.query(`DELETE FROM attempt_logs WHERE student_id=? AND event='submitted'`, [sid]);
   // Insert at the student's LOCAL (Asia/Kolkata) yesterday/-2/-3 at local noon,
   // stored as UTC — so the streak is unbroken regardless of wall-clock time.
-  for (const nDaysAgo of [1, 2, 3]) { // yesterday, -2, -3; NOT today
+  for (const nDaysAgo of [1, 2, 3]) {
+    // yesterday, -2, -3; NOT today
     await db.query(
       `INSERT INTO attempt_logs (assignment_id, student_id, event, created_at)
        VALUES (?, ?, 'submitted',
          CONVERT_TZ(CONCAT(DATE_SUB(DATE(CONVERT_TZ(UTC_TIMESTAMP(),'+00:00','Asia/Kolkata')), INTERVAL ? DAY), ' 12:00:00'),
                     'Asia/Kolkata', '+00:00'))`,
-      [aid, sid, nDaysAgo]);
+      [aid, sid, nDaysAgo]
+    );
   }
   const streak = await computeStreak(sid);
   check('streak = 3', streak === 3, `(streak=${streak})`);
@@ -251,22 +300,32 @@ console.log('\n[C13] getMissionQuality flags MISMATCH (tagged 1, pass rate < 35%
   const [mi] = await db.query(
     `INSERT INTO missions (version, subject, title, body, mission_type, grading_mode, difficulty, age_min, age_max, time_band, answer_key, status)
      VALUES (1,'Computer Science','MISMATCH probe','body','quiz','auto',1,12,18,'short',?, 'live')`,
-    [JSON.stringify({ correct: 'a' })]);
+    [JSON.stringify({ correct: 'a' })]
+  );
   const missionId = mi.insertId;
   for (let i = 0; i < 6; i++) {
-    const [su] = await db.query(`INSERT INTO students (display_name, age, subject, current_level, placement_status) VALUES (?,13,'Computer Science',1,'complete')`, [`T5-mm-${i}`]);
+    const [su] = await db.query(
+      `INSERT INTO students (display_name, age, subject, current_level, placement_status) VALUES (?,13,'Computer Science',1,'complete')`,
+      [`T5-mm-${i}`]
+    );
     await db.query(
       `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status, score_band, score_pct, submitted_at, graded_at)
-       VALUES (?,?,1,1,'graded','fail',0,NOW(),NOW())`, [su.insertId, missionId]);
+       VALUES (?,?,1,1,'graded','fail',0,NOW(),NOW())`,
+      [su.insertId, missionId]
+    );
   }
   const [row] = await getMissionQuality(missionId);
   check('report row returned (>=5 attempts)', !!row && row.attempts >= 5, `(attempts=${row?.attempts})`);
   check('tagged difficulty 1', row?.tagged_difficulty === 1);
-  check('observed difficulty 4 (pass rate 0%)', row?.observed_difficulty === 4, `(observed=${row?.observed_difficulty})`);
+  check(
+    'observed difficulty 4 (pass rate 0%)',
+    row?.observed_difficulty === 4,
+    `(observed=${row?.observed_difficulty})`
+  );
   check('MISMATCH flagged', row?.mismatch === true);
 }
 
-console.log('\n[C14] a student cannot read another student\'s progress or submissions');
+console.log("\n[C14] a student cannot read another student's progress or submissions");
 {
   const okSelf = await status('/api/progress/1', { headers: { 'X-Student-Id': '1' } });
   const forbidden = await status('/api/progress/2', { headers: { 'X-Student-Id': '1' } });
@@ -292,13 +351,21 @@ console.log('\n[C15] editing a question prompt changes the UI source (getQuestio
 console.log('\n[C16] retiring a question hides it from new feedback; history stays readable via question_key');
 {
   // 'confidence' has historical responses from earlier submissions.
-  const [[{ cbefore }]] = await db.query(`SELECT COUNT(*) cbefore FROM feedback_responses WHERE question_key='confidence'`);
+  const [[{ cbefore }]] = await db.query(
+    `SELECT COUNT(*) cbefore FROM feedback_responses WHERE question_key='confidence'`
+  );
   await db.query(`UPDATE feedback_questions SET active=FALSE WHERE question_key='confidence'`);
   clearQuestionCache();
   const qs = await getQuestions();
   check('retired question absent from active set', !qs.some((q) => q.question_key === 'confidence'));
-  const [[{ cafter }]] = await db.query(`SELECT COUNT(*) cafter FROM feedback_responses WHERE question_key='confidence'`);
-  check('historical responses still readable via question_key', Number(cafter) === Number(cbefore) && Number(cafter) > 0, `(before=${cbefore}, after=${cafter})`);
+  const [[{ cafter }]] = await db.query(
+    `SELECT COUNT(*) cafter FROM feedback_responses WHERE question_key='confidence'`
+  );
+  check(
+    'historical responses still readable via question_key',
+    Number(cafter) === Number(cbefore) && Number(cafter) > 0,
+    `(before=${cbefore}, after=${cafter})`
+  );
   await db.query(`UPDATE feedback_questions SET active=TRUE WHERE question_key='confidence'`);
   clearQuestionCache();
 }

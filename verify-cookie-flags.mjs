@@ -10,10 +10,10 @@ import { cookieFlags } from './src/session.js';
 const BASE = 'http://localhost:3000';
 const PW = process.env.STAFF_DEFAULT_PASSWORD || 'changeme';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 console.log('\n[Cookie flag policy is correct across environments]');

@@ -3,10 +3,10 @@
 // the offending variable. Run: npm run verify:config
 import { spawnSync } from 'node:child_process';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 // Boot the server with an overridden env; a config failure exits fast.

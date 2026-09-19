@@ -8,10 +8,10 @@ import { spawnSync, execSync } from 'node:child_process';
 import { pool } from './src/db.js';
 import { findDefaultStaffPasswords, assertProductionSecurity } from './src/securityChecks.js';
 
-let pass = 0, fail = 0;
+let pass = 0,
+  fail = 0;
 function check(name, cond, detail = '') {
-  cond ? (pass++, console.log(`  PASS ${name} ${detail}`))
-       : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
 }
 
 // A valid production env for the real-boot (failure) case. A strong SESSION_SECRET
@@ -25,7 +25,10 @@ console.log('\n[Refuses to boot in production while staff have the default passw
   // the guard throws pre-listen, and it exits(1) on its own (never binds a port).
   execSync('npm run db:seed', { stdio: 'ignore' });
   const r = spawnSync('npx tsx src/server.ts', {
-    env: { ...process.env, ...prodEnv }, encoding: 'utf8', timeout: 60000, shell: true,
+    env: { ...process.env, ...prodEnv },
+    encoding: 'utf8',
+    timeout: 60000,
+    shell: true,
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   check('non-zero exit', r.status !== 0 && r.status != null, `(exit=${r.status})`);
@@ -42,13 +45,21 @@ console.log('\n[The gate passes once every staff password is changed]');
     execSync(`npm run set-password -- ${u} StrongPassw0rd!${u}`, { stdio: 'ignore' });
   }
   const offenders = await findDefaultStaffPasswords();
-  check('no staff account has the default password', offenders.length === 0, `(offenders=${offenders.join(',') || 'none'})`);
+  check(
+    'no staff account has the default password',
+    offenders.length === 0,
+    `(offenders=${offenders.join(',') || 'none'})`
+  );
 
   // The production gate now resolves instead of throwing.
   const prev = process.env.NODE_ENV;
   process.env.NODE_ENV = 'production';
   let threw = false;
-  try { await assertProductionSecurity(); } catch { threw = true; }
+  try {
+    await assertProductionSecurity();
+  } catch {
+    threw = true;
+  }
   process.env.NODE_ENV = prev;
   check('assertProductionSecurity() does not throw', threw === false);
 }
