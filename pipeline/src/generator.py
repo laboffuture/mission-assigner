@@ -1,7 +1,7 @@
 """LLM drafting stage.
 
 One logical draft per new/changed chunk. Provider is swappable via LLM_PROVIDER
-(anthropic | openai | mock | hostile). Real providers fail immediately if their
+(anthropic | openai | google | mock | hostile). Real providers fail immediately if their
 API key is missing.
 
 Robustness (this is the production-critical boundary):
@@ -95,6 +95,72 @@ def _call_with_retries(client, system, turns, chunk):
     raise last  # pragma: no cover
 
 
+# --- provider sampling capability --------------------------------------------
+# Newer models do not merely reject temperature=0 — they removed the sampling
+# parameters (temperature/top_p/top_k) altogether, so *any* value returns a 400.
+# That covers Anthropic's Opus 4.7/4.8, Opus 5, Sonnet 5 and the Fable/Mythos 5
+# family, and OpenAI's reasoning models (o1/o3/o4, gpt-5). Lowering the value
+# does not help; the parameter has to be omitted.
+#
+# So this is an allowlist of the older models that both accept temperature and
+# need it for deterministic drafting, and anything else omits it. An allowlist
+# is the safe direction: a model released after this code was written omits the
+# parameter and works, where a denylist would send it and hard-fail with a 400.
+#
+# Determinism note: on an omitting model the request runs at the provider's
+# default temperature, so drafts are no longer bit-reproducible. The validator
+# is what guarantees correctness (every source_quote must appear verbatim in the
+# source), not sampling determinism — see validator.py.
+
+_ANTHROPIC_SAMPLING_OK = (
+    "claude-opus-4-6", "claude-opus-4-5",
+    "claude-sonnet-4-6", "claude-sonnet-4-5",
+    "claude-haiku-4-5",
+    "claude-3", "claude-2",
+)
+
+# OpenAI reasoning models reject temperature; the gpt-4 family accepts it.
+_OPENAI_SAMPLING_REJECT_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+
+
+def accepts_temperature(provider: str, model: str) -> bool:
+    """Whether this provider/model pair accepts a temperature parameter."""
+    m = (model or "").lower()
+    if provider == "anthropic":
+        return m.startswith(_ANTHROPIC_SAMPLING_OK)
+    if provider == "openai":
+        return not m.startswith(_OPENAI_SAMPLING_REJECT_PREFIXES)
+    if provider == "google":
+        # Gemini still takes temperature on every current model.
+        return True
+    return True
+
+
+def openai_uses_max_completion_tokens(model: str) -> bool:
+    """OpenAI reasoning models replaced max_tokens with max_completion_tokens
+    and 400 on the old name. Same class of removed-parameter break as
+    temperature, at the same call site, so it is handled here too."""
+    return (model or "").lower().startswith(_OPENAI_SAMPLING_REJECT_PREFIXES)
+
+
+_warned: set[str] = set()
+
+
+def _sampling_kwargs(provider: str, model: str) -> dict:
+    """{'temperature': 0} when the model supports it, {} when it does not."""
+    if accepts_temperature(provider, model):
+        return {"temperature": 0}
+    key = f"{provider}:{model}"
+    if key not in _warned:
+        _warned.add(key)
+        print(
+            f"    NOTE: {model} does not accept a temperature parameter; omitting it. "
+            "Drafts are not bit-reproducible on this model; the validator still "
+            "enforces verbatim source quotes."
+        )
+    return {}
+
+
 # --- provider clients --------------------------------------------------------
 # Each client implements draft(system: str, turns: list[dict], chunk: dict)
 #   -> (raw_text: str, usage: {"input_tokens": int, "output_tokens": int})
@@ -116,9 +182,9 @@ class AnthropicClient:
         msg = self.client.messages.create(
             model=self.model,
             max_tokens=MAX_TOKENS,
-            temperature=0,
             system=system,
             messages=turns,
+            **_sampling_kwargs("anthropic", self.model),
         )
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         usage = {
@@ -143,12 +209,17 @@ class OpenAIClient:
 
     def draft(self, system, turns, chunk):
         messages = [{"role": "system", "content": system}] + turns
+        token_cap = (
+            {"max_completion_tokens": MAX_TOKENS}
+            if openai_uses_max_completion_tokens(self.model)
+            else {"max_tokens": MAX_TOKENS}
+        )
         resp = self.client.chat.completions.create(
             model=self.model,
-            temperature=0,
-            max_tokens=MAX_TOKENS,
             response_format={"type": "json_object"},
             messages=messages,
+            **token_cap,
+            **_sampling_kwargs("openai", self.model),
         )
         text = resp.choices[0].message.content or ""
         u = resp.usage
@@ -189,9 +260,9 @@ class GoogleClient:
             contents=contents,
             config=self._genai.types.GenerateContentConfig(
                 system_instruction=system,
-                temperature=0,
                 max_output_tokens=MAX_TOKENS,
                 response_mime_type="application/json",
+                **_sampling_kwargs("google", self.model),
             ),
         )
         text = resp.text or ""
@@ -440,6 +511,8 @@ def generate(chunks_to_generate, dry_run: bool = False):
             "chunk_ref": ref,
             "source_file": chunk["source_file"],
             "content_hash": chunk.get("content_hash"),
+            "subject": chunk.get("subject"),
+            "session_id": chunk.get("session_id"),
             "missions": parsed["missions"],
         }, indent=2), encoding="utf-8")
         drafted.append(ref)
