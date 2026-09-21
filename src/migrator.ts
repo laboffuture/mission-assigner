@@ -3,6 +3,7 @@ import mysql from 'mysql2/promise';
 import type { Pool } from 'mysql2/promise';
 import { Umzug } from 'umzug';
 import { logger } from './logger.js';
+import { refuseDestructiveInProduction } from './destructiveGuard.js';
 import * as m001 from './migrations/001_initial_schema.js';
 import * as m002 from './migrations/002_stage3_segments_weeks_xp.js';
 import * as m003 from './migrations/003_stage5_feedback_tracking.js';
@@ -122,6 +123,9 @@ async function ensureDatabase(dbName: string): Promise<void> {
 
 async function main() {
   const cmd = process.argv[2] ?? 'up';
+  // Down migrations drop tables and columns. Refuse under production before connecting.
+  if (cmd === 'down' || cmd === 'down:all')
+    refuseDestructiveInProduction(`run migrate ${cmd} (it drops tables and columns)`);
   const dbName = process.env.DB_NAME ?? 'mission_demo';
   await ensureDatabase(dbName);
   const pool = makePool(dbName);

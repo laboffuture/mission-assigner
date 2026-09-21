@@ -9,6 +9,20 @@
 # Usage:  bash demo-reset.sh
 # ==========================================================================
 set -e
+# Refuse under NODE_ENV=production unless the explicit override flag is given
+# (the same flag and rule as src/destructiveGuard.ts). This script DROPS the mission_demo database.
+OVERRIDE_FLAG="--i-understand-this-destroys-production-data"
+ARGS=()
+OVERRIDDEN=0
+for a in "$@"; do
+  if [ "$a" = "$OVERRIDE_FLAG" ]; then OVERRIDDEN=1; else ARGS+=("$a"); fi
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+if [ "${NODE_ENV:-}" = "production" ] && [ "$OVERRIDDEN" != "1" ]; then
+  echo "FATAL: refusing to reset the demo (it drops the mission_demo database): NODE_ENV=production and this destroys data." >&2
+  echo "Nothing has been changed. If you really intend it, re-run with $OVERRIDE_FLAG" >&2
+  exit 2
+fi
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "Resetting mission_demo to pristine demo state from backup.sql ..."

@@ -197,8 +197,17 @@ message that names the accounts (`src/securityChecks.ts`). No-op in dev/test.
 ### Session cookie
 
 The staff session is a **signed** (not encrypted) cookie named `mh_session`
-carrying only `{ uid }`, signed with `SESSION_SECRET`. Flags are computed in one
-place — `cookieFlags()` in `src/session.ts`:
+carrying only `{ uid, iat }`, signed with `SESSION_SECRET`.
+
+**Expiry is enforced by the server.** `iat` is the issue time (epoch seconds),
+written by `issueSession()` — the only way a session is created. On every request
+`enforceSessionAge()` drops a session with no `iat`, an `iat` in the future, or
+one older than `SESSION_MAX_AGE` (default 12h), so the request is unauthenticated
+(401). The cookie's own Max-Age is only a browser hint: a copied cookie replayed
+later carries no expiry of its own, which is why the age lives inside the signed
+payload. Confirmed by `npm run verify:fail-closed`.
+
+Flags are computed in one place — `cookieFlags()` in `src/session.ts`:
 
 | Flag | Value | Why |
 |------|-------|-----|
@@ -223,6 +232,30 @@ So the plan is explicit: keep `lax` for the staff-only phase; flip
 `SESSION_SAMESITE=none` (over HTTPS) when the LTI launch is wired up. Because it
 is a single env var read through `cookieFlags()`, this is a **configuration
 change, not a code change**. Confirmed by `npm run verify:cookie-flags`.
+
+### Production fails closed
+
+With `NODE_ENV=production` every insecure fallback is a **refusal**, not a warning:
+
+| Configuration | Result |
+|---|---|
+| `AUTH_MODE` unset | refuses to boot — unset means dev auth, which trusts a client-set `X-User-Id` |
+| `AUTH_MODE=dev` | refuses to boot |
+| `ENABLE_TEST_HOOKS` set | refuses to boot; `/api/test/*` is not registered in production at all |
+| `SESSION_SECRET` missing or < 32 chars | refuses to boot |
+| a staff account on the default password | refuses to boot (`npm run set-password`) |
+
+Each refusal names the variable and the reason. Behind the env check there is a
+second, independent line: `getAuthProvider()` will not construct the dev provider
+and `testHooksEnabled()` returns false under production, so neither can be
+reached even if the env check were bypassed.
+
+Commands that destroy data — `npm run db:seed` (truncates every table),
+`migrate down` / `down:all`, `scripts/restore.sh` and `demo-reset.sh` (both drop a
+database) — exit non-zero **before touching the database** under production,
+unless run with the deliberately long flag
+`--i-understand-this-destroys-production-data`. All of this is tested by
+`npm run verify:fail-closed`.
 
 ### CSRF (double-submit)
 

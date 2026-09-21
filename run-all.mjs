@@ -112,6 +112,9 @@ try {
   // account still has the default password. (Reseeds itself at the end.)
   run('npm run verify:prod-guard');
 
+  // Production fails closed: refused boots, refused destructive commands, server-side session expiry.
+  run('npm run verify:fail-closed');
+
   // Timezone (Item 7) — UTC storage, SQL time math, per-student streak boundary.
   run('npm run db:seed');
   run('npm run verify:timezone');

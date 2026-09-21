@@ -46,7 +46,8 @@ import {
 import { validate } from './validate.js';
 import { sendError } from './httpError.js';
 import { validateEnv } from './env.js';
-import { sessionMiddleware } from './session.js';
+import { issueSession, sessionMiddleware } from './session.js';
+import { isProduction, testHooksEnabled } from './testHooks.js';
 import { csrfMiddleware } from './csrf.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import type { SubmitResponse } from './dto.js';
@@ -119,7 +120,7 @@ registerAuthRoutes(app);
 // route and it exists ONLY when AUTH_MODE=dev. In LTI mode identity comes from
 // the launch token and this route is not registered.
 // ---------------------------------------------------------------------------
-if (getAuthProvider().mode === 'dev') {
+if (getAuthProvider().mode === 'dev' && !isProduction()) {
   app.get('/api/dev/users', async (req, res) => {
     try {
       const [rows] = await pool.query<any[]>(
@@ -146,7 +147,7 @@ if (getAuthProvider().mode === 'dev') {
       const [rows] = await pool.query<any[]>(`SELECT id, display_name, role FROM students WHERE id = ?`, [studentId]);
       const u = rows[0];
       if (!u) return sendError(req, res, 404, 'not_found', 'no such user');
-      req.session = { uid: Number(u.id) };
+      issueSession(req, Number(u.id));
       rlog(req).warn({ userId: Number(u.id), role: u.role }, 'DEV login-as (no password) — insecure, dev only');
       res.json({ id: Number(u.id), display_name: u.display_name, role: u.role });
     } catch (err) {
@@ -925,61 +926,66 @@ app.get('/login', (_req, res) => {
   res.sendFile(join(__dirname, '..', 'public', 'login.html'));
 });
 
-/**
- * POST /api/test/feedback-gating  body { enabled: boolean | null }
- * Test hook (ENABLE_TEST_HOOKS only): inject FEEDBACK_GATES_UNLOCK at runtime so
- * an HTTP-driven harness can set the server's behaviour for its own run.
- */
-app.post('/api/test/feedback-gating', (req, res) => {
-  if (!process.env.ENABLE_TEST_HOOKS) {
-    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
-  }
-  const enabled = req.body?.enabled;
-  if (typeof enabled !== 'boolean' && enabled !== null) {
-    return sendError(req, res, 400, 'validation_error', 'enabled must be boolean or null');
-  }
-  setFeedbackGatesUnlock(enabled);
-  res.json({ feedbackGatesUnlock: feedbackGatesUnlock() });
-});
-
-/**
- * POST /api/test/selection-mode  body { mode: 'legacy' | 'curriculum' | null }
- * Test hook (ENABLE_TEST_HOOKS only): each harness sets the selection mode it was
- * written for, so legacy and curriculum suites run green in one pass.
- */
-app.post('/api/test/selection-mode', (req, res) => {
-  if (!process.env.ENABLE_TEST_HOOKS) {
-    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
-  }
-  const mode = req.body?.mode;
-  if (mode !== 'legacy' && mode !== 'curriculum' && mode !== null) {
-    return sendError(req, res, 400, 'validation_error', "mode must be 'legacy', 'curriculum' or null");
-  }
-  setSelectionMode(mode);
-  res.json({ selectionMode: selectionMode() });
-});
-
-/**
- * POST /api/test/curriculum-config  body { poolLookbackSessions?: number|null, percentScope?: string|null }
- * Test hook (ENABLE_TEST_HOOKS only).
- */
-app.post('/api/test/curriculum-config', (req, res) => {
-  if (!process.env.ENABLE_TEST_HOOKS) {
-    return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
-  }
-  try {
-    if (req.body && 'poolLookbackSessions' in req.body) setPoolLookbackSessions(req.body.poolLookbackSessions);
-    if (req.body && 'percentScope' in req.body) setPercentScope(req.body.percentScope);
-    if (req.body && 'revisionMixPercent' in req.body) setRevisionMixPercent(req.body.revisionMixPercent);
-  } catch (err: any) {
-    return sendError(req, res, 400, 'validation_error', err?.message ?? 'invalid curriculum config');
-  }
-  res.json({
-    poolLookbackSessions: poolLookbackSessions(),
-    percentScope: percentScope(),
-    revisionMixPercent: revisionMixPercent(),
+// The runtime-configuration hooks are registered outside production only, so
+// in production /api/test/* does not exist at all (404) under any config.
+// Outside production they answer 403 unless ENABLE_TEST_HOOKS is set.
+if (!isProduction()) {
+  /**
+   * POST /api/test/feedback-gating  body { enabled: boolean | null }
+   * Test hook (ENABLE_TEST_HOOKS only): inject FEEDBACK_GATES_UNLOCK at runtime so
+   * an HTTP-driven harness can set the server's behaviour for its own run.
+   */
+  app.post('/api/test/feedback-gating', (req, res) => {
+    if (!testHooksEnabled()) {
+      return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
+    }
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean' && enabled !== null) {
+      return sendError(req, res, 400, 'validation_error', 'enabled must be boolean or null');
+    }
+    setFeedbackGatesUnlock(enabled);
+    res.json({ feedbackGatesUnlock: feedbackGatesUnlock() });
   });
-});
+
+  /**
+   * POST /api/test/selection-mode  body { mode: 'legacy' | 'curriculum' | null }
+   * Test hook (ENABLE_TEST_HOOKS only): each harness sets the selection mode it was
+   * written for, so legacy and curriculum suites run green in one pass.
+   */
+  app.post('/api/test/selection-mode', (req, res) => {
+    if (!testHooksEnabled()) {
+      return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
+    }
+    const mode = req.body?.mode;
+    if (mode !== 'legacy' && mode !== 'curriculum' && mode !== null) {
+      return sendError(req, res, 400, 'validation_error', "mode must be 'legacy', 'curriculum' or null");
+    }
+    setSelectionMode(mode);
+    res.json({ selectionMode: selectionMode() });
+  });
+
+  /**
+   * POST /api/test/curriculum-config  body { poolLookbackSessions?: number|null, percentScope?: string|null }
+   * Test hook (ENABLE_TEST_HOOKS only).
+   */
+  app.post('/api/test/curriculum-config', (req, res) => {
+    if (!testHooksEnabled()) {
+      return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
+    }
+    try {
+      if (req.body && 'poolLookbackSessions' in req.body) setPoolLookbackSessions(req.body.poolLookbackSessions);
+      if (req.body && 'percentScope' in req.body) setPercentScope(req.body.percentScope);
+      if (req.body && 'revisionMixPercent' in req.body) setRevisionMixPercent(req.body.revisionMixPercent);
+    } catch (err: any) {
+      return sendError(req, res, 400, 'validation_error', err?.message ?? 'invalid curriculum config');
+    }
+    res.json({
+      poolLookbackSessions: poolLookbackSessions(),
+      percentScope: percentScope(),
+      revisionMixPercent: revisionMixPercent(),
+    });
+  });
+}
 
 /** Shared: mission content (title/body/difficulty + options). */
 async function loadMissionContent(missionId: number) {
@@ -1002,7 +1008,7 @@ async function loadMissionContent(missionId: number) {
 // Test-only routes (ENABLE_TEST_HOOKS): a synthetic error to exercise the
 // central error handler, and a peek at the in-memory log ring for the logging
 // test. Never registered in production.
-if (process.env.ENABLE_TEST_HOOKS) {
+if (testHooksEnabled()) {
   app.get('/api/test/boom', () => {
     throw new Error('boom: synthetic error to exercise the central error handler');
   });
@@ -1054,7 +1060,7 @@ initSentry()
         `Mission Hub listening on http://localhost:${PORT}`
       );
       warnIfInsecureAuth();
-      if (process.env.ENABLE_TEST_HOOKS) {
+      if (testHooksEnabled()) {
         logger.warn(
           { testHooks: true },
           'ENABLE_TEST_HOOKS is set — test-only routes (/api/test/*) are exposed and feedback gating is runtime-injectable. NEVER enable this in production.'

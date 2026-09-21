@@ -5,6 +5,7 @@ import { logger } from './logger.js';
 import { sendError } from './httpError.js';
 import { requireAuth, STAFF_ROLES, type Role } from './auth.js';
 import { isRateLimited, retryAfterSeconds, recordFailure, clearAttempts } from './rateLimit.js';
+import { issueSession } from './session.js';
 
 /**
  * Staff authentication routes (username + password → signed session cookie).
@@ -48,7 +49,7 @@ export function registerAuthRoutes(app: Express): void {
         return sendError(req, res, 401, 'invalid_credentials', 'invalid username or password');
       }
       clearAttempts(username); // a correct login resets the window
-      req.session = { uid: Number(user.id) };
+      issueSession(req, Number(user.id));
       rlog(req).info({ userId: Number(user.id), role: user.role }, 'staff login');
       res.json({ id: Number(user.id), display_name: user.display_name, role: user.role as Role });
     } catch (err) {

@@ -1497,12 +1497,17 @@ await runCase(
     });
     c.check('tampered signature -> 401', badSig.status === 401, `(got ${badSig.status})`);
     const hasTime = /"(iat|exp|issued|expires|ts)"/i.test(payload);
-    const replay = await api('GET', '/api/me', { headers: { Cookie: s.cookie } });
-    c.check(
-      'expired session refused (server can tell a cookie is >12h old)',
-      hasTime,
-      `(payload carries no issue/expiry time: ${payload}; the same bytes presented after 12h are accepted -> replay status ${replay.status})`
-    );
+    c.check('the session payload carries an issue time the server can check', hasTime, `(payload=${payload})`);
+    // The expired case itself: a VALIDLY SIGNED session issued 13h ago, which is
+    // exactly what a copied cookie looks like when replayed after the 12h limit.
+    const { default: Keygrip } = await import('keygrip');
+    const { sessionSecret } = await import('./src/session.js');
+    const oldValue = Buffer.from(
+      JSON.stringify({ ...JSON.parse(payload), iat: Math.floor(Date.now() / 1000) - 13 * 3600 })
+    ).toString('base64');
+    const oldCookie = `mh_session=${oldValue}; mh_session.sig=${new Keygrip([sessionSecret()]).sign(`mh_session=${oldValue}`)}`;
+    const expired = await api('GET', '/api/me', { headers: { Cookie: oldCookie } });
+    c.check('expired (13h old, validly signed) session -> 401', expired.status === 401, `(got ${expired.status})`);
   }
 );
 

@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db.js';
 import { logger } from './logger.js';
 import { sendError } from './httpError.js';
+import { isProduction } from './testHooks.js';
 
 /**
  * Authentication & authorisation.
@@ -111,6 +112,15 @@ let providerSingleton: AuthProvider | null = null;
 export function getAuthProvider(): AuthProvider {
   if (providerSingleton) return providerSingleton;
   const mode = (process.env.AUTH_MODE ?? 'dev').trim().toLowerCase();
+  // Second, independent line behind env validation (which refuses to boot with
+  // AUTH_MODE unset or dev in production): the header-trusting dev provider is
+  // never constructed under production, so no code path can reach it.
+  if (mode !== 'lti' && isProduction()) {
+    throw new Error(
+      `refusing dev authentication under NODE_ENV=production (AUTH_MODE=${process.env.AUTH_MODE ?? 'unset'}): ` +
+        'it trusts a client-supplied X-User-Id header. Set AUTH_MODE=lti.'
+    );
+  }
   providerSingleton = mode === 'lti' ? new LtiAuthProvider() : new DevAuthProvider();
   return providerSingleton;
 }

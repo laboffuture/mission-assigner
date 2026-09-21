@@ -6,6 +6,21 @@
 #   bash scripts/restore.sh <backup-file.sql.gz> [target_db=mission_demo_restore]
 set -euo pipefail
 
+# Refuse under NODE_ENV=production unless the explicit override flag is given
+# (the same flag and rule as src/destructiveGuard.ts). This script DROPS and recreates its target database.
+OVERRIDE_FLAG="--i-understand-this-destroys-production-data"
+ARGS=()
+OVERRIDDEN=0
+for a in "$@"; do
+  if [ "$a" = "$OVERRIDE_FLAG" ]; then OVERRIDDEN=1; else ARGS+=("$a"); fi
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+if [ "${NODE_ENV:-}" = "production" ] && [ "$OVERRIDDEN" != "1" ]; then
+  echo "FATAL: refusing to restore (it drops and recreates the target database): NODE_ENV=production and this destroys data." >&2
+  echo "Nothing has been changed. If you really intend it, re-run with $OVERRIDE_FLAG" >&2
+  exit 2
+fi
+
 FILE="${1:?usage: restore.sh <backup-file.sql.gz> [target_db]}"
 TARGET="${2:-mission_demo_restore}"
 CONTAINER="${MYSQL_CONTAINER:-mission-mysql}"

@@ -15,7 +15,9 @@ const EnvSchema = z
     DB_PASS: z.string().default(''),
     DB_NAME: z.string().min(1).default('mission_demo'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-    AUTH_MODE: z.enum(['dev', 'lti']).default('dev'),
+    // No schema default: outside production an unset AUTH_MODE means dev (see
+    // auth.ts), but in production it must be set explicitly — and not to dev.
+    AUTH_MODE: z.enum(['dev', 'lti']).optional(),
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     // Signs the staff session cookie. Required in production (min 32 chars); a
     // known dev value is used otherwise so local runs work out of the box.
@@ -25,6 +27,10 @@ const EnvSchema = z
     // usually embeds the tool in an iframe, both of which require 'none' (which
     // forces Secure/HTTPS) — see the Session cookie section in the README.
     SESSION_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+    // Absolute session lifetime in SECONDS, enforced on the server from the
+    // issue time stored inside the signed session — the cookie's own expiry is a
+    // browser hint, not a security control. Default 12 hours.
+    SESSION_MAX_AGE: z.coerce.number().int().positive().default(43200),
     // Double-submit CSRF enforcement. Default false while the session cookie is
     // SameSite=Lax (which already blocks cross-site POSTs). Flip to true in the
     // same change that sets SESSION_SAMESITE=none for the LTI launch.
@@ -43,12 +49,43 @@ const EnvSchema = z
     ENABLE_TEST_HOOKS: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV !== 'production') return;
+    // Production FAILS CLOSED: every insecure fallback is a refusal to boot, not
+    // a warning. Each check names the variable and why.
+
     // A weak/absent session secret is fine locally but never in production.
-    if (env.NODE_ENV === 'production' && (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32)) {
+    if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 32) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['SESSION_SECRET'],
         message: 'must be set to a random string of at least 32 characters when NODE_ENV=production',
+      });
+    }
+    // Dev auth trusts a client-supplied X-User-Id header: anyone could act as
+    // anyone. It must never be reachable in production, including by omission.
+    if (env.AUTH_MODE === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AUTH_MODE'],
+        message:
+          'must be set explicitly when NODE_ENV=production (AUTH_MODE=lti). It is unset, and unset means dev auth, which trusts a client-supplied X-User-Id header',
+      });
+    } else if (env.AUTH_MODE === 'dev') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AUTH_MODE'],
+        message:
+          'AUTH_MODE=dev is not allowed when NODE_ENV=production: it trusts a client-supplied X-User-Id header. Use AUTH_MODE=lti',
+      });
+    }
+    // Test hooks reconfigure the running server (gating, selection mode,
+    // rate-limit reset, log dump). No production configuration may expose them.
+    if (env.ENABLE_TEST_HOOKS) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ENABLE_TEST_HOOKS'],
+        message:
+          'must not be set when NODE_ENV=production: it exposes /api/test/* (runtime reconfiguration and log access)',
       });
     }
   });

@@ -17,7 +17,17 @@ function check(name, cond, detail = '') {
 // A valid production env for the real-boot (failure) case. A strong SESSION_SECRET
 // lets env validation pass so we actually reach the password guard; PORT is set
 // but never bound because the guard throws BEFORE app.listen.
-const prodEnv = { NODE_ENV: 'production', SESSION_SECRET: 'x'.repeat(48), PORT: '3998' };
+// AUTH_MODE=lti and no ENABLE_TEST_HOOKS: production now refuses to boot with
+// dev auth (including an unset AUTH_MODE, or AUTH_MODE=dev inherited from .env)
+// or with test hooks, so both must be valid here or env validation would stop
+// the boot before the password guard this harness exists to test.
+const prodEnv = {
+  NODE_ENV: 'production',
+  SESSION_SECRET: 'x'.repeat(48),
+  PORT: '3998',
+  AUTH_MODE: 'lti',
+  ENABLE_TEST_HOOKS: '',
+};
 
 console.log('\n[Refuses to boot in production while staff have the default password]');
 {

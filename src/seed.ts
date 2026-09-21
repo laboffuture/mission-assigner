@@ -8,6 +8,7 @@ import { loadCurriculum, findSession, setPosition } from './curriculum.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { PoolConnection } from 'mysql2/promise';
+import { refuseDestructiveInProduction } from './destructiveGuard.js';
 
 const CURRICULUM_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'curriculum', 'teslas-track.json');
 const ROBOTICS = 'Robotics';
@@ -45,6 +46,8 @@ function mondayOf(d: Date): string {
 }
 
 async function main() {
+  // Seeding TRUNCATES every table. Refuse under production before any query.
+  refuseDestructiveInProduction('seed the database (it truncates every table)');
   const conn = await pool.getConnection();
   try {
     // Wipe in FK-safe order (Stage 3 tables first, then Stage 1).

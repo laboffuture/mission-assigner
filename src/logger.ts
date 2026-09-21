@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import pino from 'pino';
+import { testHooksEnabled } from './testHooks.js';
 
 /**
  * Structured JSON logging (Item 2).
@@ -18,7 +19,7 @@ import pino from 'pino';
 const VALID_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'];
 const RAW_LEVEL = (process.env.LOG_LEVEL ?? 'info').toLowerCase();
 const LEVEL = VALID_LEVELS.includes(RAW_LEVEL) ? RAW_LEVEL : 'info';
-const TEST_HOOKS = !!process.env.ENABLE_TEST_HOOKS;
+const TEST_HOOKS = testHooksEnabled();
 
 /**
  * Explicit redaction. Never log API keys, tokens, passwords, cookies, or the
