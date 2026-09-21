@@ -42,7 +42,8 @@
     "verify:pagination": "node verify-pagination.mjs",
     "verify:curriculum": "tsx verify-curriculum.mjs",
     "verify:curriculum-pipeline": "node verify-curriculum-pipeline.mjs",
-    "verify:all": "node run-all.mjs"
+    "verify:all": "node run-all.mjs",
+    "verify:audit": "tsx verify-audit.mjs"
   },
   "dependencies": {
     "@sentry/node": "^10.73.0",
