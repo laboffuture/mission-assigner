@@ -1,67 +1,76 @@
 /*
- * DESIGN TOKENS — the single source of truth for the visual theme.
+ * SEMANTIC ALIASES OVER THE LOF LMS TOKENS.
  *
- * This is the ONE file permitted to contain raw hex / rgb / font-family / size
- * values. Every component references only the semantic Tailwind names that map
- * to these variables (see tailwind.config.ts). To re-skin the app with the LMS
- * palette, edit ONLY this file (or ship a :root override stylesheet) — no
- * component changes required.
+ * This file no longer defines any colour of its own. Every value here is an
+ * alias of a variable from lof-lms-tokens.css, which is their file, unmodified,
+ * loaded before this one. Section 8 of the style guide: "Use the CSS variables,
+ * never a hard-coded colour. If the LMS palette changes we send a new file and
+ * your tool updates with it." Aliasing is what makes that true for us — a new
+ * token file re-skins our whole UI with no edits here.
  *
- * Enforced by:  npm run check:tokens  (fails if a component contains a raw value)
+ * Our component markup keeps using bg-surface / text-muted / rounded-lg, so
+ * nothing downstream had to change. Both themes are handled automatically:
+ * their file re-declares the --nebula-* variables under
+ * :root[data-lof-theme="horizon"], and because these are aliases rather than
+ * copies, ours follow.
+ *
+ * Enforced by:  npm run check:tokens
  */
 :root {
   /* ---- Surfaces & lines ---- */
-  --color-bg: #f3f5fa;
-  --color-surface: #ffffff;
-  --color-surface-muted: #eef1f7;
-  --color-border: #d9dfea;
+  --color-bg: var(--nebula-bg-primary);
+  --color-surface: var(--nebula-bg-card);
+  --color-surface-muted: var(--nebula-bg-secondary);
+  --color-border: var(--nebula-border);
+  --color-border-light: var(--nebula-border-light);
 
-  /* ---- Text ---- */
-  --color-text: #1b2430;
-  --color-text-muted: #5b6675;
+  /* ---- Text ----
+     text-secondary is their body-text colour and passes AA on a card in both
+     themes. text-muted does NOT (3.82:1 nebula, 2.54:1 horizon — see
+     docs/lms-contrast-findings.md), so it is reserved for decorative labels and
+     never used for anything a student has to read. */
+  --color-text: var(--nebula-text-primary);
+  --color-text-secondary: var(--nebula-text-secondary);
+  --color-text-muted: var(--nebula-text-muted);
 
   /* ---- Primary (brand) ---- */
-  --color-primary: #3b5bdb;
-  --color-primary-fg: #ffffff;
-  --color-primary-muted: #e7ecfd;
+  --color-primary: var(--lof-primary);
+  --color-primary-fg: #ffffff; /* their gradient is dark in both themes */
+  --color-primary-light: var(--lof-primary-light);
+  --color-primary-muted: var(--lof-primary-glow);
 
   /* ---- Semantic states ----
-     Text colours are darkened so same-hue text on the matching *-muted
-     background (e.g. a success Badge) clears WCAG AA 4.5:1 for small text, and
-     white-on-solid (bg-success + text-*-fg) clears it too. Verified by the axe
-     colour-contrast checks in the e2e suite. */
-  --color-success: #167a37;
+     The *-muted fills mirror their .lof-badge--* rules, which use a 15% tint of
+     the status colour rather than a separate token. */
+  --color-success: var(--nebula-green);
   --color-success-fg: #ffffff;
-  --color-success-muted: #e6f4ea;
+  --color-success-muted: rgba(34, 197, 94, 0.15);
 
-  --color-danger: #c31f1f;
+  --color-danger: var(--nebula-red);
   --color-danger-fg: #ffffff;
-  --color-danger-muted: #fce8e8;
+  --color-danger-muted: rgba(239, 68, 68, 0.15);
 
-  --color-warning: #8a5300;
-  --color-warning-muted: #fdf0dc;
+  --color-warning: var(--nebula-amber);
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
 
-  --color-locked: #565f6b;
+  /* A locked/unavailable slot. */
+  --color-locked: var(--nebula-text-muted);
 
-  /* ---- Focus ring (keyboard navigation) ---- */
-  --color-focus: #1c3fc4;
+  /* ---- Focus ring (keyboard navigation) ----
+     Their .lof-btn:focus-visible uses a 3px primary glow; we use the same
+     colour so our focus treatment matches the LMS. */
+  --color-focus: var(--lof-primary-light);
   --focus-ring-width: 3px;
   --focus-ring-offset: 2px;
 
-  /* ---- Typography ---- */
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  /* ---- Elevation ----
+     shadow-card maps straight to their --nebula-card-shadow in
+     tailwind.config.ts. shadow-pop has no LMS equivalent, so it is derived from
+     their glow token rather than invented. */
+  --shadow-pop: 0 8px 24px var(--lof-primary-glow);
 
-  /* ---- Radius ---- */
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 16px;
-  --radius-full: 9999px;
-
-  /* ---- Elevation ---- */
-  --shadow-card: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
-  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
-
-  /* ---- Layout ---- */
+  /* ---- Layout ----
+     A max, not a fixed width: section 9 says never set a fixed pixel width on
+     the outer container, and the container is width:100% below this. */
   --width-content: 880px;
 }

@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+// Order matters: their tokens define the --nebula-*/--lof-* variables, ours
+// alias them, globals.css consumes both. Loading theirs second would leave our
+// aliases pointing at undefined variables.
+import '../styles/lof-lms-tokens.css';
 import '../styles/tokens.css';
 import './globals.css';
 

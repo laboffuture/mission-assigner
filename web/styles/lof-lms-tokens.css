@@ -1,0 +1,370 @@
+/* ============================================================================
+   LOF LMS — Style Tokens
+   Version 1.0  |  9 September 2026
+
+   For teams building a tool that will be embedded into the LOF LMS via LTI.
+
+   An LTI tool runs inside an iframe, so the LMS stylesheet does NOT reach it.
+   Include this file in your tool and use the variables below, and your screens
+   will match the LMS.
+
+   Extracted from the live theme (theme/nebula/scss/_variables.scss).
+   Do not edit these values — if the LMS palette changes we will send a new file.
+   ============================================================================ */
+
+
+/* ---------------------------------------------------------------- 1. FONTS --
+   The LMS loads these three families from Google Fonts. Add the same line to
+   your <head> (preferred), or keep the @import below.                        */
+
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+
+/* ------------------------------------------------- 2. NEBULA (DARK) THEME --
+   This is the LMS default. It is defined on :root, so if you do nothing your
+   tool renders in dark mode.                                                 */
+
+:root {
+    color-scheme: dark;
+
+    /* Font families */
+    --lof-font-display: 'Sora', sans-serif;        /* headings */
+    --lof-font-body:    'Inter', sans-serif;       /* body text, UI */
+    --lof-font-mono:    'Space Mono', monospace;   /* code, IDs */
+
+    /* Spacing scale */
+    --lof-space-xs:  0.25rem;
+    --lof-space-sm:  0.4rem;
+    --lof-space-md:  0.8rem;
+    --lof-space-lg:  1.2rem;
+    --lof-space-xl:  1.6rem;
+    --lof-space-2xl: 2.4rem;
+
+    /* Corner radius */
+    --lof-radius-sm:   4px;
+    --lof-radius-md:   8px;    /* buttons, inputs */
+    --lof-radius-lg:   12px;
+    --lof-radius-xl:   16px;   /* cards, panels */
+    --lof-radius-full: 9999px; /* pills, avatars */
+
+    /* Backgrounds */
+    --nebula-bg-primary:   #070B25;
+    --nebula-bg-secondary: #0A1035;
+    --nebula-bg-panel:     #111B4A;
+    --nebula-bg-card:      #111B4A;
+    --nebula-bg-input:     #0A1035;
+
+    /* Borders */
+    --nebula-border:       rgba(123, 77, 255, 0.18);
+    --nebula-border-light: rgba(123, 77, 255, 0.32);
+
+    /* Brand */
+    --lof-primary:       #7B4DFF;
+    --lof-primary-dark:  #6D28D9;
+    --lof-primary-light: #A78BFA;
+    --lof-primary-glow:  rgba(123, 77, 255, 0.35);
+    --lof-accent:        #A78BFA;
+
+    /* Status / accent colours */
+    --nebula-blue:   #4C8DFF;
+    --nebula-purple: #A78BFA;
+    --nebula-amber:  #F59E0B;   /* warning */
+    --nebula-green:  #22C55E;   /* success */
+    --nebula-red:    #EF4444;   /* danger  */
+    --nebula-pink:   #EC4899;
+
+    /* Text */
+    --nebula-text-primary:     #FFFFFF;
+    --nebula-text-secondary:   #B8C0D8;
+    --nebula-text-muted:       #6B7A9B;
+    --nebula-text-placeholder: #4B5563;
+
+    /* Gradients */
+    --nebula-gradient-primary: linear-gradient(135deg, #7B4DFF 0%, #4C8DFF 100%);
+    --nebula-gradient-success: linear-gradient(135deg, #22C55E, #16A34A);
+    --nebula-gradient-warning: linear-gradient(135deg, #F59E0B, #D97706);
+
+    /* Shadow */
+    --nebula-card-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 1px rgba(123, 77, 255, 0.12);
+}
+
+
+/* ------------------------------------------------ 3. HORIZON (LIGHT) THEME --
+   Applied when the root element carries .theme-horizon or
+   data-lof-theme="horizon". See section 7 for how to set it.                 */
+
+:root.theme-horizon,
+:root[data-lof-theme="horizon"] {
+    color-scheme: light;
+
+    --nebula-bg-primary:   #FAFAFA;
+    --nebula-bg-secondary: #F3EFF9;
+    --nebula-bg-panel:     #FFFFFF;
+    --nebula-bg-card:      #FFFFFF;
+    --nebula-bg-input:     #F9F5FF;
+
+    --nebula-border:       #E9D5FF;
+    --nebula-border-light: #D8B4FE;
+
+    --lof-primary:       #7C3AED;
+    --lof-primary-dark:  #6D28D9;
+    --lof-primary-light: #8B5CF6;
+    --lof-primary-glow:  rgba(124, 58, 237, 0.2);
+    --lof-accent:        #A855F7;
+
+    --nebula-blue:   #6D28D9;
+    --nebula-purple: #8B5CF6;
+    --nebula-amber:  #D97706;
+    --nebula-green:  #059669;
+    --nebula-red:    #DC2626;
+    --nebula-pink:   #DB2777;
+
+    --nebula-text-primary:     #1E1B4B;
+    --nebula-text-secondary:   #4B5563;
+    --nebula-text-muted:       #9CA3AF;
+    --nebula-text-placeholder: #D1D5DB;
+
+    --nebula-gradient-primary: linear-gradient(135deg, #7C3AED, #A855F7);
+    --nebula-gradient-success: linear-gradient(135deg, #059669, #10B981);
+    --nebula-gradient-warning: linear-gradient(135deg, #D97706, #F59E0B);
+
+    --nebula-card-shadow: 0 1px 8px rgba(124, 58, 237, 0.1);
+}
+
+
+/* ------------------------------------------------------------- 4. BASE ----- */
+
+body {
+    margin: 0;
+    background: var(--nebula-bg-primary);
+    color: var(--nebula-text-primary);
+    font-family: var(--lof-font-body);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--lof-font-display);
+    color: var(--nebula-text-primary);
+    margin: 0 0 var(--lof-space-md);
+    line-height: 1.25;
+}
+
+h1 { font-size: 1.6rem;  font-weight: 700; }
+h2 { font-size: 1.3rem;  font-weight: 700; }
+h3 { font-size: 1.1rem;  font-weight: 600; }
+h4 { font-size: 0.98rem; font-weight: 600; }
+
+p { margin: 0 0 var(--lof-space-md); }
+
+a {
+    color: var(--lof-primary-light);
+    text-decoration: none;
+}
+a:hover { color: var(--lof-primary); text-decoration: underline; }
+
+code, pre, .lof-mono {
+    font-family: var(--lof-font-mono);
+    font-size: 0.85em;
+}
+
+.lof-text-secondary { color: var(--nebula-text-secondary); }
+.lof-text-muted     { color: var(--nebula-text-muted); }
+
+
+/* -------------------------------------------------------- 5. COMPONENTS ----
+   These mirror the LMS. Use them as-is, or copy the rules into your own
+   class names.                                                              */
+
+/* --- Card / panel --- */
+.lof-card {
+    background: var(--nebula-bg-card);
+    border: 1px solid var(--nebula-border);
+    border-radius: var(--lof-radius-xl);
+    box-shadow: var(--nebula-card-shadow);
+    padding: var(--lof-space-lg);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.lof-card:hover {
+    border-color: var(--nebula-border-light);
+}
+
+/* --- Buttons --- */
+.lof-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--lof-space-sm);
+    font-family: var(--lof-font-body);
+    font-size: 0.88rem;
+    font-weight: 600;
+    line-height: 1;
+    padding: 10px 18px;
+    border: 1px solid transparent;
+    border-radius: var(--lof-radius-md);
+    cursor: pointer;
+    transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+.lof-btn:hover  { transform: translateY(-1px); text-decoration: none; }
+.lof-btn:active { transform: translateY(0); }
+.lof-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--lof-primary-glow);
+}
+.lof-btn:disabled,
+.lof-btn.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.lof-btn--primary {
+    background: var(--nebula-gradient-primary);
+    color: #FFFFFF;
+    box-shadow: 0 4px 12px var(--lof-primary-glow);
+}
+.lof-btn--primary:hover { opacity: 0.9; color: #FFFFFF; }
+
+.lof-btn--secondary {
+    background: transparent;
+    color: var(--lof-primary-light);
+    border-color: var(--nebula-border-light);
+}
+.lof-btn--secondary:hover {
+    background: var(--lof-primary-glow);
+    color: var(--nebula-text-primary);
+}
+
+.lof-btn--ghost {
+    background: transparent;
+    color: var(--nebula-text-secondary);
+}
+.lof-btn--ghost:hover {
+    background: var(--nebula-bg-secondary);
+    color: var(--nebula-text-primary);
+}
+
+.lof-btn--danger {
+    background: var(--nebula-red);
+    color: #FFFFFF;
+}
+
+.lof-btn--sm { padding: 6px 12px; font-size: 0.8rem; }
+.lof-btn--lg { padding: 13px 26px; font-size: 0.95rem; }
+
+/* --- Form fields --- */
+.lof-input,
+.lof-select,
+.lof-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--lof-font-body);
+    font-size: 0.88rem;
+    padding: 9px 12px;
+    background: var(--nebula-bg-input);
+    color: var(--nebula-text-primary);
+    border: 1px solid var(--nebula-border);
+    border-radius: var(--lof-radius-md);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.lof-input:focus,
+.lof-select:focus,
+.lof-textarea:focus {
+    outline: none;
+    border-color: var(--lof-primary);
+    box-shadow: 0 0 0 3px var(--lof-primary-glow);
+}
+.lof-input::placeholder,
+.lof-textarea::placeholder { color: var(--nebula-text-placeholder); }
+
+.lof-label {
+    display: block;
+    margin-bottom: var(--lof-space-xs);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--nebula-text-secondary);
+}
+
+/* --- Badges / pills --- */
+.lof-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 4px 10px;
+    border-radius: var(--lof-radius-full);
+    background: var(--lof-primary-glow);
+    color: var(--lof-primary-light);
+}
+.lof-badge--success { background: rgba(34, 197, 94, 0.15);  color: var(--nebula-green); }
+.lof-badge--warning { background: rgba(245, 158, 11, 0.15); color: var(--nebula-amber); }
+.lof-badge--danger  { background: rgba(239, 68, 68, 0.15);  color: var(--nebula-red); }
+
+/* --- Table --- */
+.lof-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+.lof-table th {
+    text-align: left;
+    font-family: var(--lof-font-display);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--nebula-text-muted);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--nebula-border);
+}
+.lof-table td {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--nebula-border);
+    color: var(--nebula-text-secondary);
+}
+.lof-table tbody tr:hover td { background: var(--nebula-bg-secondary); }
+
+/* --- Progress bar --- */
+.lof-progress {
+    height: 8px;
+    background: var(--nebula-bg-secondary);
+    border-radius: var(--lof-radius-full);
+    overflow: hidden;
+}
+.lof-progress__fill {
+    height: 100%;
+    background: var(--nebula-gradient-primary);
+    border-radius: var(--lof-radius-full);
+    transition: width 0.4s ease;
+}
+
+
+/* ------------------------------------------------------- 6. RESPONSIVE ----
+   The LMS embeds LTI tools in a container that can be narrow on tablets and
+   phones. Keep your layout fluid — do not set fixed pixel widths.           */
+
+@media (max-width: 768px) {
+    body { font-size: 0.86rem; }
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1.15rem; }
+    .lof-card { padding: var(--lof-space-md); border-radius: var(--lof-radius-lg); }
+}
+
+
+/* ------------------------------------------------ 7. THEME SWITCHING ------
+   The LMS has two themes and the learner can switch between them. We will
+   send the active one to your tool as an LTI custom parameter named "theme",
+   with the value "nebula" (dark) or "horizon" (light).
+
+   On page load, set it on the root element:
+
+       // themeFromLti is the value of the custom_theme launch parameter
+       if (themeFromLti === 'horizon') {
+           document.documentElement.setAttribute('data-lof-theme', 'horizon');
+       }
+
+   Nothing else is needed — every variable above switches automatically.
+   If the parameter is missing, the dark theme is used, which is the safe
+   default.
+   ============================================================================ */

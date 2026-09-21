@@ -2,30 +2,129 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Base element styling references tokens only (this is not a component file). */
+/* ===========================================================================
+   PREFLIGHT COMPATIBILITY LAYER
+   ---------------------------------------------------------------------------
+   Tailwind's preflight is disabled (tailwind.config.ts) so the LMS base styles
+   in lof-lms-tokens.css section 4 win. But some Tailwind UTILITIES silently
+   depend on preflight having run. This restores only those, and nothing that
+   would override their base layer.
+
+   Two things make this subtle:
+
+   1. border-style. Tailwind's `border`, `border-t`, `border-2` utilities set
+      border-WIDTH only; preflight is what supplies `border-style: solid`
+      globally. Without it all ~100 border utilities in this app compute to
+      `border-style: none` and render nothing — a silent, invisible failure.
+
+   2. It MUST be inside `@layer base`. Preflight's button reset selector list
+      includes [type='submit'], an attribute selector with specificity (0,1,0) —
+      identical to a utility class like .bg-primary. Equal specificity means
+      source order decides, so as plain CSS after @tailwind utilities this block
+      beats the utility and every submit button loses its background. Inside
+      @layer base, Tailwind emits it before the utilities, exactly where
+      preflight would have been, and the utility wins again.
+   =========================================================================== */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    border-width: 0;
+    border-style: solid;
+    border-color: var(--color-border);
+  }
+
+  /* Form controls do not inherit the body font by default. Their section 4
+     styles .lof-input etc., but our fields use Tailwind classes. */
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+    font-size: 100%;
+    font-weight: inherit;
+    line-height: inherit;
+    color: inherit;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Buttons keep UA chrome (grey face, bevel) without preflight. */
+  button,
+  [type='button'],
+  [type='reset'],
+  [type='submit'] {
+    -webkit-appearance: button;
+    background-color: transparent;
+    background-image: none;
+  }
+
+  button,
+  [role='button'] {
+    cursor: pointer;
+  }
+
+  /* Lists used as layout (nav, slot grids) would otherwise show UA bullets and
+     indentation. Their guide has no opinion here; this matches preflight. */
+  ol,
+  ul,
+  menu {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  fieldset,
+  legend {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Base element styling. body/h1-h6/a/p are styled by lof-lms-tokens.css and we
+   deliberately do NOT restate them here, so their file stays authoritative and
+   a replacement drop-in takes effect with no edits on our side.
+   --------------------------------------------------------------------------- */
 html,
 body {
   min-height: 100%;
 }
 
+/* Let the page grow with its content: the guide asks tools not to create their
+   own inner scrollbar, because the LMS sizes the iframe from the height we
+   report (see components/FrameHeightReporter.tsx). */
+html,
 body {
-  background-color: var(--color-bg);
-  color: var(--color-text);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
+  overflow-y: visible;
 }
 
 /*
  * Global visible focus. Every keyboard-focused interactive element gets a clear
  * ring (using the focus token), so a student navigating without a mouse can
  * always see where they are. :focus-visible keeps it keyboard-only (no ring on
- * mouse click). Applies to links, buttons, inputs, textareas and any element
- * with an explicit tabindex or role.
+ * mouse click).
  */
 :focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus);
   outline-offset: var(--focus-ring-offset);
-  border-radius: var(--radius-sm);
+  border-radius: var(--lof-radius-sm);
 }
 
 /* Screen-reader-only: present in the accessibility tree, hidden visually. */

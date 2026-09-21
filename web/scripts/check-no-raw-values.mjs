@@ -14,11 +14,31 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const DIRS = ['app', 'components'];
 const EXATS = new Set(['.ts', '.tsx']);
 
+// Tailwind's own palette. Section 9 of the LOF style guide asks us not to let a
+// second framework's styling fight their tokens, so tailwind.config.ts REPLACES
+// theme.colors and these no longer compile at all. They would therefore fail
+// silently — the class name stays in the markup and simply produces nothing.
+// Catching them here turns that silence into a build failure.
+const TW_PALETTE =
+  'slate|gray|grey|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose';
+const TW_PREFIX =
+  'bg|text|border|ring|ring-offset|from|to|via|divide|outline|shadow|accent|caret|decoration|fill|stroke|placeholder';
+
 const PATTERNS = [
   { name: 'hex color', re: /#[0-9a-fA-F]{3,8}\b/ },
   { name: 'rgb()/rgba()', re: /\brgba?\s*\(/ },
   { name: 'hsl()/hsla()', re: /\bhsla?\s*\(/ },
   { name: 'font-family', re: /font-family/i },
+  {
+    name: 'Tailwind default palette',
+    re: new RegExp(`\\b(?:${TW_PREFIX})-(?:${TW_PALETTE})-(?:50|100|200|300|400|500|600|700|800|900|950)\\b`),
+  },
+  {
+    // bg-white / text-black etc. Section 9: "Do not use pure black (#000) or
+    // pure white (#FFF) as a background. Use the background variables instead."
+    name: 'Tailwind black/white',
+    re: /\b(?:bg|text|border|ring|divide|placeholder)-(?:black|white)\b/,
+  },
 ];
 
 function walk(dir) {

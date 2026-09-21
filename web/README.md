@@ -15,16 +15,72 @@ The API must be running (`ENABLE_TEST_HOOKS=1 npm run dev` in `..`) and MySQL up
 Students enter via the dev launch at `/login`, which calls `/api/dev/login-as`
 (the same session path the Moodle LTI launch will use).
 
-## Theming — one file
+## Theming — the LOF LMS tokens
 
-`styles/tokens.css` is the **single source of truth** for colour, font and size,
-and the only file allowed to contain a raw hex/rgb/font value. `tailwind.config.ts`
-maps semantic names (`bg-surface`, `text-muted`, `rounded-lg`, `ring-focus`, …)
-onto those CSS variables; components use only the semantic names.
+The visual theme is the LMS's own. Three files, loaded in this order by
+`app/layout.tsx`:
 
-Enforced by `npm run check:tokens` — it fails if any component under `app/` or
-`components/` contains a raw value. Re-skinning for the LMS is an edit to
-`tokens.css` alone.
+| file | owner | contents |
+|------|-------|----------|
+| `styles/lof-lms-tokens.css` | **LOF LMS team** | Their token file, byte-identical. Never edit it. |
+| `styles/tokens.css` | us | Semantic aliases (`--color-surface: var(--nebula-bg-card)`). No values of its own. |
+| `app/globals.css` | us | Preflight-compat layer + focus ring + `.sr-only`. |
+
+Because our layer aliases rather than copies, a replacement token file from the
+LMS re-skins the whole UI with no edits on our side — which is what section 8 of
+their guide asks for ("if the LMS palette changes we send a new file and your
+tool updates with it").
+
+**Dark is the default.** Nebula (dark) is defined on `:root`; Horizon (light)
+applies when the root element carries `data-lof-theme="horizon"`. A missing theme
+means dark, which is their specified safe default.
+
+### Why Tailwind is still here, and why it does not fight the tokens
+
+Section 9 of the style guide asks tools not to "load a second UI framework such
+as Bootstrap or Tailwind only for styling. It will fight these tokens and make
+the tool look different."
+
+We kept Tailwind — removing it means rewriting every component — but configured
+it so **it emits nothing of its own**. It is now shorthand for their tokens:
+
+1. **Preflight is off** (`corePlugins: { preflight: false }`), so their base
+   styles on `body`, headings, links and inputs are the ones that apply.
+2. **`theme.colors` is replaced, not extended.** Tailwind's palette is gone —
+   `bg-blue-500` no longer compiles to anything. Every colour resolves to a
+   `var(--nebula-*)` / `var(--lof-*)`.
+3. **Spacing, radius and fonts** likewise replace the defaults and resolve to
+   `--lof-space-*`, `--lof-radius-*` and `--lof-font-*`.
+
+Verified by inspecting the compiled bundle: no default-palette class is present,
+and every padding/radius/font value is a `var(--lof-*)`. `npm run check:tokens`
+fails the build on a raw hex **or** a Tailwind default-palette class name, so a
+`bg-slate-800` that would silently produce nothing is caught instead.
+
+Two notes for a reviewer:
+
+- **The preflight-compat layer is not optional.** Tailwind's `border-*` utilities
+  set border-*width* only and rely on preflight for the global
+  `border-style: solid`. Without it all ~100 border utilities in this app render
+  nothing at all. `globals.css` restores that and the few other preflight
+  behaviours our markup depends on — inside `@layer base`, which matters: the
+  button reset's `[type='submit']` selector has the same specificity (0,1,0) as a
+  utility class, so outside the base layer it beats `bg-primary` on source order
+  and every submit button loses its background.
+- **Spacing is aliased, not re-scaled.** Their six-step scale is available
+  directly (`p-md`, `gap-lg`), and the numeric utilities already in the codebase
+  (`p-4`, `gap-3`, 222 of them) are aliased onto the nearest LOF step rather than
+  rewritten. Every emitted value is one of their tokens; differences are 1–3px.
+
+### Fonts
+
+Their token file `@import`s Sora, Inter and Space Mono from Google Fonts. Their
+guide states the `<head>` link is **preferred** over the `@import` ("Add the same
+line to your `<head>` (preferred), or keep the `@import` below"), because an
+`@import` blocks rendering. We left their file byte-identical so it stays a
+drop-in replacement, and load the same families through Next's font handling.
+Worth confirming with the LMS team whether they would accept a token file without
+the `@import` line, which would remove the duplicate request.
 
 ## Accessibility
 
