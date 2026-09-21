@@ -365,11 +365,14 @@ async function main() {
     // ---- Robotics curriculum (after staff, so seeded ids 1..7 are unchanged) --
     const roboticsStudentIds = await seedRobotics(conn);
 
+    // ---- Id-boundary students (after Robotics, so ids 1..9 are unchanged) --
+    const boundaryStudentIds = await seedBoundaryStudents(conn);
+
     conn.release();
 
     // ---- Segment assignment + week publication (use the real modules) ----
     const weekStart = mondayOf(new Date());
-    for (const sid of [...studentIds, ...roboticsStudentIds]) {
+    for (const sid of [...studentIds, ...roboticsStudentIds, ...boundaryStudentIds]) {
       const decision = await assignSegment(sid);
       const wk = await publishWeek(sid, weekStart);
       logger.info(
@@ -380,6 +383,43 @@ async function main() {
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Students whose ids straddle the base64 padding boundaries of the session
+ * cookie.
+ *
+ * The session is a base64-encoded JSON payload ({"uid":N,"iat":T}); whether its
+ * base64 ends in '=' padding depends on the payload's length, which depends on
+ * how many digits the id has. An audit found the web tier corrupted exactly the
+ * padded cookies, so every student with an id of the wrong length was bounced to
+ * /login — and it went unnoticed because the seed only ever created ids 1-9,
+ * which all happened to fall on the same side. These ids cover every digit
+ * count from 1 to 6, on both sides of each boundary, so that class of bug cannot
+ * hide again. The e2e journeys run for all of them.
+ *
+ * Inserted with explicit ids; the table's AUTO_INCREMENT then continues above
+ * 100000, which is fine — nothing depends on a particular generated id.
+ */
+export const BOUNDARY_STUDENT_IDS = [10, 99, 100, 999, 1000, 9999, 10000, 100000] as const;
+
+async function seedBoundaryStudents(conn: PoolConnection): Promise<number[]> {
+  for (const id of BOUNDARY_STUDENT_IDS) {
+    await conn.query(
+      `INSERT INTO students
+         (id, moodle_user_id, display_name, age, subject, current_level, consecutive_wrong,
+          total_xp, placement_status, stall_count, role)
+       VALUES (?, NULL, ?, 15, ?, 2, 0, 0, 'complete', 0, 'student')`,
+      [id, `Boundary Student ${id}`, SUBJECT]
+    );
+    for (const tag of ['loops', 'sorting']) {
+      await conn.query(`INSERT INTO student_interests (student_id, tag) VALUES (?, ?)`, [id, tag]);
+    }
+    await conn.query(`INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?, 'CS-101', NOW())`, [
+      id,
+    ]);
+  }
+  return [...BOUNDARY_STUDENT_IDS];
 }
 
 /**

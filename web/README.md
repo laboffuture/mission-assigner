@@ -20,11 +20,11 @@ Students enter via the dev launch at `/login`, which calls `/api/dev/login-as`
 The visual theme is the LMS's own. Three files, loaded in this order by
 `app/layout.tsx`:
 
-| file | owner | contents |
-|------|-------|----------|
-| `styles/lof-lms-tokens.css` | **LOF LMS team** | Their token file, byte-identical. Never edit it. |
-| `styles/tokens.css` | us | Semantic aliases (`--color-surface: var(--nebula-bg-card)`). No values of its own. |
-| `app/globals.css` | us | Preflight-compat layer + focus ring + `.sr-only`. |
+| file                        | owner            | contents                                                                           |
+| --------------------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| `styles/lof-lms-tokens.css` | **LOF LMS team** | Their token file, byte-identical. Never edit it.                                   |
+| `styles/tokens.css`         | us               | Semantic aliases (`--color-surface: var(--nebula-bg-card)`). No values of its own. |
+| `app/globals.css`           | us               | Preflight-compat layer + focus ring + `.sr-only`.                                  |
 
 Because our layer aliases rather than copies, a replacement token file from the
 LMS re-skins the whole UI with no edits on our side — which is what section 8 of
@@ -60,7 +60,7 @@ fails the build on a raw hex **or** a Tailwind default-palette class name, so a
 Two notes for a reviewer:
 
 - **The preflight-compat layer is not optional.** Tailwind's `border-*` utilities
-  set border-*width* only and rely on preflight for the global
+  set border-_width_ only and rely on preflight for the global
   `border-style: solid`. Without it all ~100 border utilities in this app render
   nothing at all. `globals.css` restores that and the few other preflight
   behaviours our markup depends on — inside `@layer base`, which matters: the
@@ -88,7 +88,7 @@ The student surface is used by minors, so accessibility is a requirement, not a
 polish pass. What's in place:
 
 - **Radiogroups** — feedback answers and the 1–5 scale are native `<input
-  type=radio>` groups (arrow-key navigation, focus and SR semantics from the
+type=radio>` groups (arrow-key navigation, focus and SR semantics from the
   platform), with scale endpoint anchors ("Low"/"High" and "1, lowest"/"5,
   highest" in the accessible name).
 - **Keyboard-complete** — a mission and feedback can be finished with the keyboard
@@ -112,7 +112,7 @@ badge) clears the threshold.
 
 **The real check happens when the LMS palette lands.** Re-run `npm run e2e` after
 swapping the token values: if a token pair then fails contrast, that's a decision
-point — either we adjust *our usage* (which token sits on which background) or we
+point — either we adjust _our usage_ (which token sits on which background) or we
 raise the specific pair with the LMS team as a palette problem. The axe suite is
 what surfaces it.
 
@@ -129,3 +129,20 @@ empty states, submit resilience (network-drop retry with a reused
 Idempotency-Key; session-expiry redirect), keyboard-only completion, and the
 axe accessibility scans. Specs reseed the DB per file and are scoped to CommonJS
 (`e2e/package.json`) to avoid the Playwright ESM race.
+
+### Every student journey runs across student ids of every length
+
+The session cookie is a signed base64 JSON payload, and whether its base64 ends
+in `=` padding depends on how many digits the student's id has. The server-side
+API client once rebuilt the Cookie header through Next's `cookies().toString()`,
+which percent-encodes each value — turning that `=` into `%3D`, breaking the
+signature, and bouncing every student with an id of the "wrong" length to
+`/login`. It went unnoticed because the seed only created ids 1–9, which all fell
+on the same side.
+
+`lib/api/server.ts` now forwards the incoming Cookie header **raw** from
+`headers()`. So this cannot hide again, the seed creates students at ids 10, 99,
+100, 999, 1000, 9999, 10000 and 100000 (`BOUNDARY_IDS` in `e2e/helpers.ts`), and
+every student journey spec runs for its original student and then for each of
+them. The full week → mission → result → feedback → progress flow for ids 10 and
+10000 is `student-flow.spec.ts` `[student 10]` and `[student 10000]`.

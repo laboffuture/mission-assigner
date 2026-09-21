@@ -29,3 +29,22 @@ export async function setFeedbackGating(page: Page, enabled: boolean): Promise<v
   const res = await page.request.post('/api/test/feedback-gating', { data: { enabled } });
   if (!res.ok()) throw new Error(`feedback-gating toggle failed: ${res.status()}`);
 }
+
+/**
+ * Student ids that straddle the base64 padding boundaries of the session cookie
+ * (seeded by src/seed.ts::seedBoundaryStudents). The web tier once corrupted
+ * padded cookies, bouncing every student whose id had the "wrong" number of
+ * digits to /login; the seed only had ids 1-9, which all fell on one side, so
+ * nothing caught it. Every student journey runs for all of these.
+ */
+export const BOUNDARY_IDS = [10, 99, 100, 999, 1000, 9999, 10000, 100000] as const;
+
+/** A journey's original student first (unchanged), then every boundary student. */
+export function spreadFrom(originalId: number): number[] {
+  return [originalId, ...BOUNDARY_IDS];
+}
+
+/** The original student keeps the original test title exactly. */
+export function titleFor(title: string, id: number, originalId: number): string {
+  return id === originalId ? title : `${title} [student ${id}]`;
+}

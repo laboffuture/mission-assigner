@@ -180,12 +180,13 @@ async function reseed() {
 }
 
 // --------------------------------------------------------------- fixtures --
-// Browser-driven cases (43, 49-55) use SEEDED students with single-digit ids.
-// The web tier re-encodes the session cookie on its server-side hop (Next's
-// RequestCookies.toString() percent-encodes base64 '=' padding), so every
-// student whose id is 10-999 or 10000+ is bounced to /login — case 7 records
-// that defect. With a newly created (id >= 10) student every UI case would
-// measure only that one defect; with a low id they measure the screens.
+// Browser-driven cases (43, 49-55) use SEEDED students (ids 1, 2, 3). When the
+// audit was written, the web tier corrupted base64-padded session cookies and
+// bounced students of most id lengths to /login (case 7), so these cases used
+// ids that happened to work, to measure the screens rather than that bug. The
+// bug is fixed (raw cookie forwarding, Phase 2) and the e2e journeys now run
+// across ids of every length; these cases keep the seeded students so their
+// fixtures stay stable.
 const UI_STUDENT = 1;
 const KBD_STUDENT = 2;
 const DBDOWN_STUDENT = 3;
