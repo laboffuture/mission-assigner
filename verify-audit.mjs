@@ -718,7 +718,7 @@ await runCase(
   '4.1',
   8,
   'A student completes the week and tries to open another slot',
-  'For the student from case 1: no slot is open; re-opening each completed slot returns its existing assignment without creating a new one or awarding XP; re-submitting a graded assignment is refused (4xx) and awards no XP.',
+  'For the student from case 1: no slot is open; re-opening each completed slot returns its existing assignment without creating a new one or awarding XP; re-submitting a graded assignment returns the stored result for that assignment, marked already_submitted, and awards no XP and no second grade.',
   async (c) => {
     if (!fullWeekStudent) return c.notTested('case 1 did not produce a completed week');
     const sid = fullWeekStudent;
@@ -740,11 +740,32 @@ await runCase(
     }
     const after = await one(`SELECT COUNT(*) n FROM assignments WHERE student_id = ?`, [sid]);
     c.check('no new assignment created', Number(after.n) === Number(before.n), `(${before.n} -> ${after.n})`);
-    const again = await submit(sid, week.slots[0].assignment_id, 'a');
+    // A re-submit is not an error: the assignment IS graded, so the student is
+    // shown the result they already have (marked already_submitted), never a
+    // second grade. It used to answer 400 "not open", which left a student
+    // whose first response was lost with no way back to their own result.
+    const aid = week.slots[0].assignment_id;
+    const gradesBefore = Number((await one(`SELECT COUNT(*) n FROM level_events WHERE assignment_id = ?`, [aid])).n);
+    const again = await submit(sid, aid, 'a');
     c.check(
-      're-submit refused',
-      again.status >= 400 && again.status < 500,
+      're-submit returns the stored result',
+      again.status === 200,
       `(${again.status} ${again.text.slice(0, 100)})`
+    );
+    c.check(
+      '  ...marked already_submitted',
+      again.json?.already_submitted === true,
+      `(${again.json?.already_submitted})`
+    );
+    c.check(
+      '  ...with the answer that was actually graded, not the resent one',
+      again.json?.selected_option_key != null && again.json.selected_option_key !== 'a',
+      `(selected=${again.json?.selected_option_key})`
+    );
+    c.check(
+      'no second grade',
+      Number((await one(`SELECT COUNT(*) n FROM level_events WHERE assignment_id = ?`, [aid])).n) === gradesBefore,
+      `(${gradesBefore} level events before)`
     );
     c.check('no XP awarded by any of this', (await studentRow(sid)).xp === xp);
   }
@@ -1301,7 +1322,7 @@ await runCase(
   '4.4',
   26,
   'Two browser tabs open on the same slot, submitting from both',
-  'Both tabs get the same assignment. The first submit grades; the second (its own Idempotency-Key) is refused with a clear 4xx, not a 5xx. One grade in total.',
+  'Both tabs get the same assignment. The first submit grades; the second (its own Idempotency-Key, a different answer) gets the stored result from the first tab, marked already_submitted and carrying the graded answer — never a 5xx and never a second grade.',
   async (c) => {
     const sid = await newCsStudent('twotabs');
     const s = slotByIndex(await weekOf(sid), 1);
@@ -1312,7 +1333,19 @@ await runCase(
     const r1 = await submit(sid, a.json.assignment_id, k.correct, randomUUID());
     const r2 = await submit(sid, b.json.assignment_id, wrongOf(k.correct), randomUUID());
     c.check('tab A graded', r1.status === 200);
-    c.check('tab B refused with 4xx', r2.status >= 400 && r2.status < 500, `(${r2.status} ${r2.text.slice(0, 120)})`);
+    // Tab B is the same student looking at the same, now-graded assignment: it
+    // shows tab A's result rather than an error (see case 8).
+    c.check('tab B gets the stored result, not a 5xx', r2.status === 200, `(${r2.status} ${r2.text.slice(0, 120)})`);
+    c.check(
+      'tab B is told it was already submitted',
+      r2.json?.already_submitted === true,
+      `(${r2.json?.already_submitted})`
+    );
+    c.check(
+      "tab B shows tab A's answer, not its own",
+      r2.json?.selected_option_key === k.correct,
+      `(shown=${r2.json?.selected_option_key}, tab B sent=${wrongOf(k.correct)})`
+    );
     c.check('tab B message is not internal', !LEAK_RE.test(r2.text), `(${r2.text.slice(0, 120)})`);
     c.check(
       'one grade',
