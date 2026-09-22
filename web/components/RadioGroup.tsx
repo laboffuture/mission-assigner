@@ -42,7 +42,7 @@ export function RadioGroup({
   const gid = useId();
   return (
     <div className="flex items-center gap-2">
-      {startCaption && <span className="text-xs text-text-muted">{startCaption}</span>}
+      {startCaption && <span className="text-xs text-text-secondary">{startCaption}</span>}
       <div role="radiogroup" aria-labelledby={legendId} className="flex flex-wrap items-center gap-2">
         {options.map((opt) => {
           const active = value === opt.value;
@@ -75,7 +75,7 @@ export function RadioGroup({
           );
         })}
       </div>
-      {endCaption && <span className="text-xs text-text-muted">{endCaption}</span>}
+      {endCaption && <span className="text-xs text-text-secondary">{endCaption}</span>}
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import type { Slot } from '@/lib/api/types';
+import type { Segment, Slot } from '@/lib/api/types';
 import { slotState, formatWeekStart } from '@/lib/week';
 import { Card } from '@/components/ui';
+import { PositionLine } from '@/components/CurriculumPosition';
 import { SlotTile } from './SlotTile';
 import { WeeklyCard } from './WeeklyCard';
 
@@ -10,7 +11,7 @@ function count(slots: Slot[], state: 'done' | 'open' | 'locked') {
 
 function LegendDot({ className, label, n }: { className: string; label: string; n: number }) {
   return (
-    <span className="flex items-center gap-1.5 text-sm text-text-muted">
+    <span className="flex items-center gap-1.5 text-sm text-text-secondary">
       <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 rounded-full ${className}`} />
       <strong className="text-text">{n}</strong> {label}
     </span>
@@ -21,10 +22,12 @@ export function WeekBoard({
   weekStart,
   dailySlots,
   weeklySlot,
+  segment,
 }: {
   weekStart: string;
   dailySlots: Slot[];
   weeklySlot: Slot | null;
+  segment: Segment;
 }) {
   const done = count(dailySlots, 'done');
   const open = count(dailySlots, 'open');
@@ -39,7 +42,10 @@ export function WeekBoard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-bold">This week</h1>
-            <p className="text-sm text-text-muted">Week of {formatWeekStart(weekStart)}</p>
+            <p className="text-sm text-text-secondary">Week of {formatWeekStart(weekStart)}</p>
+            {/* Track / credit / project / session — or the segment placement
+                when curriculum mode has not placed this student. */}
+            <PositionLine segment={segment} className="mt-1" />
           </div>
           <div className="flex flex-wrap items-center gap-4">
             <LegendDot className="bg-success" label="done" n={done} />
@@ -57,18 +63,18 @@ export function WeekBoard({
         >
           <div className="h-full rounded-full bg-success transition-all" style={{ width: `${pct}%` }} />
         </div>
-        <p className="mt-2 text-sm text-text-muted">
+        <p className="mt-2 text-sm text-text-secondary">
           {done} of {dailySlots.length} daily missions done
         </p>
       </Card>
 
       {/* Daily sequence — ordered tiles. */}
       <section aria-labelledby="daily-heading">
-        <h2 id="daily-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-muted">
+        <h2 id="daily-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-secondary">
           Daily sequence
         </h2>
         {dailySlots.length === 0 ? (
-          <p className="text-sm text-text-muted">No daily missions this week.</p>
+          <p className="text-sm text-text-secondary">No daily missions this week.</p>
         ) : (
           <ul className="flex list-none gap-3 overflow-x-auto pb-2">
             {dailySlots.map((s) => (

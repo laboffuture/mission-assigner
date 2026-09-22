@@ -19,18 +19,18 @@ function Row({ e }: { e: AssistanceListItem }) {
       >
         <div className="min-w-0">
           <p className="font-semibold">{e.student_name}</p>
-          <p className="text-sm text-text-muted">
+          <p className="text-sm text-text-secondary">
             Level {e.current_level}
             {e.segment_name ? ` · ${e.segment_name}` : ''}
             {e.tags_involved.length > 0 ? ` · ${e.tags_involved.join(', ')}` : ''}
           </p>
-          <p className="mt-0.5 text-xs text-text-muted">Raised {formatDateTime(e.created_at)}</p>
+          <p className="mt-0.5 text-xs text-text-secondary">Raised {formatDateTime(e.created_at)}</p>
         </div>
         <div className="shrink-0 text-right">
           <Badge tone={URGENCY_TONE[urgency]}>
             {URGENCY_WORD[urgency]} {formatWaiting(e.waiting_seconds)}
           </Badge>
-          <p className="mt-1 text-xs font-semibold text-primary">Review →</p>
+          <p className="mt-1 text-xs font-semibold text-link">Review →</p>
         </div>
       </Link>
     </li>
@@ -85,7 +85,7 @@ export function AssistanceQueue({
           <Row key={e.id} e={e} />
         ))}
       </ul>
-      {error && <p className="py-3 text-sm text-danger">{error}</p>}
+      {error && <p className="py-3 text-sm text-on-tint">{error}</p>}
       {cursor && (
         <div className="py-4 text-center">
           <Button variant="ghost" onClick={loadMore} disabled={loading}>

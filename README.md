@@ -432,6 +432,51 @@ Seed data adds Tesla's Track (Robotics) with missions on C1 sessions 1–24 and 
 and two students: *Ananya Rao* at C1/P1/S4 and *Kabir Mehta* at C1/P3/S2. Tests:
 `npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
 
+## The web app in the LMS (LTI)
+
+The student UI (`web/`, Next.js on :3001) is built to be **embedded in the LOF LMS via an
+iframe**, so it deliberately does not look like a site of its own.
+
+**No header bar of our own.** The LMS page provides the header. In-app navigation lives inside
+the page content (`components/PageNav.tsx`) as tabs, so a student still moves between the week
+board and their progress without one. Covered by `web/e2e/navigation.spec.ts`.
+
+**Theme.** The LMS tells us which theme the learner uses. `middleware.ts` accepts
+`?theme=nebula|horizon` on any URL, stores it in the `lof_theme` cookie, and `app/layout.tsx`
+renders `<html data-lof-theme>` on the SERVER — so the first paint is already correct and there
+is no flash of the wrong theme. Nebula (their default) when nothing is given. `?theme=horizon`
+is also how the tests and a reviewer switch themes by hand.
+
+**Iframe height.** `components/FrameHeightReporter.tsx` posts the document height to the parent
+on mount, on resize and after each route change, so the LMS can size the iframe instead of us
+producing an inner scrollbar. It stays silent when the app is not framed.
+
+> **The message format is NOT confirmed.** We post
+> `{ subject: 'lti.frameResize', height: <px> }` to `window.parent`, which is the shape common
+> LTI players use. **This has to be agreed with the LMS team** — both the field names and
+> whether they want a `targetOrigin` other than `*`. If they specify something else, change
+> `FRAME_RESIZE_SUBJECT` and the payload in that one component; nothing else depends on it.
+
+**Their tokens are never edited.** `web/styles/lof-lms-tokens.css` is byte-identical to the file
+they sent. Our `web/styles/tokens.css` only aliases their variables — it defines no colour of
+its own — and `tailwind.config.ts` replaces Tailwind's palette, spacing, type scale,
+letter-spacing and shadows with those variables, so Tailwind emits nothing of its own.
+`npm --prefix web run check:tokens` fails the build on a raw hex, an rgb()/hsl(), a font-family
+or a Tailwind default-palette class in the components.
+
+The one exception is their render-blocking `@import` of Google Fonts. Since their file cannot be
+edited, `npm --prefix web run gen:tokens` writes `web/styles/generated/lof-lms-tokens.css` —
+their file with that single line removed — and the app imports that; the same three families are
+self-hosted by `next/font`. The generator refuses to run if that line is not exactly what it
+expects, and `check:tokens` fails if the generated copy is stale. It runs automatically before
+`dev` and `build`.
+
+**Contrast.** `npm --prefix web run report:contrast` measures every colour pair the app renders,
+in both themes, straight from their token file — including text on gradients, which axe cannot
+evaluate at all. Failures caused by our own usage are fixed in our components; failures that
+belong to the LMS palette are written up in `docs/lms-contrast-findings.md` for the LMS team and
+are **not** worked around by overriding their tokens.
+
 ## How Stage 3 works
 
 - **Segmentation** (`src/segmentation.ts`) — pure rules, no AI. Matches active

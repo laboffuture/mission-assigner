@@ -157,7 +157,7 @@ export function MissionRunner({ slotId }: { slotId: number }) {
         </fieldset>
       </Card>
       {submitError && (
-        <p className="rounded border border-border bg-danger-muted p-3 text-sm text-danger">{submitError}</p>
+        <p className="rounded border border-border bg-danger-muted p-3 text-sm text-on-tint">{submitError}</p>
       )}
       <div>
         <Button onClick={() => submit(mission)} disabled={!selected || submitting}>

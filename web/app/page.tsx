@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell, Card, Muted } from '@/components/ui';
 
 /**
@@ -16,8 +16,8 @@ export default async function Home() {
   // Staff who signed in (e.g. via dev login-as) — this is the student surface only.
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} />
         <Card className="p-6">
           <h1 className="text-xl font-bold">Signed in as {me.display_name ?? `user ${me.id}`}</h1>
           <Muted className="mt-2">

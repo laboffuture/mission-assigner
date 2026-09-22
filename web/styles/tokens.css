@@ -1,22 +1,40 @@
 /*
  * SEMANTIC ALIASES OVER THE LOF LMS TOKENS.
  *
- * This file no longer defines any colour of its own. Every value here is an
- * alias of a variable from lof-lms-tokens.css, which is their file, unmodified,
+ * This file defines NO colour of its own — not one hex, rgb or hsl value.
+ * Every colour here is an alias, or a mix, of a variable from
+ * lof-lms-tokens.css, which is their file, byte-identical to what they sent,
  * loaded before this one. Section 8 of the style guide: "Use the CSS variables,
  * never a hard-coded colour. If the LMS palette changes we send a new file and
  * your tool updates with it." Aliasing is what makes that true for us — a new
  * token file re-skins our whole UI with no edits here.
  *
- * Our component markup keeps using bg-surface / text-muted / rounded-lg, so
+ * Our component markup keeps using bg-surface / text-secondary / rounded-lg, so
  * nothing downstream had to change. Both themes are handled automatically:
  * their file re-declares the --nebula-* variables under
- * :root[data-lof-theme="horizon"], and because these are aliases rather than
- * copies, ours follow.
+ * [data-lof-theme="horizon"], and because these are aliases rather than copies,
+ * ours follow. Where the two themes need a DIFFERENT token of theirs to stay
+ * readable, the horizon block at the bottom picks it — that is our usage
+ * decision, never a change to their values.
+ *
+ * Contrast ratios for every pair below: docs/lms-contrast-findings.md
+ * (regenerate with `npm run report:contrast`).
  *
  * Enforced by:  npm run check:tokens
  */
 :root {
+  /* ---- Fonts ----
+     The SAME three families they specify, self-hosted by next/font
+     (app/layout.tsx) instead of fetched from Google by a render-blocking
+     @import. Each next/font variable is put in front of their token's own
+     value, which stays as the fallback — so this is a delivery change, not a
+     typeface change, and if next/font ever fails the text renders exactly as
+     their file asks. These are the only LMS token names this file re-declares,
+     and no colour is among them. */
+  --lof-font-display: var(--font-display), 'Sora', sans-serif;
+  --lof-font-body: var(--font-body), 'Inter', sans-serif;
+  --lof-font-mono: var(--font-mono), 'Space Mono', monospace;
+
   /* ---- Surfaces & lines ---- */
   --color-bg: var(--nebula-bg-primary);
   --color-surface: var(--nebula-bg-card);
@@ -26,35 +44,55 @@
 
   /* ---- Text ----
      text-secondary is their body-text colour and passes AA on a card in both
-     themes. text-muted does NOT (3.82:1 nebula, 2.54:1 horizon — see
-     docs/lms-contrast-findings.md), so it is reserved for decorative labels and
-     never used for anything a student has to read. */
+     themes (9.04:1 / 7.56:1). text-muted does NOT (3.82:1 nebula, 2.54:1
+     horizon), so it is reserved for decoration — a divider dot, a bullet — and
+     never used for words a student has to read. */
   --color-text: var(--nebula-text-primary);
   --color-text-secondary: var(--nebula-text-secondary);
   --color-text-muted: var(--nebula-text-muted);
 
   /* ---- Primary (brand) ---- */
   --color-primary: var(--lof-primary);
-  --color-primary-fg: #ffffff; /* their gradient is dark in both themes */
   --color-primary-light: var(--lof-primary-light);
   --color-primary-muted: var(--lof-primary-glow);
 
+  /* Text ON the solid brand colour. Their own .lof-btn--primary uses #FFFFFF;
+     rather than restate a hex we take the token that IS white in this theme —
+     so if they re-skin, our button text follows their palette instead of a copy
+     of it. Nebula: text-primary is #FFFFFF (4.83:1 on the brand colour). */
+  --color-primary-fg: var(--nebula-text-primary);
+
+  /* Links and any brand-coloured word: whichever of THEIR two brand tokens is
+     readable on a card in this theme. Nebula: primary-light 6.03:1 (plain
+     --lof-primary would be 3.40:1 and fail). */
+  --color-link: var(--lof-primary-light);
+
   /* ---- Semantic states ----
-     The *-muted fills mirror their .lof-badge--* rules, which use a 15% tint of
-     the status colour rather than a separate token. */
+     The fills mirror their .lof-badge--* rules, which tint the status colour at
+     15%. Theirs are written as literal rgba() of the NEBULA colours, so in
+     Horizon a badge keeps a dark-theme fill; color-mix() over their own
+     variables gives the same 15% tint while following the active theme. */
   --color-success: var(--nebula-green);
-  --color-success-fg: #ffffff;
-  --color-success-muted: rgba(34, 197, 94, 0.15);
+  --color-success-muted: color-mix(in srgb, var(--nebula-green) 15%, transparent);
 
   --color-danger: var(--nebula-red);
-  --color-danger-fg: #ffffff;
-  --color-danger-muted: rgba(239, 68, 68, 0.15);
+  --color-danger-muted: color-mix(in srgb, var(--nebula-red) 15%, transparent);
 
   --color-warning: var(--nebula-amber);
-  --color-warning-muted: rgba(245, 158, 11, 0.15);
+  --color-warning-muted: color-mix(in srgb, var(--nebula-amber) 15%, transparent);
 
-  /* A locked/unavailable slot. */
-  --color-locked: var(--nebula-text-muted);
+  /* Text on any of those 15% tints. Their pattern — the status hue on its own
+     tint — fails AA in at least one theme for all three states (e.g. danger
+     3.85:1 nebula, warning 2.84:1 horizon), so our chips keep the tint as the
+     fill and the hue as the border/symbol, and put the page's own text colour
+     on top (12.76:1 / 14.04:1). Raised with the LMS team; see the findings doc. */
+  --color-on-tint: var(--nebula-text-primary);
+
+  /* A locked/unavailable slot. The words "Locked" and the day are text a
+     student reads, so this is their body-text colour too; the muted fill, the
+     padlock and the wording carry the "not yet" meaning without relying on a
+     colour that cannot be read (text-muted is 3.82:1 / 2.54:1). */
+  --color-locked: var(--nebula-text-secondary);
 
   /* ---- Focus ring (keyboard navigation) ----
      Their .lof-btn:focus-visible uses a 3px primary glow; we use the same
@@ -69,8 +107,51 @@
      their glow token rather than invented. */
   --shadow-pop: 0 8px 24px var(--lof-primary-glow);
 
+  /* ---- Type scale ----
+     Their stylesheet sets sizes on elements (section 4) and components
+     (section 5) rather than exposing them as variables, so they are named here
+     — values taken from their rules, not chosen by us — and Tailwind's own
+     scale is replaced by these in tailwind.config.ts.
+
+       badge 0.7rem · .lof-btn--sm 0.8rem · body 0.9rem · h4 0.98rem
+       h3 1.1rem · h2 1.3rem · h1 1.6rem                                     */
+  --text-badge: 0.7rem;
+  --text-small: 0.8rem;
+  --text-body: 0.9rem;
+  --text-h4: 0.98rem;
+  --text-h3: 1.1rem;
+  --text-h2: 1.3rem;
+  --text-h1: 1.6rem;
+  /* Their scale stops at h1. The two display sizes (a level number, an XP
+     total) continue it from their h1 rather than introducing a new ramp. */
+  --text-display: calc(var(--text-h1) * 1.25);
+  --text-display-lg: calc(var(--text-h1) * 1.75);
+
+  /* Line heights and letter-spacing, also theirs: body 1.55, headings 1.25,
+     .lof-badge 0.02em, .lof-table th 0.04em. */
+  --leading-body: 1.55;
+  --leading-heading: 1.25;
+  --tracking-badge: 0.02em;
+  --tracking-caps: 0.04em;
+
   /* ---- Layout ----
      A max, not a fixed width: section 9 says never set a fixed pixel width on
      the outer container, and the container is width:100% below this. */
   --width-content: 880px;
+}
+
+/*
+ * HORIZON — our usage choices only.
+ *
+ * Their file already re-declares each of their own values for this theme;
+ * nothing here changes any of them. These three lines pick a DIFFERENT token of
+ * theirs where the nebula choice is unreadable on a light background.
+ */
+:root[data-lof-theme='horizon'] {
+  /* White in this theme is their card/panel colour (#FFFFFF); text-primary is
+     near-black here and would give 2.81:1 on the brand colour. 5.70:1. */
+  --color-primary-fg: var(--nebula-bg-card);
+
+  /* primary-light is 4.23:1 on a card here, plain primary is 5.70:1. */
+  --color-link: var(--lof-primary);
 }

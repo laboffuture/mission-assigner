@@ -167,7 +167,7 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
               <span id={labelId} className="text-sm font-semibold">
                 {q.prompt}
                 {q.required && (
-                  <span className="text-danger">
+                  <span className="text-on-tint">
                     {' '}
                     *<span className="sr-only"> (required)</span>
                   </span>
@@ -182,7 +182,7 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
                   disabled={disabled}
                 />
               </div>
-              {isMissing && <p className="mt-1 text-xs text-danger">Please answer this one.</p>}
+              {isMissing && <p className="mt-1 text-xs text-on-tint">Please answer this one.</p>}
             </div>
           );
         })}
@@ -190,10 +190,10 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
 
       <div aria-live="polite">
         {phase === 'error' && (
-          <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-danger">{errorMsg}</p>
+          <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-on-tint">{errorMsg}</p>
         )}
         {missing.size > 0 && (
-          <p className="mt-4 text-sm text-danger">
+          <p className="mt-4 text-sm text-on-tint">
             Please answer the highlighted question{missing.size > 1 ? 's' : ''}.
           </p>
         )}

@@ -4,7 +4,7 @@ import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
 import { ApiError } from '@/lib/api/error';
 import type { AssistanceDetail, AssistanceFailedMission } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell, Card, Badge, Muted } from '@/components/ui';
 import { AccessDenied } from '@/components/staff/AccessDenied';
 import { AssistanceActions } from '@/components/staff/AssistanceActions';
@@ -75,12 +75,12 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
     if (e instanceof ApiError && e.status === 404) {
       return (
         <>
-          <Header me={me} />
           <PageShell>
+            <PageNav me={me} />
             <Card className="p-6">
               <h1 className="text-xl font-bold">Event not found</h1>
               <Muted className="mt-2">This assistance event doesn’t exist.</Muted>
-              <Link href="/staff/assistance" className="mt-3 inline-block text-sm font-semibold text-primary">
+              <Link href="/staff/assistance" className="mt-3 inline-block text-sm font-semibold text-link">
                 ← Back to the queue
               </Link>
             </Card>
@@ -93,10 +93,10 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} />
         <div className="mb-4">
-          <Link href="/staff/assistance" className="text-sm font-semibold text-primary hover:underline">
+          <Link href="/staff/assistance" className="text-sm font-semibold text-link hover:underline">
             ← Back to the queue
           </Link>
         </div>
@@ -114,10 +114,12 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
               </div>
               <Badge tone="warning">Waiting {formatWaiting(detail.waiting_seconds)}</Badge>
             </div>
-            <p className="mt-2 text-xs text-text-muted">Raised {formatDateTime(detail.created_at)}</p>
+            <p className="mt-2 text-xs text-text-secondary">Raised {formatDateTime(detail.created_at)}</p>
             {detail.tags_involved.length > 0 && (
               <div className="mt-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">Topics involved</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                  Topics involved
+                </span>
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {detail.tags_involved.map((t) => (
                     <Badge key={t} tone="primary">
@@ -131,7 +133,7 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
 
           {/* The failed missions — question, their answer, the correct one, why. */}
           <section aria-labelledby="failed-heading">
-            <h2 id="failed-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-muted">
+            <h2 id="failed-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-secondary">
               Where they went wrong
             </h2>
             <div className="flex flex-col gap-3">
@@ -146,13 +148,13 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
           {/* Recent level history for context. */}
           {detail.level_history.length > 0 && (
             <section aria-labelledby="history-heading">
-              <h2 id="history-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-muted">
+              <h2 id="history-heading" className="mb-2 text-sm font-bold uppercase tracking-wide text-text-secondary">
                 Recent level history
               </h2>
               <Card className="p-4">
                 <ul className="flex flex-col gap-1 text-sm">
                   {detail.level_history.map((h, i) => (
-                    <li key={i} className="flex items-center justify-between gap-3 text-text-muted">
+                    <li key={i} className="flex items-center justify-between gap-3 text-text-secondary">
                       <span>
                         {h.from_level} → {h.to_level} · {h.reason}
                       </span>
@@ -166,7 +168,7 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
 
           {/* Actions. */}
           <Card className="p-6">
-            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-text-muted">Action</h2>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-text-secondary">Action</h2>
             <AssistanceActions detail={detail} />
           </Card>
         </div>

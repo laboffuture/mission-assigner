@@ -16,11 +16,11 @@ export function WeeklyCard({ slot }: { slot: Slot }) {
   const title = slot.kind === 'filled' ? slot.mission.title : null;
 
   return (
-    <Card className="p-5">
+    <Card className="relative p-5">
       {locked && <span className="sr-only">Weekly mission, locked. Unlocks later this week.</span>}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold uppercase tracking-wide text-primary">Weekly mission</span>
+          <span className="text-sm font-bold uppercase tracking-wide text-link">Weekly mission</span>
           <Badge tone="primary">Outside the daily sequence</Badge>
         </div>
         <Badge tone={STATE_TONE[state]}>
@@ -37,14 +37,11 @@ export function WeeklyCard({ slot }: { slot: Slot }) {
 
       {/* Content only for a non-locked weekly slot. */}
       {locked ? (
-        <p className="mt-3 text-sm text-text-muted">Unlocks later this week.</p>
+        <p className="mt-3 text-sm text-text-secondary">Unlocks later this week.</p>
       ) : (
         <div className="mt-3 flex items-center justify-between gap-4">
-          {title && <span className="text-sm text-text-muted">{title}</span>}
-          <Link
-            href={`/mission/${slot.slot_id}`}
-            className="shrink-0 text-sm font-semibold text-primary hover:underline"
-          >
+          {title && <span className="text-sm text-text-secondary">{title}</span>}
+          <Link href={`/mission/${slot.slot_id}`} className="shrink-0 text-sm font-semibold text-link hover:underline">
             {state === 'done' ? 'Review' : 'Open weekly mission'} →
           </Link>
         </div>

@@ -95,11 +95,11 @@ const config: Config = {
       'primary-fg': 'var(--color-primary-fg)',
       'primary-muted': 'var(--color-primary-muted)',
       'primary-light': 'var(--color-primary-light)',
+      link: 'var(--color-link)',
+      'on-tint': 'var(--color-on-tint)',
       success: 'var(--color-success)',
-      'success-fg': 'var(--color-success-fg)',
       'success-muted': 'var(--color-success-muted)',
       danger: 'var(--color-danger)',
-      'danger-fg': 'var(--color-danger-fg)',
       'danger-muted': 'var(--color-danger-muted)',
       warning: 'var(--color-warning)',
       'warning-muted': 'var(--color-warning-muted)',
@@ -132,11 +132,45 @@ const config: Config = {
       mono: 'var(--lof-font-mono)',
     },
 
+    // REPLACES Tailwind's type scale with the sizes their stylesheet uses
+    // (named in styles/tokens.css), so text-sm/text-xl emit an LOF value and
+    // Tailwind's own ramp cannot be reached. Line height comes with each size,
+    // from their body (1.55) and heading (1.25) rules.
+    fontSize: {
+      xs: ['var(--text-badge)', { lineHeight: 'var(--leading-body)' }],
+      sm: ['var(--text-small)', { lineHeight: 'var(--leading-body)' }],
+      base: ['var(--text-body)', { lineHeight: 'var(--leading-body)' }],
+      md: ['var(--text-h4)', { lineHeight: 'var(--leading-heading)' }],
+      lg: ['var(--text-h3)', { lineHeight: 'var(--leading-heading)' }],
+      xl: ['var(--text-h2)', { lineHeight: 'var(--leading-heading)' }],
+      '2xl': ['var(--text-h1)', { lineHeight: 'var(--leading-heading)' }],
+      '3xl': ['var(--text-display)', { lineHeight: 'var(--leading-heading)' }],
+      '5xl': ['var(--text-display-lg)', { lineHeight: 'var(--leading-heading)' }],
+    },
+
+    // Their two letter-spacings (.lof-badge 0.02em, .lof-table th 0.04em).
+    letterSpacing: {
+      normal: '0',
+      badge: 'var(--tracking-badge)',
+      wide: 'var(--tracking-caps)',
+    },
+
+    lineHeight: {
+      none: '1',
+      heading: 'var(--leading-heading)',
+      body: 'var(--leading-body)',
+      relaxed: 'var(--leading-body)',
+    },
+
+    // REPLACES Tailwind's elevation ramp: their card shadow, and one derived
+    // from their glow token. shadow-sm/md/lg no longer compile.
+    boxShadow: {
+      none: 'none',
+      card: 'var(--nebula-card-shadow)',
+      pop: 'var(--shadow-pop)',
+    },
+
     extend: {
-      boxShadow: {
-        card: 'var(--nebula-card-shadow)',
-        pop: 'var(--shadow-pop)',
-      },
       maxWidth: {
         content: 'var(--width-content)',
       },

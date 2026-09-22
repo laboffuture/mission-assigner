@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
-import { isEmptyWeek, normalizeSlot, type WeekPayload } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { isEmptyWeek, normalizeSlot, type Segment, type WeekPayload } from '@/lib/api/types';
+import { PageNav } from '@/components/PageNav';
 import { PageShell, Card, Muted } from '@/components/ui';
 import { WeekBoard } from '@/components/week/WeekBoard';
 
@@ -16,12 +16,17 @@ export default async function WeekPage() {
   if (!me) redirect('/login');
   if (me.role !== 'student') redirect('/');
 
-  const week = await serverApi.get<WeekPayload>(`/api/week/${me.id}`);
+  // The week, and where the student is in the curriculum (shown on the board;
+  // falls back to the segment placement when there is no position).
+  const [week, segment] = await Promise.all([
+    serverApi.get<WeekPayload>(`/api/week/${me.id}`),
+    serverApi.get<Segment>(`/api/segment/${me.id}`),
+  ]);
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} current="week" />
         {isEmptyWeek(week) ? (
           <Card className="p-6">
             <h1 className="text-xl font-bold">No missions yet</h1>
@@ -29,6 +34,7 @@ export default async function WeekPage() {
           </Card>
         ) : (
           <WeekBoard
+            segment={segment}
             weekStart={week.week_start}
             dailySlots={week.slots.filter((s) => !s.is_weekly).map(normalizeSlot)}
             weeklySlot={

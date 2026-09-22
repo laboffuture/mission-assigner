@@ -58,7 +58,7 @@ export function ReviewView({ review }: { review: AssignmentReview }) {
       </ul>
 
       <Card className={`border-l-4 p-5 ${review.correct ? 'border-l-success' : 'border-l-warning'}`}>
-        <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-text-secondary">
           {review.correct ? 'Why this is the answer' : 'Here’s why'}
         </h2>
         <p className="mt-2 text-lg leading-relaxed">

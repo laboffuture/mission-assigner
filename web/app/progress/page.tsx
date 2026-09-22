@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
 import type { Page, Progress, Segment, SubmissionRow } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell } from '@/components/ui';
 import { Hero } from '@/components/progress/Hero';
 import { PlacementCard } from '@/components/progress/PlacementCard';
@@ -26,13 +26,13 @@ export default async function ProgressPage() {
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} current="progress" />
         <div className="flex flex-col gap-6">
           <Hero progress={progress} />
           <PlacementCard segment={segment} />
           <section>
-            <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-text-muted">Recent missions</h2>
+            <h2 className="mb-2 text-sm font-bold uppercase tracking-wide text-text-secondary">Recent missions</h2>
             <SubmissionLog
               studentId={me.id}
               initialItems={firstPage.items}

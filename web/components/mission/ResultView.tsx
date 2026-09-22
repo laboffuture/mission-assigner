@@ -38,7 +38,9 @@ export function ResultView({
           <span aria-hidden="true">{result.correct ? '✓ ' : '✗ '}</span>
           {result.correct ? 'Correct' : 'Not quite'}
         </Badge>
-        {result.xp.points_earned > 0 && <span className="text-sm text-text-muted">+{result.xp.points_earned} XP</span>}
+        {result.xp.points_earned > 0 && (
+          <span className="text-sm text-text-secondary">+{result.xp.points_earned} XP</span>
+        )}
       </div>
 
       {/* Options recap — mark the correct answer, and the student's choice if
@@ -74,7 +76,7 @@ export function ResultView({
 
       {/* Explanation — the hero. Accent draws the eye, especially when wrong. */}
       <Card className={`border-l-4 p-5 ${result.correct ? 'border-l-success' : 'border-l-warning'}`}>
-        <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-text-secondary">
           {result.correct ? 'Why this is the answer' : 'Here’s why'}
         </h2>
         <p className="mt-2 text-lg leading-relaxed">
@@ -89,7 +91,7 @@ export function ResultView({
             <Link href={`/feedback/${result.assignment_id}`}>
               <Button className="w-full sm:w-auto">Give feedback to continue →</Button>
             </Link>
-            <p className="text-sm text-text-muted">A quick bit of feedback unlocks your next mission.</p>
+            <p className="text-sm text-text-secondary">A quick bit of feedback unlocks your next mission.</p>
           </>
         ) : (
           <Link href="/week">

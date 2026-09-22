@@ -669,12 +669,49 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
       prerequisites = prereqRows.map((p) => ({ course_ref: p.course_ref, completed: Boolean(p.completed) }));
     }
 
+    // Where the student is in the curriculum, when curriculum mode has placed
+    // them: track -> credit -> project -> session. Null for a student who has
+    // no position (legacy selection, or not yet placed), and the screens then
+    // fall back to the segment wording below.
+    const [[pos]] = await pool.query<any[]>(
+      `SELECT t.name AS track_name, c.code AS credit_code, c.name AS credit_name, c.sequence AS credit_sequence,
+              p.name AS project_name, p.sequence AS project_sequence, p.session_count,
+              s2.title AS session_title, s2.sequence AS session_sequence, s2.credit_sequence AS session_credit_sequence,
+              sp.source
+         FROM student_positions sp
+         JOIN tracks t ON t.id = sp.track_id AND t.active = TRUE
+         JOIN sessions s2 ON s2.id = sp.session_id
+         JOIN projects p ON p.id = s2.project_id
+         JOIN credits c ON c.id = p.credit_id
+        WHERE sp.student_id = ?
+        ORDER BY (t.subject = ?) DESC, sp.updated_at DESC
+        LIMIT 1`,
+      [studentId, r.subject]
+    );
+
     res.json({
       student_id: Number(r.student_id),
       age: Number(r.age),
       subject: r.subject,
       current_level: Number(r.current_level),
       placement_status: r.placement_status,
+      position: pos
+        ? {
+            track: pos.track_name,
+            credit: { code: pos.credit_code, name: pos.credit_name, sequence: Number(pos.credit_sequence) },
+            project: {
+              name: pos.project_name,
+              sequence: Number(pos.project_sequence),
+              session_count: Number(pos.session_count),
+            },
+            session: {
+              title: pos.session_title,
+              sequence: Number(pos.session_sequence),
+              credit_sequence: Number(pos.session_credit_sequence),
+            },
+            source: pos.source,
+          }
+        : null,
       segment:
         r.segment_id == null
           ? null

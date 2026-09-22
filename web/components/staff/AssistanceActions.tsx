@@ -27,7 +27,7 @@ export function AssistanceActions({ detail }: { detail: AssistanceDetail }) {
       <div className="rounded border border-border bg-success-muted p-4">
         <div className="flex items-center gap-2">
           <Badge tone="success">✓ Resolved</Badge>
-          <span className="text-sm text-text-muted">{formatDateTime(detail.resolved_at)}</span>
+          <span className="text-sm text-text-secondary">{formatDateTime(detail.resolved_at)}</span>
         </div>
         {detail.resolution_note && <p className="mt-2 text-sm">{detail.resolution_note}</p>}
       </div>
@@ -83,7 +83,7 @@ export function AssistanceActions({ detail }: { detail: AssistanceDetail }) {
           {status === 'acknowledged' ? 'Acknowledged' : 'Open'}
         </Badge>
         {status === 'acknowledged' && detail.acknowledged_at && (
-          <span className="text-xs text-text-muted">since {formatDateTime(detail.acknowledged_at)}</span>
+          <span className="text-xs text-text-secondary">since {formatDateTime(detail.acknowledged_at)}</span>
         )}
       </div>
 
@@ -98,7 +98,7 @@ export function AssistanceActions({ detail }: { detail: AssistanceDetail }) {
 
       <div>
         <label htmlFor="resolve-note" className="text-sm font-semibold">
-          Resolution note <span className="text-danger">*</span>
+          Resolution note <span className="text-on-tint">*</span>
         </label>
         <textarea
           id="resolve-note"
@@ -113,12 +113,12 @@ export function AssistanceActions({ detail }: { detail: AssistanceDetail }) {
           className="mt-1 w-full resize-none rounded border border-border bg-surface px-3 py-2 text-sm"
         />
         {noteError && (
-          <p className="mt-1 text-sm text-danger" role="alert">
+          <p className="mt-1 text-sm text-on-tint" role="alert">
             {noteError}
           </p>
         )}
         {error && (
-          <p className="mt-1 text-sm text-danger" role="alert">
+          <p className="mt-1 text-sm text-on-tint" role="alert">
             {error}
           </p>
         )}

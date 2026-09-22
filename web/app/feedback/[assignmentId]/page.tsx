@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
 import type { FeedbackQuestion, ItemsEnvelope } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell } from '@/components/ui';
 import { FeedbackForm } from '@/components/feedback/FeedbackForm';
 
@@ -23,8 +23,8 @@ export default async function FeedbackPage({ params }: { params: { assignmentId:
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} current="week" />
         <FeedbackForm assignmentId={assignmentId} questions={questions} />
       </PageShell>
     </>

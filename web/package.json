@@ -2,17 +2,21 @@
   "name": "mission-hub-web",
   "version": "1.0.0",
   "private": true,
-  "description": "Mission Hub — student web UI (Next.js App Router, same-origin with the Express API)",
+  "description": "Mission Hub \u2014 student web UI (Next.js App Router, same-origin with the Express API)",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
     "typecheck": "tsc --noEmit",
     "lint": "next lint --max-warnings 0",
-    "check:tokens": "node scripts/check-no-raw-values.mjs",
+    "check:tokens": "node scripts/generate-lms-tokens.mjs --check && node scripts/check-no-raw-values.mjs",
     "e2e": "playwright test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "gen:tokens": "node scripts/generate-lms-tokens.mjs",
+    "predev": "npm run gen:tokens",
+    "prebuild": "npm run gen:tokens",
+    "report:contrast": "node scripts/contrast-audit.mjs"
   },
   "dependencies": {
     "next": "^14.2.35",

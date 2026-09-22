@@ -13,11 +13,11 @@ export function Hero({ progress }: { progress: Progress }) {
       <h1 className="sr-only">Your progress</h1>
       <div className="grid grid-cols-2 gap-4">
         <div className="text-center">
-          <p className="text-5xl font-extrabold text-primary">
+          <p className="text-5xl font-extrabold text-link">
             <span className="sr-only">Level </span>
             {progress.current_level}
           </p>
-          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted" aria-hidden="true">
+          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-secondary" aria-hidden="true">
             Level
           </p>
         </div>
@@ -26,7 +26,7 @@ export function Hero({ progress }: { progress: Progress }) {
             <span aria-hidden="true">{streak > 0 ? `🔥 ${streak}` : '0'}</span>
             <span className="sr-only">{streak} day streak</span>
           </p>
-          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-muted" aria-hidden="true">
+          <p className="mt-1 text-sm font-semibold uppercase tracking-wide text-text-secondary" aria-hidden="true">
             {streak > 0 ? `Day streak` : 'Start your streak'}
           </p>
         </div>
@@ -34,9 +34,9 @@ export function Hero({ progress }: { progress: Progress }) {
 
       <p className="mt-5 flex items-center justify-center gap-2 border-t border-border pt-4">
         <span className="text-2xl font-bold">{progress.total_xp}</span>
-        <span className="text-sm text-text-muted">XP total</span>
+        <span className="text-sm text-text-secondary">XP total</span>
         {progress.longest_streak > 0 && (
-          <span className="ml-3 text-sm text-text-muted">· best streak {progress.longest_streak}</span>
+          <span className="ml-3 text-sm text-text-secondary">· best streak {progress.longest_streak}</span>
         )}
       </p>
     </Card>

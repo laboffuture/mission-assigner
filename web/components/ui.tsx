@@ -12,18 +12,23 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 
 export function PageShell({ children }: { children: ReactNode }) {
   return (
-    <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-content px-4 py-8">
+    // `relative` gives absolutely-positioned descendants — above all the
+    // visually-hidden .sr-only labels — a containing block INSIDE the page.
+    // Without one they resolve against the initial containing block, so a label
+    // inside a horizontally scrolling row (the week board's tiles) is laid out
+    // at the row's full width and stretches the document: the whole page then
+    // scrolled sideways at every viewport (audit #34-#37, #52).
+    <main id="main-content" tabIndex={-1} className="relative mx-auto w-full max-w-content px-4 py-8">
       {children}
     </main>
   );
 }
 
-type Variant = 'primary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'ghost';
 
 const VARIANT: Record<Variant, string> = {
   primary: 'bg-primary text-primary-fg hover:opacity-90',
   ghost: 'bg-surface-muted text-text hover:bg-border',
-  danger: 'bg-danger text-danger-fg hover:opacity-90',
 };
 
 export function Button({
@@ -44,23 +49,38 @@ export function Button({
 
 type Tone = 'neutral' | 'primary' | 'success' | 'danger' | 'warning' | 'locked';
 
+/**
+ * Tone = a 15% tint of the status colour (their .lof-badge pattern) with a
+ * border in the full colour, and the page's own text colour on top. Their own
+ * badges put the status hue ON the tint, which fails AA in at least one theme
+ * for every state (danger 3.85:1 nebula, warning 2.84:1 horizon) — see
+ * docs/lms-contrast-findings.md. The hue still carries the meaning through the
+ * fill and border, and every badge also says what it is in words.
+ */
 const TONE: Record<Tone, string> = {
-  neutral: 'bg-surface-muted text-text-muted',
-  primary: 'bg-primary-muted text-primary',
-  success: 'bg-success-muted text-success',
-  danger: 'bg-danger-muted text-danger',
-  warning: 'bg-warning-muted text-warning',
-  locked: 'bg-surface-muted text-locked',
+  neutral: 'border-border bg-surface-muted text-text-secondary',
+  primary: 'border-primary bg-primary-muted text-on-tint',
+  success: 'border-success bg-success-muted text-on-tint',
+  danger: 'border-danger bg-danger-muted text-on-tint',
+  warning: 'border-warning bg-warning-muted text-on-tint',
+  locked: 'border-border bg-surface-muted text-text-secondary',
 };
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: ReactNode }) {
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${TONE[tone]}`}>
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-badge ${TONE[tone]}`}
+    >
       {children}
     </span>
   );
 }
 
+/**
+ * Secondary copy — quieter than the heading, still meant to be READ, so it uses
+ * their body-text colour (9.04:1 on a card), not --nebula-text-muted, which is
+ * 3.82:1 in nebula and 2.54:1 in horizon.
+ */
 export function Muted({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <p className={`text-sm text-text-muted ${className}`}>{children}</p>;
+  return <p className={`text-sm text-text-secondary ${className}`}>{children}</p>;
 }

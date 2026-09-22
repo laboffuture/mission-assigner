@@ -53,11 +53,11 @@ function LockIcon() {
  */
 function LockedTile({ slot }: { slot: Extract<Slot, { kind: 'locked' }> }) {
   return (
-    <div className="flex h-full w-40 shrink-0 flex-col rounded-lg border border-border bg-surface-muted p-3">
+    <div className="relative flex h-full w-40 shrink-0 flex-col rounded-lg border border-border bg-surface-muted p-3">
       {/* Explicit, first thing a screen reader hears for this tile. */}
       <span className="sr-only">Locked. {slot.day_label}. Unlocks later this week.</span>
       <div className="flex items-center justify-between">
-        <span className="font-semibold text-text-muted">{slot.day_label}</span>
+        <span className="font-semibold text-text-secondary">{slot.day_label}</span>
         <span className="text-locked" title="Locked">
           <LockIcon />
         </span>
@@ -76,11 +76,15 @@ function ActiveTile({ slot }: { slot: Extract<Slot, { kind: 'empty' } | { kind: 
   const title = slot.mission?.title ?? null;
   const cta = state === 'done' ? 'Review' : title ? 'Continue' : 'Start';
   const label = `${slot.day_label}: ${STATE_LABEL[state]}, ${titleCase(slot.mission_type)}, ${titleCase(slot.time_band)}${title ? `. ${title}` : ''}. ${cta}.`;
+  // text-text below: the tile IS a link, so without an explicit colour every
+  // word inside it inherits the LMS base `a` colour (--lof-primary-light),
+  // which is 4.23:1 on a horizon card. The "Continue →" line keeps the link
+  // colour, so the tile still reads as something to click.
   return (
     <Link
       href={`/mission/${slot.slot_id}`}
       aria-label={label}
-      className="flex h-full w-40 shrink-0 flex-col rounded-lg border border-border bg-surface p-3 shadow-card transition hover:border-primary"
+      className="relative flex h-full w-40 shrink-0 flex-col rounded-lg border border-border bg-surface p-3 text-text shadow-card transition hover:border-primary"
     >
       {/* Visual content mirrors the aria-label; hidden from SR to avoid dupes. */}
       <div aria-hidden="true" className="flex h-full flex-col">
@@ -89,8 +93,8 @@ function ActiveTile({ slot }: { slot: Extract<Slot, { kind: 'empty' } | { kind: 
           <StateBadge state={state} />
         </div>
         <MetaChips slot={slot} />
-        {title && <span className="mt-2 line-clamp-2 text-sm text-text-muted">{title}</span>}
-        <span className="mt-auto pt-3 text-xs font-semibold text-primary">{cta} →</span>
+        {title && <span className="mt-2 line-clamp-2 text-sm text-text-secondary">{title}</span>}
+        <span className="mt-auto pt-3 text-xs font-semibold text-link">{cta} →</span>
       </div>
     </Link>
   );

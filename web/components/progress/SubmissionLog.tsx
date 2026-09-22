@@ -25,7 +25,7 @@ function Row({ row }: { row: SubmissionRow }) {
     <li className="flex items-center justify-between gap-3 border-b border-border py-3 last:border-b-0">
       <div className="min-w-0">
         <p className="truncate font-medium">{row.title}</p>
-        <p className="text-xs text-text-muted">
+        <p className="text-xs text-text-secondary">
           {formatDate(row.submitted_at)} · Level {row.difficulty}
         </p>
       </div>
@@ -83,7 +83,7 @@ export function SubmissionLog({
           <Row key={r.assignment_id} row={r} />
         ))}
       </ul>
-      {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+      {error && <p className="mt-3 text-sm text-on-tint">{error}</p>}
       {cursor && (
         <div className="mt-4 text-center">
           <Button variant="ghost" onClick={loadMore} disabled={loading}>

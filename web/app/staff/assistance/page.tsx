@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
 import type { AssistanceListItem, Page } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell, Muted } from '@/components/ui';
 import { AccessDenied } from '@/components/staff/AccessDenied';
 import { AssistanceQueue } from '@/components/staff/AssistanceQueue';
@@ -21,8 +21,8 @@ export default async function AssistancePage() {
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} />
         <div className="mb-4">
           <h1 className="text-xl font-bold">Assistance queue</h1>
           <Muted className="mt-1">Students who stalled and need a hand. Oldest first.</Muted>

@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { getMe } from '@/lib/session';
 import { serverApi } from '@/lib/api/server';
 import { isEmptyWeek, normalizeSlot, type AssignmentReview, type Slot, type WeekPayload } from '@/lib/api/types';
-import { Header } from '@/components/Header';
+import { PageNav } from '@/components/PageNav';
 import { PageShell, Card, Muted, Button } from '@/components/ui';
 import { MissionRunner } from '@/components/mission/MissionRunner';
 import { ReviewView } from '@/components/mission/ReviewView';
@@ -36,10 +36,10 @@ export default async function MissionPage({ params }: { params: { slotId: string
 
   return (
     <>
-      <Header me={me} />
       <PageShell>
+        <PageNav me={me} current="week" />
         <div className="mb-4">
-          <Link href="/week" className="text-sm font-semibold text-primary hover:underline">
+          <Link href="/week" className="text-sm font-semibold text-link hover:underline">
             ← Back to this week
           </Link>
         </div>

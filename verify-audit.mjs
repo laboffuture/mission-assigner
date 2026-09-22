@@ -391,22 +391,6 @@ async function browser() {
 async function studentPage(sid, { theme = 'nebula', width = 1280 } = {}) {
   const { b } = await browser();
   const ctx = await b.newContext({ baseURL: WEB, viewport: { width, height: 900 } });
-  if (theme === 'horizon') {
-    // ?theme=horizon is not implemented (Part B), so apply the attribute the LMS
-    // would set. This tests how the UI RENDERS in Horizon, not theme switching.
-    // Init scripts run before <html> exists, so wait for it rather than assume it.
-    await ctx.addInitScript(() => {
-      const apply = () => {
-        if (!document.documentElement) return false;
-        document.documentElement.setAttribute('data-lof-theme', 'horizon');
-        return true;
-      };
-      if (!apply()) {
-        const mo = new MutationObserver(() => apply() && mo.disconnect());
-        mo.observe(document, { childList: true, subtree: true });
-      }
-    });
-  }
   const page = await ctx.newPage();
   const errors = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
@@ -415,6 +399,10 @@ async function studentPage(sid, { theme = 'nebula', width = 1280 } = {}) {
     const r = await page.request.post('/api/dev/login-as', { data: { studentId: sid } });
     if (!r.ok()) throw new Error(`login-as ${sid} -> ${r.status()}`);
   }
+  // Switch theme the way the LMS will: ?theme= on a real navigation, which the
+  // app stores in a cookie and renders server-side from then on. (This used to
+  // set data-lof-theme from an init script because ?theme= did not exist.)
+  if (theme !== 'nebula') await page.goto(`/login?theme=${theme}`);
   return { ctx, page, errors };
 }
 

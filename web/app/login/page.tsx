@@ -63,7 +63,7 @@ function StaffSignIn() {
           />
         </label>
         {error && (
-          <p className="rounded border border-border bg-danger-muted p-3 text-sm text-danger" role="alert">
+          <p className="rounded border border-border bg-danger-muted p-3 text-sm text-on-tint" role="alert">
             {error}
           </p>
         )}
@@ -124,7 +124,7 @@ export default function LoginPage() {
           </Muted>
 
           {error && (
-            <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-danger">{error}</p>
+            <p className="mt-4 rounded border border-border bg-danger-muted p-3 text-sm text-on-tint">{error}</p>
           )}
 
           <div className="mt-5 flex flex-col gap-2">

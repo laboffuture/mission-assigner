@@ -8,3 +8,4 @@ package-lock.json
 
 # The LMS token file in the web tree must stay byte-identical (see web/.prettierignore).
 web/styles/lof-lms-tokens.css
+web/styles/generated/

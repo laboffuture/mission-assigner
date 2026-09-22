@@ -251,6 +251,19 @@ export interface Progress {
 // ---------------------------------------------------------------------------
 // Segment — GET /api/segment/:studentId
 // ---------------------------------------------------------------------------
+/**
+ * Where a student is in the curriculum: track -> credit -> project -> session.
+ * Null when curriculum mode has not placed them (legacy selection, or a brand
+ * new student) — the screens then show the segment placement instead.
+ */
+export interface CurriculumPosition {
+  track: string;
+  credit: { code: string; name: string; sequence: number };
+  project: { name: string; sequence: number; session_count: number };
+  session: { title: string; sequence: number; credit_sequence: number };
+  source: 'explicit' | 'derived_percent' | 'manual';
+}
+
 export interface Segment {
   student_id: number;
   age: number;
@@ -265,6 +278,7 @@ export interface Segment {
     max_level: number;
     description: string | null;
   } | null;
+  position: CurriculumPosition | null;
   why: string;
   prerequisites: Array<{ course_ref: string; completed: boolean }>;
 }
