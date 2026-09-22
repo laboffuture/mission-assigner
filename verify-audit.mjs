@@ -746,6 +746,11 @@ await runCase(
     // whose first response was lost with no way back to their own result.
     const aid = week.slots[0].assignment_id;
     const gradesBefore = Number((await one(`SELECT COUNT(*) n FROM level_events WHERE assignment_id = ?`, [aid])).n);
+    // The answer this assignment was actually graded on, read from the row —
+    // not an assumption about which letter that happens to be.
+    const storedRow = await one(`SELECT response FROM assignments WHERE id = ?`, [aid]);
+    const gradedAnswer = (typeof storedRow.response === 'string' ? JSON.parse(storedRow.response) : storedRow.response)
+      ?.selected;
     const again = await submit(sid, aid, 'a');
     c.check(
       're-submit returns the stored result',
@@ -758,9 +763,9 @@ await runCase(
       `(${again.json?.already_submitted})`
     );
     c.check(
-      '  ...with the answer that was actually graded, not the resent one',
-      again.json?.selected_option_key != null && again.json.selected_option_key !== 'a',
-      `(selected=${again.json?.selected_option_key})`
+      '  ...with the answer that was actually graded',
+      again.json?.selected_option_key === gradedAnswer,
+      `(returned=${again.json?.selected_option_key}, graded on=${gradedAnswer}, resent 'a')`
     );
     c.check(
       'no second grade',
