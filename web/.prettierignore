@@ -1,0 +1,9 @@
+# The LMS team's token file: must stay byte-identical to what they sent
+# (a replacement file is dropped in as-is when their palette changes).
+styles/lof-lms-tokens.css
+
+node_modules
+.next
+test-results
+playwright-report
+next-env.d.ts

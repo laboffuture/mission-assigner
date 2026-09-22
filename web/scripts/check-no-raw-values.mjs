@@ -74,7 +74,9 @@ for (const d of DIRS) {
 if (violations.length) {
   console.error('FAIL: raw style values found in component files (use token classes instead):\n');
   console.error(violations.join('\n'));
-  console.error(`\n${violations.length} violation(s). Define values in styles/tokens.css and map them in tailwind.config.ts.`);
+  console.error(
+    `\n${violations.length} violation(s). Define values in styles/tokens.css and map them in tailwind.config.ts.`
+  );
   process.exit(1);
 }
 console.log('OK: no raw color/font values in components — token classes only.');

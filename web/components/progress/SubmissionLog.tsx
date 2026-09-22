@@ -29,7 +29,9 @@ function Row({ row }: { row: SubmissionRow }) {
           {formatDate(row.submitted_at)} · Level {row.difficulty}
         </p>
       </div>
-      <Badge tone={passed(row.score_band) ? 'success' : 'danger'}>{passed(row.score_band) ? 'Passed' : 'Not passed'}</Badge>
+      <Badge tone={passed(row.score_band) ? 'success' : 'danger'}>
+        {passed(row.score_band) ? 'Passed' : 'Not passed'}
+      </Badge>
     </li>
   );
 }

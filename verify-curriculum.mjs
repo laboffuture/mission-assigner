@@ -595,6 +595,17 @@ try {
     const [ananya] = await q(`SELECT id FROM students WHERE display_name = 'Ananya Rao'`);
     const sid = Number(ananya.id);
     const headers = { 'X-User-Id': String(sid) };
+    // "From the CURRENT session" only holds with revision mixing off. Pin it on
+    // the server: with the 20% default this check used to fail one run in five,
+    // depending on whatever mix an earlier run had left the server at. Mixing
+    // itself is covered by [D4] and audit case 21.
+    const curriculumConfig = (body) =>
+      fetch(`${BASE}/api/test/curriculum-config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    await curriculumConfig({ revisionMixPercent: 0 });
     const wk = await (await fetch(`${BASE}/api/week/${sid}`, { headers })).json();
     const slot1 = wk.slots.find((s) => s.slot_index === 1);
     const opened = await (await fetch(`${BASE}/api/slot/${slot1.slot_id}/open`, { method: 'POST', headers })).json();
@@ -608,6 +619,7 @@ try {
       s?.code === 'C1' && s?.cs === 4,
       `(${label(s)})`
     );
+    await curriculumConfig({ revisionMixPercent: null }); // back to the configured default
     await useSelectionMode(null);
   } else {
     check('server test hooks enabled (start with ENABLE_TEST_HOOKS=1)', false);

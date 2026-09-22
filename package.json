@@ -44,7 +44,8 @@
     "verify:curriculum-pipeline": "node verify-curriculum-pipeline.mjs",
     "verify:all": "node run-all.mjs",
     "verify:audit": "tsx verify-audit.mjs",
-    "verify:fail-closed": "tsx verify-fail-closed.mjs"
+    "verify:fail-closed": "tsx verify-fail-closed.mjs",
+    "check:tokens": "npm --prefix web run check:tokens"
   },
   "dependencies": {
     "@sentry/node": "^10.73.0",

@@ -37,7 +37,10 @@ function FailedMission({ m }: { m: AssistanceFailedMission }) {
               ? 'border-danger bg-danger-muted'
               : 'border-border bg-surface';
           return (
-            <li key={o.option_key} className={`flex items-center justify-between gap-3 rounded border px-3 py-1.5 text-sm ${tone}`}>
+            <li
+              key={o.option_key}
+              className={`flex items-center justify-between gap-3 rounded border px-3 py-1.5 text-sm ${tone}`}
+            >
               <span>
                 <span aria-hidden="true" className="mr-1 font-bold">
                   {isCorrect ? '✓' : isChosen ? '✗' : ' '}
@@ -106,8 +109,7 @@ export default async function AssistanceDetailPage({ params }: { params: { id: s
                 <h1 className="text-xl font-bold">{detail.student_name}</h1>
                 <Muted className="mt-1">
                   Level {detail.current_level}
-                  {detail.segment_name ? ` · ${detail.segment_name}` : ''} · stalled at level{' '}
-                  {detail.level_at_trigger}
+                  {detail.segment_name ? ` · ${detail.segment_name}` : ''} · stalled at level {detail.level_at_trigger}
                 </Muted>
               </div>
               <Badge tone="warning">Waiting {formatWaiting(detail.waiting_seconds)}</Badge>

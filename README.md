@@ -26,11 +26,23 @@ ORM) · Express 4 · tsx (no build step) · one static HTML file (vanilla JS).
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push and pull request against a MySQL 8
-service container: `npm ci`, `typecheck`, `lint`, `format:check`, `db:migrate`,
-then **all** suites via `npm run verify:all` (Node harnesses + the Stage 2
-pytest). The build fails if any step fails. ESLint (flat config,
-`typescript-eslint`) lints `src/**/*.ts`; Prettier enforces formatting.
+`.github/workflows/ci.yml` runs on every push and pull request as **four
+independent jobs**, so each part reports its own result and one failure never
+hides another. Every job fails on any failure — nothing is advisory.
+
+| Job | Covers |
+|---|---|
+| `api` | root tree: `typecheck`, `lint`, `format:check`, `check:tokens`, `db:migrate`, then **all** suites via `npm run verify:all` (Node harnesses + Stage 2 pytest) against a MySQL 8 service container |
+| `web-static` | web tree: `typecheck`, `lint` (`next lint --max-warnings 0`), `format:check`, `check:tokens`, `next build` |
+| `e2e` | the full Playwright suite — every student journey across ids of every length, and the axe accessibility specs. `npx playwright install` runs on **every** run: after a machine move the pinned browser was missing and the suite was silently unrunnable |
+| `audit` | the 62-case audit harness (`npm run verify:audit`); cases 43/44 stop and restart the MySQL service container |
+
+`check:tokens` lives in `web/` because it scans the web components; the root
+`npm run check:tokens` delegates to it so every gate can be run from the root.
+ESLint lints `src/**/*.ts` (flat config, `typescript-eslint`) and the web tree
+(`next/core-web-vitals`). Prettier enforces formatting in both trees;
+`web/styles/lof-lms-tokens.css` is excluded because it is the LMS team's file
+and must stay byte-identical to what they sent.
 
 ## Setup
 

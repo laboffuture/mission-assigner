@@ -20,6 +20,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { spawn, spawnSync, execSync } from 'node:child_process';
+import { WIN, listenerPid, killTree, processAlive, TREE_OPTS } from './test-support/proc.mjs';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -37,6 +38,9 @@ const DBPASS = process.env.DB_PASS ?? 'devpass';
 const MYSQL_HOME =
   process.env.MYSQL_HOME ?? join(process.env.LOCALAPPDATA ?? 'C:/Users/Default/AppData/Local', 'mission-mysql');
 const MYSQL_BIN = join(MYSQL_HOME, 'mysql-8.4.11-winx64', 'bin');
+// The mysql client for case 45's restore: the portable install on Windows,
+// `mysql` on PATH elsewhere (CI), or MYSQL_CLIENT when set.
+const MYSQL_CLIENT = process.env.MYSQL_CLIENT ?? (WIN ? join(MYSQL_BIN, 'mysql.exe') : 'mysql');
 const VENV_PY = [join(ROOT, 'pipeline/.venv/Scripts/python.exe'), join(ROOT, 'pipeline/.venv/bin/python')].find(
   existsSync
 );
@@ -279,12 +283,8 @@ async function completeSlot(sid, slotId, correct, { fb = true } = {}) {
 }
 
 // --------------------------------------------------- process control -------
-function listenerPid(port) {
-  const out = execSync('netstat -ano', { encoding: 'utf8' });
-  const line = out.split(/\r?\n/).find((l) => new RegExp(`[:.]${port}\\s`).test(l) && /LISTENING/.test(l));
-  return line ? Number(line.trim().split(/\s+/).pop()) : null;
-}
-const killTree = (pid) => spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { encoding: 'utf8' });
+// listenerPid / killTree / processAlive come from test-support/proc.mjs, which
+// works on Windows (netstat/taskkill) and POSIX (lsof/process groups) alike.
 
 /** Start a real API instance with an env override. Always started fresh; killed by tree. */
 async function spawnApi(port, overrides = {}) {
@@ -297,6 +297,7 @@ async function spawnApi(port, overrides = {}) {
     cwd: ROOT,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...TREE_OPTS,
   });
   let log = '';
   child.stdout.on('data', (d) => (log += d));
@@ -338,23 +339,36 @@ async function mysqlUp() {
  * then makes the new one abort ("Data Dictionary initialization failed").
  */
 async function stopMysql() {
-  const pid = listenerPid(3306);
-  const r = spawnSync(join(MYSQL_BIN, 'mysqladmin.exe'), ['-uroot', `-p${DBPASS}`, '--host=127.0.0.1', 'shutdown'], {
-    encoding: 'utf8',
-  });
-  for (let i = 0; pid && i < 120; i++) {
-    const t = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { encoding: 'utf8' });
-    if (!new RegExp(`\\b${pid}\\b`).test(t.stdout ?? '')) break;
-    await sleep(250);
+  // CI: AUDIT_MYSQL_STOP_CMD (e.g. `docker stop <service container>`), which only
+  // returns once the server has exited.
+  if (process.env.AUDIT_MYSQL_STOP_CMD) {
+    const r = spawnSync(process.env.AUDIT_MYSQL_STOP_CMD, { shell: true, encoding: 'utf8' });
+    for (let i = 0; i < 120 && (await mysqlUp()); i++) await sleep(250);
+    return r;
   }
+  const pid = listenerPid(3306);
+  const r = spawnSync(
+    join(MYSQL_BIN, WIN ? 'mysqladmin.exe' : 'mysqladmin'),
+    ['-uroot', `-p${DBPASS}`, '--host=127.0.0.1', 'shutdown'],
+    { encoding: 'utf8' }
+  );
+  for (let i = 0; pid && i < 120 && processAlive(pid); i++) await sleep(250);
   return r;
 }
 async function startMysql() {
-  const child = spawn(join(MYSQL_BIN, 'mysqld.exe'), [`--defaults-file=${join(MYSQL_HOME, 'my.ini')}`], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
+  if (process.env.AUDIT_MYSQL_START_CMD) {
+    spawnSync(process.env.AUDIT_MYSQL_START_CMD, { shell: true, encoding: 'utf8' });
+  } else {
+    const child = spawn(
+      join(MYSQL_BIN, WIN ? 'mysqld.exe' : 'mysqld'),
+      [`--defaults-file=${join(MYSQL_HOME, 'my.ini')}`],
+      {
+        detached: true,
+        stdio: 'ignore',
+      }
+    );
+    child.unref();
+  }
   for (let i = 0; i < 120; i++) {
     if (await mysqlUp()) return true;
     await sleep(500);
@@ -2029,7 +2043,7 @@ await runCase(
         `DROP DATABASE IF EXISTS \`${scratch}\`; CREATE DATABASE \`${scratch}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`
       );
       const sql = gunzipSync(readFileSync(join(dir, name)));
-      const rest = spawnSync(join(MYSQL_BIN, 'mysql.exe'), ['-uroot', `-p${DBPASS}`, '--host=127.0.0.1', scratch], {
+      const rest = spawnSync(MYSQL_CLIENT, ['-uroot', `-p${DBPASS}`, '--host=127.0.0.1', scratch], {
         input: sql,
         encoding: 'utf8',
       });

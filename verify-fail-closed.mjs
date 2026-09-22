@@ -13,6 +13,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { spawn, spawnSync } from 'node:child_process';
+import { killTree, TREE_OPTS } from './test-support/proc.mjs';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -82,6 +83,7 @@ async function boot(port, overrides) {
     cwd: ROOT,
     env: childEnv({ PORT: String(port), ...overrides }),
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...TREE_OPTS,
   });
   let out = '';
   child.stdout.on('data', (d) => (out += d));
@@ -95,7 +97,7 @@ async function boot(port, overrides) {
         refused: false,
         base,
         out: () => out,
-        stop: () => spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F']),
+        stop: () => killTree(child.pid),
       };
     } catch {
       /* not up */

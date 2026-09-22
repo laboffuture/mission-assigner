@@ -3,12 +3,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clientApi } from '@/lib/api/client';
 import { ApiError } from '@/lib/api/error';
-import {
-  isOpenSlotEmpty,
-  type OpenSlotPayload,
-  type OpenSlotResponse,
-  type SubmitResponse,
-} from '@/lib/api/types';
+import { isOpenSlotEmpty, type OpenSlotPayload, type OpenSlotResponse, type SubmitResponse } from '@/lib/api/types';
 import { Badge, Button, Card, Muted } from '@/components/ui';
 import { ErrorState } from '@/components/states';
 import { ResultView } from './ResultView';
@@ -74,7 +69,9 @@ export function MissionRunner({ slotId }: { slotId: number }) {
       // a 401 is intercepted in the client and redirects to /login.
       submittingRef.current = false;
       setSubmitError(
-        e instanceof ApiError ? `${e.message}. Your answer is safe — try again.` : 'Network problem — your answer is safe, try again.'
+        e instanceof ApiError
+          ? `${e.message}. Your answer is safe — try again.`
+          : 'Network problem — your answer is safe, try again.'
       );
       setPhase({ name: 'answering', mission });
     }

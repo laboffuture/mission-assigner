@@ -117,7 +117,9 @@ export function FeedbackForm({ assignmentId, questions }: { assignmentId: number
     submittingRef.current = true;
     setPhase('submitting');
     const payload = {
-      answers: ordered.filter(isAnswered).map((q) => ({ question_key: q.question_key, value: answers[q.question_key] })),
+      answers: ordered
+        .filter(isAnswered)
+        .map((q) => ({ question_key: q.question_key, value: answers[q.question_key] })),
     };
     try {
       const res = await clientApi.post<FeedbackSubmitResponse>(`/api/feedback/${assignmentId}`, payload);

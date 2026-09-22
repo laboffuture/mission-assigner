@@ -28,7 +28,11 @@ function StaffSignIn() {
       const me = await clientApi.post<Me>('/api/login', { username, password });
       window.location.href = homeFor(me.role);
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 429 ? 'Too many attempts — try again later.' : 'Invalid username or password.');
+      setError(
+        err instanceof ApiError && err.status === 429
+          ? 'Too many attempts — try again later.'
+          : 'Invalid username or password.'
+      );
       setBusy(false);
     }
   }
@@ -58,7 +62,11 @@ function StaffSignIn() {
             className="mt-1 w-full rounded border border-border bg-surface px-3 py-2 text-sm"
           />
         </label>
-        {error && <p className="rounded border border-border bg-danger-muted p-3 text-sm text-danger" role="alert">{error}</p>}
+        {error && (
+          <p className="rounded border border-border bg-danger-muted p-3 text-sm text-danger" role="alert">
+            {error}
+          </p>
+        )}
         <div>
           <Button type="submit" disabled={busy || !username || !password}>
             {busy ? 'Signing in…' : 'Sign in'}
@@ -111,8 +119,8 @@ export default function LoginPage() {
         <Card className="p-6">
           <h1 className="text-xl font-bold">Mission Hub</h1>
           <Muted className="mt-1">
-            Student dev sign-in. In production students arrive automatically via Moodle SSO; here,
-            pick a student to preview their experience.
+            Student dev sign-in. In production students arrive automatically via Moodle SSO; here, pick a student to
+            preview their experience.
           </Muted>
 
           {error && (

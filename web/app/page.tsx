@@ -21,8 +21,8 @@ export default async function Home() {
         <Card className="p-6">
           <h1 className="text-xl font-bold">Signed in as {me.display_name ?? `user ${me.id}`}</h1>
           <Muted className="mt-2">
-            This is the student surface. Your role is <strong>{me.role}</strong> — the staff and
-            instructor tools live elsewhere.
+            This is the student surface. Your role is <strong>{me.role}</strong> — the staff and instructor tools live
+            elsewhere.
           </Muted>
         </Card>
       </PageShell>

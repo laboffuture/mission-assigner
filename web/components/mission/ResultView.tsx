@@ -44,7 +44,10 @@ export function ResultView({
               ? 'border-danger bg-danger-muted'
               : 'border-border bg-surface';
           return (
-            <li key={o.option_key} className={`flex items-center justify-between gap-3 rounded border px-4 py-2 ${tone}`}>
+            <li
+              key={o.option_key}
+              className={`flex items-center justify-between gap-3 rounded border px-4 py-2 ${tone}`}
+            >
               <span>
                 <span aria-hidden="true" className="mr-1 font-bold">
                   {isCorrect ? '✓' : isChosen ? '✗' : ' '}
@@ -61,9 +64,7 @@ export function ResultView({
       </ul>
 
       {/* Explanation — the hero. Accent draws the eye, especially when wrong. */}
-      <Card
-        className={`border-l-4 p-5 ${result.correct ? 'border-l-success' : 'border-l-warning'}`}
-      >
+      <Card className={`border-l-4 p-5 ${result.correct ? 'border-l-success' : 'border-l-warning'}`}>
         <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">
           {result.correct ? 'Why this is the answer' : 'Here’s why'}
         </h2>

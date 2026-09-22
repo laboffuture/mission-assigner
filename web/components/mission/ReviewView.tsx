@@ -38,7 +38,10 @@ export function ReviewView({ review }: { review: AssignmentReview }) {
               ? 'border-danger bg-danger-muted'
               : 'border-border bg-surface';
           return (
-            <li key={o.option_key} className={`flex items-center justify-between gap-3 rounded border px-4 py-2 ${tone}`}>
+            <li
+              key={o.option_key}
+              className={`flex items-center justify-between gap-3 rounded border px-4 py-2 ${tone}`}
+            >
               <span>
                 <span aria-hidden="true" className="mr-1 font-bold">
                   {isCorrect ? '✓' : isChosen ? '✗' : ' '}

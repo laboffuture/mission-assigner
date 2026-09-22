@@ -31,7 +31,9 @@ export default async function WeekPage() {
           <WeekBoard
             weekStart={week.week_start}
             dailySlots={week.slots.filter((s) => !s.is_weekly).map(normalizeSlot)}
-            weeklySlot={week.slots.find((s) => s.is_weekly) ? normalizeSlot(week.slots.find((s) => s.is_weekly)!) : null}
+            weeklySlot={
+              week.slots.find((s) => s.is_weekly) ? normalizeSlot(week.slots.find((s) => s.is_weekly)!) : null
+            }
           />
         )}
       </PageShell>

@@ -7,9 +7,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
  */
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`rounded-lg border border-border bg-surface shadow-card ${className}`}>{children}</div>
-  );
+  return <div className={`rounded-lg border border-border bg-surface shadow-card ${className}`}>{children}</div>;
 }
 
 export function PageShell({ children }: { children: ReactNode }) {
