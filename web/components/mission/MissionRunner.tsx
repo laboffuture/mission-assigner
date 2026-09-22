@@ -65,7 +65,10 @@ export function MissionRunner({ slotId }: { slotId: number }) {
         { assignmentId: mission.assignment_id, selected },
         { 'Idempotency-Key': idemRef.current.key }
       );
-      setPhase({ name: 'result', mission, selectedKey: selected, result });
+      // If the server answers with an EARLIER graded result (the first submit
+      // landed but its response was lost), show the answer that was actually
+      // graded — not the one just chosen.
+      setPhase({ name: 'result', mission, selectedKey: result.selected_option_key ?? selected, result });
     } catch (e) {
       // Keep the mission and the chosen answer so the student can simply retry —
       // the reused key makes that safe. Only genuine (non-401) failures land here;

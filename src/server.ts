@@ -8,6 +8,7 @@ import { logger, getTestLogs, newRequestId } from './logger.js';
 import { initSentry, captureException } from './sentry.js';
 import { selectMission } from './selection.js';
 import { submitAndGrade, SubmitRejection } from './grading.js';
+import { loadGradedResult } from './gradedResult.js';
 import { createHash } from 'node:crypto';
 import { fillSlot } from './slotFiller.js';
 import { unlockNext } from './slotUnlock.js';
@@ -493,7 +494,7 @@ app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: su
   const idemKey = req.header('idempotency-key');
   try {
     // Ownership enforced in SQL: no row unless this assignment is the caller's.
-    const [own] = await pool.query<any[]>(`SELECT 1 FROM assignments WHERE id = ? AND student_id = ?`, [
+    const [own] = await pool.query<any[]>(`SELECT status FROM assignments WHERE id = ? AND student_id = ?`, [
       assignmentId,
       req.auth!.userId,
     ]);
@@ -501,11 +502,61 @@ app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: su
       return sendError(req, res, 403, 'forbidden', 'not your assignment');
     }
 
+    // A key already used for THIS assignment answers the request by itself —
+    // checked before anything else so a reused key with a different body is
+    // still refused (and never silently answered with the first result).
+    const requestHash = submitRequestHash({ assignmentId, selected });
+    if (idemKey) {
+      const [[prior]] = await pool.query<any[]>(
+        `SELECT request_hash, response FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`,
+        [idemKey, assignmentId]
+      );
+      if (prior) {
+        // NULL: a key stored before request hashes existed — replay as before.
+        if (prior.request_hash != null && prior.request_hash !== requestHash) {
+          rlog(req).warn({ assignmentId }, 'idempotency key reused with a different body');
+          return sendError(
+            req,
+            res,
+            422,
+            'idempotency_key_reused',
+            'this Idempotency-Key was already used with a different request body; use a new key for a new request'
+          );
+        }
+        const stored = prior.response != null ? prior.response : await waitForIdempotentResult(idemKey, assignmentId);
+        if (stored) {
+          const body = typeof stored === 'string' ? JSON.parse(stored) : stored;
+          return res.json({ ...body, idempotent_replay: true });
+        }
+        return sendError(req, res, 409, 'conflict', 'a request with this Idempotency-Key is still processing');
+      }
+    }
+
+    // Already graded — the first submit landed even if its response never
+    // reached the student. Show them THAT result (with the answer they actually
+    // submitted), not an error about an assignment that "is not open". Nothing
+    // is re-graded and no slot is unlocked again.
+    if (own[0].status === 'graded') {
+      const graded = await loadGradedResult(assignmentId);
+      if (graded) {
+        rlog(req).info({ assignmentId }, 'submit for an already graded assignment — returning the stored result');
+        if (idemKey) {
+          await pool
+            .query(
+              `INSERT INTO idempotency_keys (idempotency_key, assignment_id, request_hash, response) VALUES (?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE response = COALESCE(response, VALUES(response))`,
+              [idemKey, assignmentId, requestHash, JSON.stringify(graded)]
+            )
+            .catch(() => {});
+        }
+        return res.json(graded);
+      }
+    }
+
     if (idemKey) {
       // Claim the key, recording which request it belongs to. The
       // UNIQUE(idempotency_key, assignment_id) makes exactly one concurrent
       // request the "owner"; the rest wait for its result.
-      const requestHash = submitRequestHash({ assignmentId, selected });
       try {
         await pool.query(
           `INSERT INTO idempotency_keys (idempotency_key, assignment_id, request_hash) VALUES (?, ?, ?)`,

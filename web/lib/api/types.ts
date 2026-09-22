@@ -178,6 +178,11 @@ export interface SubmitResponse {
   };
   unlock: UnlockResult;
   feedback: { required: boolean; status: string; gates_unlock: boolean };
+  /** True when this assignment was already graded by an earlier submit whose
+   *  response never reached the student; the result is that earlier one. */
+  already_submitted?: boolean;
+  /** With `already_submitted`: the option the student submitted the first time. */
+  selected_option_key?: string;
   idempotent_replay?: boolean;
 }
 

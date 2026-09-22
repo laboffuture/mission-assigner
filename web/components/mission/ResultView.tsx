@@ -22,6 +22,15 @@ export function ResultView({
 
   return (
     <div className="flex flex-col gap-5">
+      {/* This result came from an earlier submit that was graded but never got
+          back to the student. Say so plainly, so the verdict below is not read
+          as the answer they just chose. */}
+      {result.already_submitted && (
+        <p role="status" className="rounded-lg border border-border bg-surface-muted p-3 text-sm text-text">
+          You had already submitted this mission, so this is your submitted answer and result.
+        </p>
+      )}
+
       {/* Compact verdict — understated, but announced and not colour-only. The
           leading symbol (✓ / ✗) plus the word carry the result without colour. */}
       <div className="flex items-center gap-3" role="status">

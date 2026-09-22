@@ -261,6 +261,84 @@ console.log("\n[4] `selected` must be one of the mission's option keys");
   );
 }
 
+// ----------------------------------------------------------------------- [3b]
+console.log('\n[3b] A submit whose response was lost: the student sees their ORIGINAL result');
+{
+  // The first submit is graded but its response never arrives. The student
+  // changes their answer and submits again, so the client sends a NEW key.
+  const sid = await newStudent('Lost Response');
+  const aid = await openSlot1(sid);
+  const k = await keysOf(aid);
+  const openSlots = async () =>
+    Number(
+      (
+        await db.query(
+          `SELECT COUNT(*) n FROM week_slots ws JOIN student_weeks sw ON sw.id = ws.student_week_id
+            WHERE sw.student_id = ? AND ws.status = 'open'`,
+          [sid]
+        )
+      )[0][0].n
+    );
+  const first = await call('POST', '/api/submit', {
+    as: sid,
+    headers: { 'Idempotency-Key': 'lost-1' },
+    body: { assignmentId: aid, selected: k.correct },
+  });
+  check('first submit graded (its response never reached the student)', first.status === 200, `(got ${first.status})`);
+  const slotsAfterFirst = await openSlots();
+
+  const retry = await call('POST', '/api/submit', {
+    as: sid,
+    headers: { 'Idempotency-Key': 'lost-2' },
+    body: { assignmentId: aid, selected: k.wrong },
+  });
+  check(
+    'a new key with a different answer -> 200, not an error',
+    retry.status === 200,
+    `(got ${retry.status} ${retry.text.slice(0, 160)})`
+  );
+  check('  ...marked already_submitted', retry.json?.already_submitted === true, `(${retry.json?.already_submitted})`);
+  check(
+    '  ...carries the answer they actually submitted, not the new one',
+    retry.json?.selected_option_key === k.correct,
+    `(got ${retry.json?.selected_option_key}, submitted ${k.correct}, resent ${k.wrong})`
+  );
+  check(
+    '  ...and the original verdict',
+    retry.json?.correct === first.json?.correct && retry.json?.score_band === first.json?.score_band,
+    `(${retry.json?.correct}/${retry.json?.score_band})`
+  );
+  const [[{ graded }]] = await db.query(
+    `SELECT COUNT(*) graded FROM attempt_logs WHERE assignment_id = ? AND event = 'graded'`,
+    [aid]
+  );
+  check('graded exactly once', Number(graded) === 1, `(graded logs=${graded})`);
+  const [[{ xp }]] = await db.query(`SELECT COUNT(*) xp FROM xp_events WHERE assignment_id = ?`, [aid]);
+  check('no extra XP awarded', Number(xp) <= 3, `(xp events=${xp})`);
+  check(
+    'no further slot unlocked by the replay',
+    (await openSlots()) === slotsAfterFirst,
+    `(${slotsAfterFirst} -> ${await openSlots()})`
+  );
+  // The already-graded path must not weaken the key rule (audit case 25).
+  const reused = await call('POST', '/api/submit', {
+    as: sid,
+    headers: { 'Idempotency-Key': 'lost-1' },
+    body: { assignmentId: aid, selected: k.wrong },
+  });
+  check('the ORIGINAL key with a different body is still 422', reused.status === 422, `(got ${reused.status})`);
+  const same = await call('POST', '/api/submit', {
+    as: sid,
+    headers: { 'Idempotency-Key': 'lost-1' },
+    body: { assignmentId: aid, selected: k.correct },
+  });
+  check(
+    'the original key with the same body still replays',
+    same.status === 200 && same.json?.idempotent_replay === true,
+    `(got ${same.status})`
+  );
+}
+
 // ------------------------------------------------------------------------ [5]
 console.log('\n[5] The /quality page is gated server-side');
 {
@@ -305,7 +383,10 @@ console.log('\n[6] Expected client errors are logged below ERROR; real errors st
   const sid = await newStudent('Log Levels');
   const aid = await openSlot1(sid);
   const k = await keysOf(aid);
-  await call('POST', '/api/submit', { as: sid, body: { assignmentId: aid, selected: k.correct } });
+  // An assignment that is neither open nor graded — the state a submit races
+  // into when another request is grading it. (A GRADED assignment is no longer
+  // an error at all: it returns the stored result, see [3b].)
+  await db.query(`UPDATE assignments SET status = 'submitted' WHERE id = ?`, [aid]);
   cases.push([
     'submitting an assignment that is not open',
     () => call('POST', '/api/submit', { as: sid, body: { assignmentId: aid, selected: k.correct } }),
