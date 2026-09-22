@@ -328,15 +328,36 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run lint` / `lint:fix` | ESLint (TypeScript) |
 | `npm run format` / `format:check` | Prettier |
-| `npm run backup` / `restore` / `backup:verify` | database backup, restore, and tested-restore |
+| `npm run backup` / `restore` / `backup:verify` | database backup, restore, and tested-restore (see **Backups** below) |
 | `npm run verify` | Stage 1 acceptance harness |
 | `npm run verify:stage3` | Stage 3 acceptance harness |
 | `npm run verify:stage5` | Stage 5 acceptance harness |
 | `npm run verify:auth` | auth acceptance harness (role + ownership) |
 | `npm run verify:logging` | logging + error-shape harness |
 | `npm run verify:validation` | input-validation harness |
-| `npm run verify:migrations` | migrations harness (fresh == current, idempotent, reversible) |
+| `npm run verify:migrations` | migrations harness (fresh == current, idempotent, reversible — every down also run on a seeded database) |
+| `npm run verify:backups` | backup harness (failed dump leaves no file, restore refuses bad backups, backup:verify end to end) |
 | `npm run verify:all` | run **all** suites in one pass |
+
+### Backups
+
+`scripts/backup.sh`, `restore.sh` and `backup-verify.sh` talk to MySQL directly
+(`DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASS`, from the environment or `.env`) with the
+`mysql`/`mysqldump` clients — **no Docker**. Clients come from `MYSQL`/`MYSQLDUMP`
+if set, else `mysql` next to `MYSQLDUMP`, else `PATH`. Set `MYSQL_CONTAINER` only if
+you want them run inside a container instead.
+
+- **A failed backup leaves no file.** The dump goes to a hidden `.partial` file and
+  is renamed into place only after it verifies: non-empty, valid gzip, at least
+  one `CREATE TABLE`, and mysqldump's `-- Dump completed` trailer. Any failure
+  removes the partial. A `*.sql.gz` in `backups/` is a backup that verified.
+- **restore.sh verifies the backup before it drops the target**; an invalid file
+  is refused and the target is untouched.
+- **backup:verify** drops its scratch databases and stops its temp server on every
+  exit path (an `EXIT`/`INT`/`TERM` trap), and fails if it cannot.
+- **Rolling back migration 009** refuses while curriculum revision assignments
+  exist (the older schema allows one assignment per student and mission).
+  Nothing changes; back up, decide, remove those rows, re-run.
 
 > **Feedback gating is injectable per test.** `FEEDBACK_GATES_UNLOCK` is read
 > through `src/config.ts::feedbackGatesUnlock()` (never at import time) and backed

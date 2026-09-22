@@ -51,7 +51,7 @@ jobs:
       - name: Discover MySQL container and load timezone tables
         run: |
           CID=$(docker ps -q --filter ancestor=mysql:8 | head -1)
-          echo "MYSQL_CONTAINER=$CID" >> "$GITHUB_ENV"
+          echo "MYSQL_CID=$CID" >> "$GITHUB_ENV"  # for docker stop/start only; the tooling itself uses the host mysql clients
           # Named-zone support (Asia/Kolkata) for the streak/timezone suite.
           docker exec "$CID" sh -c "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
 
@@ -240,7 +240,7 @@ jobs:
       - name: Discover MySQL container and load timezone tables
         run: |
           CID=$(docker ps -q --filter ancestor=mysql:8 | head -1)
-          echo "MYSQL_CONTAINER=$CID" >> "$GITHUB_ENV"
+          echo "MYSQL_CID=$CID" >> "$GITHUB_ENV"  # for docker stop/start only; the tooling itself uses the host mysql clients
           docker exec "$CID" sh -c "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
 
       - name: Set up Python (pipeline cases)
@@ -281,8 +281,8 @@ jobs:
       # Cases 43/44 stop and restart MySQL; here that is the service container.
       - name: Audit harness (62 cases)
         env:
-          AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CONTAINER }}
-          AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CONTAINER }}
+          AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CID }}
+          AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
           MYSQL_CLIENT: mysql
         run: npm run verify:audit
 

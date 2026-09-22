@@ -4,6 +4,12 @@
 # to keep unless that is your intent.
 #
 #   bash scripts/restore.sh <backup-file.sql.gz> [target_db=mission_demo_restore]
+#
+# The backup is VERIFIED BEFORE the target is dropped: an empty, truncated or
+# corrupt file is refused and the target is left exactly as it was. Restoring an
+# invalid backup used to mean dropping a database and replacing it with nothing.
+#
+# No Docker needed: talks to DB_HOST/DB_PORT directly (see scripts/lib/db.sh).
 set -euo pipefail
 
 # Refuse under NODE_ENV=production unless the explicit override flag is given
@@ -23,20 +29,20 @@ fi
 
 FILE="${1:?usage: restore.sh <backup-file.sql.gz> [target_db]}"
 TARGET="${2:-mission_demo_restore}"
-CONTAINER="${MYSQL_CONTAINER:-mission-mysql}"
-DB_USER="${DB_USER:-root}"
-DB_PASS="${DB_PASS:-devpass}"
 
-if [ ! -s "$FILE" ]; then
-  echo "restore.sh: backup file not found or empty: $FILE" >&2
+# shellcheck source=lib/db.sh
+source "$(dirname "$0")/lib/db.sh"
+trap db_cleanup_credentials EXIT
+
+if ! backup_is_valid "$FILE"; then
+  echo "restore.sh: refusing to restore — \`$TARGET\` has NOT been touched" >&2
   exit 1
 fi
 
 echo "restore.sh: recreating database \`$TARGET\`"
-docker exec "$CONTAINER" mysql -u"${DB_USER}" -p"${DB_PASS}" -e \
-  "DROP DATABASE IF EXISTS \`${TARGET}\`; CREATE DATABASE \`${TARGET}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+db_query "DROP DATABASE IF EXISTS \`${TARGET}\`; CREATE DATABASE \`${TARGET}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
 echo "restore.sh: loading $FILE -> \`$TARGET\`"
-gunzip -c "$FILE" | docker exec -i "$CONTAINER" mysql -u"${DB_USER}" -p"${DB_PASS}" "${TARGET}"
+gunzip -c "$FILE" | db_mysql "${TARGET}"
 
 echo "restore.sh: restored $FILE into \`$TARGET\`"

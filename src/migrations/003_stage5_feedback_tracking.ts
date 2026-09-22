@@ -73,6 +73,11 @@ export async function up(pool: Pool): Promise<void> {
 }
 
 export async function down(pool: Pool): Promise<void> {
+  // The 'feedback' rules belong to this migration: remove them before shrinking
+  // the ENUM, or MySQL refuses the MODIFY on any populated database ("Data
+  // truncated for column 'event_type'" — audit A2). xp_events.event_type is a
+  // VARCHAR, so XP already awarded for feedback is kept as history.
+  await pool.query(`DELETE FROM xp_rules WHERE event_type = 'feedback'`);
   await pool.query(
     `ALTER TABLE xp_rules
        MODIFY COLUMN event_type

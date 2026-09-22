@@ -122,8 +122,23 @@ export async function up(pool: Pool): Promise<void> {
 }
 
 export async function down(pool: Pool): Promise<void> {
-  await pool.query(`ALTER TABLE selection_log DROP COLUMN chosen_session_id, DROP COLUMN pool_size`);
+  // The pre-009 schema allows one assignment per (student, mission); revisions
+  // are exactly the rows that break that. Deleting them would silently destroy
+  // student work, so refuse — BEFORE changing anything — and say what to do.
+  // (Previously the down dropped selection_log's columns first and then failed
+  // on the unique key, leaving a schema no migration describes.)
+  const [[{ n }]] = (await pool.query(`SELECT COUNT(*) n FROM assignments WHERE revision_seq > 0`)) as unknown as [
+    [{ n: number }],
+  ];
+  if (Number(n) > 0) {
+    throw new Error(
+      `009_curriculum down refused: ${n} revision assignment(s) exist (revision_seq > 0), which the pre-curriculum ` +
+        `schema cannot hold. Nothing has been changed. Back up, decide what to keep, remove those rows, then re-run.`
+    );
+  }
+  // Re-add the constraint first: if it cannot be added, nothing else has changed.
   await pool.query(`ALTER TABLE assignments ADD UNIQUE KEY uq_assignments_student_mission (student_id, mission_id)`);
+  await pool.query(`ALTER TABLE selection_log DROP COLUMN chosen_session_id, DROP COLUMN pool_size`);
   await pool.query(
     `ALTER TABLE assignments
        DROP INDEX uq_assignments_student_mission_rev,

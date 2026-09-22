@@ -45,6 +45,7 @@
     "verify:all": "node run-all.mjs",
     "verify:audit": "tsx verify-audit.mjs",
     "verify:fail-closed": "tsx verify-fail-closed.mjs",
+    "verify:backups": "tsx verify-backups.mjs",
     "check:tokens": "npm --prefix web run check:tokens"
   },
   "dependencies": {

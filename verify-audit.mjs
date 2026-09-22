@@ -2025,18 +2025,32 @@ await runCase(
   '4.7',
   45,
   'Restore the latest backup into a scratch database and run Stage 1 against it',
-  'The newest dump in backups/ restores into a scratch DB, db:migrate brings it to the current 10 migrations, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
+  'backup.sh (no Docker) takes a verified backup of the live DB; the newest dump in backups/ restores into a scratch DB, db:migrate brings it to the current 10 migrations, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
   async (c) => {
     const dir = join(ROOT, 'backups');
+    // Take a backup now, with the real script, so the case never depends on a
+    // leftover file (it used to be NOT TESTED wherever backups/ was empty, CI
+    // included, because backup.sh required Docker). Reseed first: Stage 1 judges
+    // a freshly seeded database (its student must start at level 0), and the
+    // cases before this one leave activity behind that a faithful backup keeps.
+    await reseed();
+    const bk = spawnSync('bash', ['scripts/backup.sh'], {
+      cwd: ROOT,
+      env: { ...process.env, BACKUP_DIR: dir },
+      encoding: 'utf8',
+    });
+    c.check(
+      'backup.sh takes a backup of the live DB',
+      bk.status === 0,
+      `(exit ${bk.status} ${(bk.stdout + bk.stderr).trim().slice(-200)})`
+    );
     const files = existsSync(dir)
       ? execSync(`ls -1t "${dir}"`, { encoding: 'utf8', shell: 'bash' })
           .split('\n')
           .filter((f) => f.endsWith('.sql.gz'))
       : [];
     if (!files.length)
-      return c.notTested(
-        'no backup dump exists in backups/ (and backup.sh cannot create one on this machine — it requires Docker)'
-      );
+      return c.notTested('no backup dump exists in backups/ (backup.sh produced none — see the check above)');
     const scratch = 'mission_demo_audit_restore';
     const restoreInto = async (name) => {
       await q(
@@ -2792,6 +2806,9 @@ console.log(`results: ${out}`);
 // annotations, so one-per-case would truncate) and as a job-summary table.
 if (process.env.GITHUB_ACTIONS) {
   const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  // A property value (the title) must also escape ',' and ':' — an unescaped
+  // comma ends the property, which truncated the title at "verified,".
+  const escProp = (s) => esc(s).replace(/,/g, '%2C').replace(/:/g, '%3A');
   const notOk = results.filter((r) => r.state !== 'VERIFIED');
   const lines = notOk.map((r) => {
     const failed = r.checks.filter((c) => !c.ok).map((c) => `${c.name} ${c.detail}`.trim().slice(0, 160));
@@ -2799,7 +2816,7 @@ if (process.env.GITHUB_ACTIONS) {
   });
   const head = `${count('VERIFIED')} verified, ${count('FAILED')} failed, ${count('NOT TESTED')} not tested`;
   console.log(
-    `::${count('FAILED') ? 'error' : 'notice'} title=Audit: ${head}::${esc(lines.join('\n') || 'all cases verified')}`
+    `::${count('FAILED') ? 'error' : 'notice'} title=${escProp(`Audit: ${head}`)}::${esc(lines.join('\n') || 'all cases verified')}`
   );
   if (process.env.GITHUB_STEP_SUMMARY) {
     const table = results.map((r) => `| ${r.id} | ${r.state} | ${r.title.replace(/\|/g, '\\|')} |`).join('\n');

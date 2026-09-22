@@ -52,8 +52,13 @@ const venvPy = ['pipeline/.venv/Scripts/python.exe', 'pipeline/.venv/bin/python'
   .find(existsSync);
 
 try {
-  // Migrations (Item 4) — fresh scratch DB matches current; idempotent; reversible.
+  // Migrations (Item 4) — fresh scratch DB matches current; idempotent; reversible,
+  // including every down step on a seeded database.
   run('npm run verify:migrations');
+
+  // Backups — no Docker; a failed dump leaves no file; restore refuses an invalid
+  // backup before dropping; backup:verify passes end to end and cleans up.
+  run('npm run verify:backups');
 
   // Stage 1 — free-play loop (gating irrelevant).
   run('npm run db:seed');
