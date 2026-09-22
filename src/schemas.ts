@@ -20,6 +20,16 @@ export const resolveAssistanceBody = z.object({
   note: z.string().trim().min(1, 'a resolution note is required').max(1000),
 });
 
+/**
+ * Dev login-as. The id must BE a JSON number, not merely something Number()
+ * can turn into one: the route used to do `Number(req.body?.studentId)`, so
+ * `{"studentId":[1]}` signed you in as user 1 (Number([1]) === 1), and so did
+ * `"1"` and `[["1"]]` (audit #48).
+ */
+export const loginAsBody = z.object({
+  studentId: z.number('studentId must be a number').int('studentId must be an integer').positive(),
+});
+
 export const submitBody = z.object({
   assignmentId: posInt,
   selected: z.string().min(1),

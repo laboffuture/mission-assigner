@@ -64,6 +64,7 @@ import {
   missionIdParams,
   assignmentIdParams,
   submitBody,
+  loginAsBody,
   feedbackBody,
   listQuery,
   idParams,
@@ -142,11 +143,8 @@ if (getAuthProvider().mode === 'dev' && !isProduction()) {
   // launch will use once implemented, so the frontend we build against it needs
   // no rework. Dev-only (registered only when AUTH_MODE=dev); it lets us exercise
   // the student UI end-to-end before Moodle SSO exists. NEVER available in prod.
-  app.post('/api/dev/login-as', async (req, res) => {
-    const studentId = Number(req.body?.studentId);
-    if (!Number.isInteger(studentId) || studentId <= 0) {
-      return sendError(req, res, 400, 'validation_error', 'studentId must be a positive integer');
-    }
+  app.post('/api/dev/login-as', validate({ body: loginAsBody }), async (req, res) => {
+    const studentId = req.valid!.body.studentId;
     try {
       const [rows] = await pool.query<any[]>(`SELECT id, display_name, role FROM students WHERE id = ?`, [studentId]);
       const u = rows[0];

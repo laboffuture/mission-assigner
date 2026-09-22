@@ -369,6 +369,27 @@ you want them run inside a container instead.
 > when the server is started with `ENABLE_TEST_HOOKS=1`, so it is never exposed in
 > production.
 
+### Known warnings
+
+**`[DEP0060] The util._extend API is deprecated`, once, on the first request that hits the
+`/api/*` rewrite.** Traced (`node --trace-deprecation`) to:
+
+```
+at ProxyServer.<anonymous> (next/dist/compiled/http-proxy/index.js)
+at proxyRequest (next/dist/server/lib/router-utils/proxy-request.js)
+at handleRequest (next/dist/server/lib/router-server.js)
+```
+
+It is Next's own **bundled** copy of `http-proxy` (an unmaintained package that still calls
+`util._extend`), used by Next to proxy the rewrite in `next.config.js` to the API on :3000. It
+is not our code and not a dependency we declare, so we cannot fix it without patching Next's
+compiled output. `util._extend` is deprecated, not removed, so the warning is cosmetic: one line
+per server start, no effect on behaviour.
+
+It will go away when Next replaces that bundled dependency, or if the browser ever calls the API
+directly instead of through the rewrite (which would need CORS and cross-site cookies, so it is
+not worth doing for this). Left as-is deliberately.
+
 ## Curriculum-scoped selection (migration 009)
 
 Missions are scoped to where a student is in the curriculum, so nobody is served

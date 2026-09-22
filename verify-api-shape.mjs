@@ -44,6 +44,23 @@ let studentCookie = '';
   });
   check('missing studentId -> 400', bad.status === 400, `(got ${bad.status})`);
 
+  // The id must BE a number, not merely something Number() can coerce: the
+  // route used Number(req.body?.studentId), and Number([1]) === 1, so
+  // {"studentId":[1]} signed you in as user 1 (audit finding 48).
+  for (const value of [[1], '1', [['1']], true, { valueOf: 1 }, 1.5, '1abc']) {
+    const r = await fetch(`${BASE}/api/dev/login-as`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ studentId: value }),
+    });
+    const setCookie = r.headers.get('set-cookie') ?? '';
+    check(
+      `studentId ${JSON.stringify(value)} -> 400, no session`,
+      r.status === 400 && !/mh_session=/.test(setCookie),
+      `(got ${r.status}${/mh_session=/.test(setCookie) ? ', SET A SESSION' : ''})`
+    );
+  }
+
   const missing = await fetch(`${BASE}/api/dev/login-as`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

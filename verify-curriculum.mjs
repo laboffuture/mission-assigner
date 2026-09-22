@@ -796,6 +796,53 @@ console.log('\n[D1] A revision repeat earns attempt + submit XP, never correct')
   await useSelectionMode(null);
 }
 
+// ---------------------------------------------------------------------------
+console.log('\n[13] Revisions rotate even when every timestamp is in the same second');
+{
+  // assigned_at has one-second resolution, so a demo (or a fast student) can
+  // produce several assignments that all share a timestamp. Ordering the repeat
+  // by last_seen then mission id then makes the SAME mission win every time:
+  // the one just served comes straight back (audit finding 50). Assignment ids
+  // are monotonic, so they order same-second events correctly.
+  const sid = await newStudent('same-second', 2, ['C1', 3, 8]);
+  // ONE literal timestamp for every row, so every last_seen genuinely ties —
+  // what a demo produces when slots are opened and graded within a second.
+  const TS = '2026-06-01 09:00:00';
+  await q(
+    `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status, assigned_at, graded_at)
+     SELECT ?, m.id, m.version, 2, 'graded', ?, ?
+       FROM missions m
+       JOIN sessions s ON s.id = m.session_id
+       JOIN projects p ON p.id = s.project_id
+       JOIN credits c ON c.id = p.credit_id
+      WHERE c.track_id = ? AND c.code = 'C1'
+        AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id)`,
+    [sid, TS, TS, trackId, sid]
+  );
+
+  // Four slots opened and graded one after another, all stamped that same second.
+  const served = [];
+  for (let i = 0; i < 4; i++) {
+    const c = await choose(sid);
+    if (!c.chosen) break;
+    served.push(Number(c.chosen.mission_id));
+    await q(
+      `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status,
+                                assigned_at, graded_at, revision_seq, is_revision)
+       VALUES (?, ?, 1, 2, 'graded', ?, ?,
+               (SELECT COALESCE(MAX(a.revision_seq), 0) + 1 FROM assignments a
+                 WHERE a.student_id = ? AND a.mission_id = ?), TRUE)`,
+      [sid, c.chosen.mission_id, TS, TS, sid, c.chosen.mission_id]
+    );
+  }
+  check('four revisions served', served.length === 4, `(got ${served.length})`);
+  check(
+    'no mission is repeated within the same second',
+    new Set(served).size === served.length,
+    `(served ${served.join(' -> ')})`
+  );
+}
+
 await q(`DELETE FROM students WHERE display_name LIKE 'CUR-%'`);
 await q(`DELETE FROM missions WHERE title LIKE 'CUR-%'`);
 await pool.end();

@@ -294,6 +294,12 @@ export async function chooseCurriculumMission(
               (m.session_id = sp.session_id) AS is_current_session,
               0 AS overlap,
               (SELECT MAX(a.assigned_at) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS last_seen,
+              -- assigned_at has ONE-SECOND resolution, so several assignments can
+              -- share a timestamp (a demo, or a fast student). Assignment ids are
+              -- monotonic, so the newest assignment's id orders those ties in the
+              -- order they really happened; without it the ordering fell through
+              -- to m.id and served the same mission again and again.
+              (SELECT MAX(a.id) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS last_seen_seq,
               (SELECT MAX(a.revision_seq) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS max_rev
        ${CURRICULUM_JOINS}
        WHERE m.session_id IN (?)
@@ -303,9 +309,10 @@ export async function chooseCurriculumMission(
          AND EXISTS (SELECT 1 FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id)
          AND NOT EXISTS (SELECT 1 FROM assignments a
                           WHERE a.student_id = ? AND a.mission_id = m.id AND a.status <> 'graded')
-       ORDER BY last_seen ASC, m.id ASC
+       ORDER BY last_seen ASC, last_seen_seq ASC, m.id ASC
        LIMIT 10`,
       [
+        q.studentId,
         q.studentId,
         q.studentId,
         q.studentId,
