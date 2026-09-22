@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { buildUmzug, makePool } from './src/migrator.js';
 
 process.env.ENABLE_TEST_HOOKS ||= '1'; // in-process modules only; spawned servers decide their own
 
@@ -2742,25 +2743,25 @@ await runCase(
   '4.10',
   62,
   'The pipeline run against a database missing a migration',
-  'Against a scratch DB migrated to 009 only (010 reverted): the pipeline exits non-zero with a FATAL message naming the missing objects and "npm run db:migrate", and the scratch schema is unchanged afterwards (content_chunks still absent).',
+  'Against a scratch DB migrated to 009 only (010 and later never applied): the pipeline exits non-zero with a FATAL message naming the missing objects and "npm run db:migrate", and the scratch schema is unchanged afterwards (content_chunks still absent).',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const scratch = 'mission_demo_audit_nomig';
-    await q(`DROP DATABASE IF EXISTS \`${scratch}\``);
-    const up = spawnSync(process.execPath, ['--import', 'tsx', 'src/migrator.ts', 'up'], {
-      cwd: ROOT,
-      env: { ...process.env, DB_NAME: scratch },
-      encoding: 'utf8',
-    });
-    const down = spawnSync(process.execPath, ['--import', 'tsx', 'src/migrator.ts', 'down'], {
-      cwd: ROOT,
-      env: { ...process.env, DB_NAME: scratch },
-      encoding: 'utf8',
-    });
+    await q(`DROP DATABASE IF EXISTS \`${scratch}\`; CREATE DATABASE \`${scratch}\``);
+    // Migrate to exactly 009 by NAME. ("up, then down once" meant "at 009" only
+    // while 010 was the newest migration; with 011 it left 010 applied.)
+    const mpool = makePool(scratch);
+    let last = null;
+    try {
+      await buildUmzug(mpool).up({ to: '009_curriculum' });
+      last = (await mpool.query(`SELECT name FROM schema_migrations ORDER BY name DESC LIMIT 1`))[0][0]?.name;
+    } finally {
+      await mpool.end();
+    }
     c.check(
-      'scratch prepared (up then down 010)',
-      up.status === 0 && down.status === 0,
-      `(${up.status}/${down.status})`
+      'scratch prepared (migrated to 009_curriculum, nothing later)',
+      last === '009_curriculum',
+      `(last=${last})`
     );
     const schema = async () =>
       (
