@@ -2786,6 +2786,30 @@ console.log(
 const out = join(tmpdir(), `verify-audit-${Date.now()}.json`);
 writeFileSync(out, JSON.stringify(results, null, 2));
 console.log(`results: ${out}`);
+
+// In GitHub Actions: the result as ONE annotation (readable on the run without
+// repository-admin rights, unlike job logs; GitHub caps a step at 10 error
+// annotations, so one-per-case would truncate) and as a job-summary table.
+if (process.env.GITHUB_ACTIONS) {
+  const esc = (s) => String(s).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+  const notOk = results.filter((r) => r.state !== 'VERIFIED');
+  const lines = notOk.map((r) => {
+    const failed = r.checks.filter((c) => !c.ok).map((c) => `${c.name} ${c.detail}`.trim().slice(0, 160));
+    return `[${r.id}] ${r.state} ${r.title}${r.why ? ` — ${r.why}` : ''}${failed.length ? ` :: ${failed.join(' | ')}` : ''}`;
+  });
+  const head = `${count('VERIFIED')} verified, ${count('FAILED')} failed, ${count('NOT TESTED')} not tested`;
+  console.log(
+    `::${count('FAILED') ? 'error' : 'notice'} title=Audit: ${head}::${esc(lines.join('\n') || 'all cases verified')}`
+  );
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const table = results.map((r) => `| ${r.id} | ${r.state} | ${r.title.replace(/\|/g, '\\|')} |`).join('\n');
+    writeFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `## Audit: ${head}\n\n| # | State | Case |\n|---|---|---|\n${table}\n`,
+      { flag: 'a' }
+    );
+  }
+}
 await db.end();
 await pool.end();
 process.exitCode = count('FAILED') ? 1 : 0;
