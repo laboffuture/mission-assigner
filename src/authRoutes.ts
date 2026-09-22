@@ -2,7 +2,7 @@ import type { Express, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { pool } from './db.js';
 import { logger } from './logger.js';
-import { sendError } from './httpError.js';
+import { sendError, sendServerError } from './httpError.js';
 import { requireAuth, STAFF_ROLES, type Role } from './auth.js';
 import { isRateLimited, retryAfterSeconds, recordFailure, clearAttempts } from './rateLimit.js';
 import { issueSession } from './session.js';
@@ -53,8 +53,7 @@ export function registerAuthRoutes(app: Express): void {
       rlog(req).info({ userId: Number(user.id), role: user.role }, 'staff login');
       res.json({ id: Number(user.id), display_name: user.display_name, role: user.role as Role });
     } catch (err) {
-      rlog(req).error({ err }, 'login failed');
-      sendError(req, res, 500, 'internal_error', 'login failed');
+      sendServerError(req, res, err, 'login failed', 'login failed');
     }
   });
 
@@ -73,8 +72,7 @@ export function registerAuthRoutes(app: Express): void {
       const u = rows[0];
       res.json({ id: auth.userId, role: auth.role, display_name: u?.display_name ?? null });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load current user');
+      sendServerError(req, res, err, 'failed to load current user');
     }
   });
 }

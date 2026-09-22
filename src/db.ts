@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
+import { dbPort } from './dbConfig.js';
 
 /**
  * Shared MySQL connection pool. Raw SQL only, no ORM.
@@ -21,7 +22,7 @@ export const pool = mysql.createPool({
   user: process.env.DB_USER ?? 'root',
   password: process.env.DB_PASS ?? '',
   database: process.env.DB_NAME ?? 'mission_demo',
-  port: 3306,
+  port: dbPort(),
   timezone: 'Z',
   waitForConnections: true,
   connectionLimit: 10,
@@ -43,7 +44,7 @@ export function rootPool() {
     host: process.env.DB_HOST ?? '127.0.0.1',
     user: process.env.DB_USER ?? 'root',
     password: process.env.DB_PASS ?? '',
-    port: 3306,
+    port: dbPort(),
     timezone: 'Z',
     waitForConnections: true,
     connectionLimit: 5,

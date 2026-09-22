@@ -1415,7 +1415,7 @@ await runCase(
   '4.5',
   29,
   'A student requests /quality, the roster and the assistance queue',
-  'All refused: /quality, /api/students, /api/assistance, /api/mission-quality and /api/missions each return 401/403 to a student, and /quality also to an anonymous request.',
+  'All refused: /quality, /api/students, /api/assistance, /api/mission-quality and /api/missions each return 401/403 to a student; an anonymous /quality is redirected to the login page, without the page.',
   async (c) => {
     for (const p of ['/quality', '/api/students', '/api/assistance', '/api/mission-quality', '/api/missions']) {
       const r = await api('GET', p, { as: 1 });
@@ -1425,8 +1425,15 @@ await runCase(
         `(got ${r.status}, ${r.headers.get('content-type')})`
       );
     }
-    const anon = await api('GET', '/quality');
-    c.check('anonymous GET /quality refused', anon.status === 401 || anon.status === 403, `(got ${anon.status})`);
+    // Refused, as a page should refuse an anonymous browser: a redirect to the
+    // login page (Phase 5 spec) — and none of the page's content.
+    const anon = await fetch(BASE + '/quality', { redirect: 'manual' });
+    const body = await anon.text();
+    c.check(
+      'anonymous GET /quality refused (redirect to /login, no page)',
+      anon.status === 302 && /\/login$/.test(anon.headers.get('location') ?? '') && !body.includes('Quality'),
+      `(got ${anon.status} location=${anon.headers.get('location')})`
+    );
   }
 );
 
@@ -2025,7 +2032,7 @@ await runCase(
   '4.7',
   45,
   'Restore the latest backup into a scratch database and run Stage 1 against it',
-  'backup.sh (no Docker) takes a verified backup of the live DB; the newest dump in backups/ restores into a scratch DB, db:migrate brings it to the current 10 migrations, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
+  'backup.sh (no Docker) takes a verified backup of the live DB; the newest dump in backups/ restores into a scratch DB, db:migrate brings it to the current 11 migrations, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
   async (c) => {
     const dir = join(ROOT, 'backups');
     // Take a backup now, with the real script, so the case never depends on a
@@ -2095,7 +2102,7 @@ await runCase(
     });
     c.check('db:migrate on the restore exit 0', mig.status === 0, `(${(mig.stdout + mig.stderr).slice(-200)})`);
     const after = (await q(`SELECT name FROM \`${scratch}\`.schema_migrations`)).length;
-    c.check('restore now at 10 migrations', after === 10, `(${after})`);
+    c.check('restore now at 11 migrations', after === 11, `(${after})`);
     const inst = await spawnApi(3015, { DB_NAME: scratch, ENABLE_TEST_HOOKS: '1' });
     try {
       if (!c.check('API on the restored DB started', inst.ok, inst.ok ? '' : inst.log().slice(-200))) return;

@@ -7,7 +7,8 @@ import { pool } from './db.js';
 import { logger, getTestLogs, newRequestId } from './logger.js';
 import { initSentry, captureException } from './sentry.js';
 import { selectMission } from './selection.js';
-import { submitAndGrade } from './grading.js';
+import { submitAndGrade, SubmitRejection } from './grading.js';
+import { createHash } from 'node:crypto';
 import { fillSlot } from './slotFiller.js';
 import { unlockNext } from './slotUnlock.js';
 import { awardXp } from './xp.js';
@@ -42,9 +43,12 @@ import {
   warnIfInsecureAuth,
   getAuthProvider,
   STAFF_ROLES,
+  authFromSession,
+  type Role,
 } from './auth.js';
 import { validate } from './validate.js';
-import { sendError } from './httpError.js';
+import { sendError, sendServerError } from './httpError.js';
+import { isDbUnavailable } from './dbErrors.js';
 import { validateEnv } from './env.js';
 import { issueSession, sessionMiddleware } from './session.js';
 import { isProduction, testHooksEnabled } from './testHooks.js';
@@ -128,8 +132,7 @@ if (getAuthProvider().mode === 'dev' && !isProduction()) {
       );
       res.json({ items: rows });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load users');
+      sendServerError(req, res, err, 'failed to load users');
     }
   });
 
@@ -151,8 +154,7 @@ if (getAuthProvider().mode === 'dev' && !isProduction()) {
       rlog(req).warn({ userId: Number(u.id), role: u.role }, 'DEV login-as (no password) — insecure, dev only');
       res.json({ id: Number(u.id), display_name: u.display_name, role: u.role });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'login-as failed');
+      sendServerError(req, res, err, 'login-as failed');
     }
   });
 }
@@ -167,8 +169,7 @@ app.get('/api/students', requireAuth, requireRole(...STAFF_ROLES), async (req, r
     );
     res.json({ items: rows });
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load students');
+    sendServerError(req, res, err, 'failed to load students');
   }
 });
 
@@ -214,8 +215,7 @@ app.get(
       const mission = await loadMissionContent(missionId);
       res.json({ assignment_id: assignmentId, ...mission });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load current mission');
+      sendServerError(req, res, err, 'failed to load current mission');
     }
   }
 );
@@ -325,8 +325,7 @@ app.get('/api/week/:studentId', requireAuth, validate({ params: studentIdParams 
       slots,
     });
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load week');
+    sendServerError(req, res, err, 'failed to load week');
   }
 });
 
@@ -396,8 +395,7 @@ app.post(
       const mission = await loadMissionContent(missionId);
       res.json({ assignment_id: assignmentId, ...mission, xp });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to open slot');
+      sendServerError(req, res, err, 'failed to open slot');
     }
   }
 );
@@ -472,12 +470,23 @@ async function waitForIdempotentResult(key: string, assignmentId: number): Promi
   return null;
 }
 
+/** SHA-256 of the validated submit body in a fixed field order, so the same
+ *  request hashes the same however its JSON keys were ordered. */
+function submitRequestHash(body: { assignmentId: number; selected: string }): string {
+  return createHash('sha256')
+    .update(JSON.stringify([body.assignmentId, body.selected]))
+    .digest('hex');
+}
+
 /**
  * POST /api/submit  body { assignmentId, selected }   header (optional): Idempotency-Key
  * Student-only, own assignment. Idempotent: a retried submit carrying the same
- * Idempotency-Key returns the ORIGINAL result rather than erroring or
- * re-grading. Concurrency-safe even without a key (grading's FOR UPDATE lets
- * only one request grade).
+ * Idempotency-Key AND the same body returns the ORIGINAL result rather than
+ * erroring or re-grading. The key is bound to the body it was first used with:
+ * the same key with a different body is refused with 422
+ * idempotency_key_reused — replaying the first result would present it as the
+ * answer to a question that was never graded. Concurrency-safe even without a
+ * key (grading's FOR UPDATE lets only one request grade).
  */
 app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: submitBody }), async (req, res) => {
   const { assignmentId, selected } = req.valid!.body;
@@ -493,15 +502,32 @@ app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: su
     }
 
     if (idemKey) {
-      // Claim the key. The UNIQUE(idempotency_key, assignment_id) makes exactly
-      // one concurrent request the "owner"; the rest wait for its result.
+      // Claim the key, recording which request it belongs to. The
+      // UNIQUE(idempotency_key, assignment_id) makes exactly one concurrent
+      // request the "owner"; the rest wait for its result.
+      const requestHash = submitRequestHash({ assignmentId, selected });
       try {
-        await pool.query(`INSERT INTO idempotency_keys (idempotency_key, assignment_id) VALUES (?, ?)`, [
-          idemKey,
-          assignmentId,
-        ]);
+        await pool.query(
+          `INSERT INTO idempotency_keys (idempotency_key, assignment_id, request_hash) VALUES (?, ?, ?)`,
+          [idemKey, assignmentId, requestHash]
+        );
       } catch (e: any) {
         if (e && e.code === 'ER_DUP_ENTRY') {
+          const [[prior]] = await pool.query<any[]>(
+            `SELECT request_hash FROM idempotency_keys WHERE idempotency_key = ? AND assignment_id = ?`,
+            [idemKey, assignmentId]
+          );
+          // NULL: a key stored before request hashes existed — replay as before.
+          if (prior && prior.request_hash != null && prior.request_hash !== requestHash) {
+            rlog(req).warn({ assignmentId }, 'idempotency key reused with a different body');
+            return sendError(
+              req,
+              res,
+              422,
+              'idempotency_key_reused',
+              'this Idempotency-Key was already used with a different request body; use a new key for a new request'
+            );
+          }
           const cached = await waitForIdempotentResult(idemKey, assignmentId);
           if (cached) return res.json({ ...cached, idempotent_replay: true });
           return sendError(req, res, 409, 'conflict', 'a request with this Idempotency-Key is still processing');
@@ -531,10 +557,14 @@ app.post('/api/submit', requireAuth, requireRole('student'), validate({ body: su
     const result = await runSubmit(assignmentId, selected);
     res.json(result);
   } catch (err: any) {
-    // Business-rule errors from grading (e.g. assignment not open) are safe to
-    // surface as 400; unexpected ones are logged and surfaced generically.
-    rlog(req).error({ err }, 'submit failed');
-    sendError(req, res, 400, 'bad_request', err?.message ?? 'submit failed');
+    // The client's error (not open, not one of the options): 400 at WARN.
+    // Anything else is ours: 503 for a database outage, otherwise 500 — both at
+    // ERROR. (Every failure used to be a 400 logged at ERROR.)
+    if (err instanceof SubmitRejection) {
+      rlog(req).warn({ assignmentId, code: err.code, reason: err.message }, 'submit rejected');
+      return sendError(req, res, 400, err.code, err.message);
+    }
+    sendServerError(req, res, err, 'submit failed', 'submit failed');
   }
 });
 
@@ -551,8 +581,7 @@ app.get(
       const page = await getXpHistory(studentId, { limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json({ total_xp: totalRow ? Number(totalRow.total_xp) : 0, items: page.items, nextCursor: page.nextCursor });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load xp');
+      sendServerError(req, res, err, 'failed to load xp');
     }
   }
 );
@@ -614,8 +643,7 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
       prerequisites,
     });
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load segment');
+    sendServerError(req, res, err, 'failed to load segment');
   }
 });
 
@@ -635,8 +663,7 @@ app.get(
       const page = await listOpenAssistance({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json(page);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load assistance events');
+      sendServerError(req, res, err, 'failed to load assistance events');
     }
   }
 );
@@ -653,8 +680,7 @@ app.get(
       if (!detail) return sendError(req, res, 404, 'not_found', 'assistance event not found');
       res.json(detail);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load assistance event');
+      sendServerError(req, res, err, 'failed to load assistance event');
     }
   }
 );
@@ -671,8 +697,7 @@ app.post(
       res.json(detail);
     } catch (err: any) {
       if (err instanceof AssistanceError) return sendError(req, res, err.status, 'assistance_error', err.message);
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to acknowledge');
+      sendServerError(req, res, err, 'failed to acknowledge');
     }
   }
 );
@@ -689,8 +714,7 @@ app.post(
       res.json(detail);
     } catch (err: any) {
       if (err instanceof AssistanceError) return sendError(req, res, err.status, 'assistance_error', err.message);
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to resolve');
+      sendServerError(req, res, err, 'failed to resolve');
     }
   }
 );
@@ -710,8 +734,7 @@ app.get('/api/history/:studentId', requireAuth, validate({ params: studentIdPara
     );
     res.json({ items: rows });
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load history');
+    sendServerError(req, res, err, 'failed to load history');
   }
 });
 
@@ -725,8 +748,7 @@ app.get('/api/feedback/questions', requireAuth, async (req, res) => {
     const questions = await getQuestions();
     res.json({ items: questions });
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load feedback questions');
+    sendServerError(req, res, err, 'failed to load feedback questions');
   }
 });
 
@@ -760,8 +782,7 @@ app.post(
       if (err instanceof FeedbackError) {
         return sendError(req, res, err.status, 'feedback_error', err.message);
       }
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to submit feedback');
+      sendServerError(req, res, err, 'failed to submit feedback');
     }
   }
 );
@@ -775,8 +796,7 @@ app.get('/api/progress/:studentId', requireAuth, validate({ params: studentIdPar
     if (!progress) return sendError(req, res, 404, 'not_found', 'student not found');
     res.json(progress);
   } catch (err) {
-    rlog(req).error({ err }, 'request failed');
-    sendError(req, res, 500, 'internal_error', 'failed to load progress');
+    sendServerError(req, res, err, 'failed to load progress');
   }
 });
 
@@ -792,8 +812,7 @@ app.get(
       const log = await getSubmissionLog(studentId, { limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json(log);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load submissions');
+      sendServerError(req, res, err, 'failed to load submissions');
     }
   }
 );
@@ -809,8 +828,7 @@ app.get(
       const page = await getMissionQualityPage({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json(page);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to build mission-quality report');
+      sendServerError(req, res, err, 'failed to build mission-quality report');
     }
   }
 );
@@ -826,8 +844,7 @@ app.get(
       const page = await getMissionBank({ limit: req.valid!.query.limit, cursor: req.valid!.query.cursor });
       res.json(page);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to list missions');
+      sendServerError(req, res, err, 'failed to list missions');
     }
   }
 );
@@ -844,8 +861,7 @@ app.get(
       const report = await getMissionQuality(missionId);
       res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to build mission-quality report');
+      sendServerError(req, res, err, 'failed to build mission-quality report');
     }
   }
 );
@@ -874,8 +890,7 @@ app.get(
       });
       res.json(page);
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load attempt log');
+      sendServerError(req, res, err, 'failed to load attempt log');
     }
   }
 );
@@ -907,17 +922,57 @@ app.get(
           return sendError(req, res, 409, 'not_graded', 'this mission has not been completed yet');
       }
     } catch (err) {
-      rlog(req).error({ err }, 'request failed');
-      sendError(req, res, 500, 'internal_error', 'failed to load review');
+      sendServerError(req, res, err, 'failed to load review');
     }
   }
 );
 
-/** GET /quality — the internal SME mission-quality view (HTML shell). The
- *  sensitive data it renders comes from /api/mission-quality, which is
- *  SME/QC/admin only; the shell itself carries nothing secret. */
-app.get('/quality', (_req, res) => {
-  res.sendFile(join(__dirname, '..', 'public', 'quality.html'));
+/** Who may open the quality view: exactly the roles /api/mission-quality admits. */
+const QUALITY_ROLES: readonly Role[] = ['sme', 'qc', 'admin'];
+
+const htmlPage = (title: string, body: string) =>
+  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+  `<title>${title}</title></head><body style="font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem">` +
+  `${body}</body></html>`;
+
+/** GET /quality — the internal SME mission-quality view (HTML shell), gated
+ *  SERVER-SIDE (audit #41). The data was already protected by
+ *  /api/mission-quality; now the page itself is too: anonymous -> redirect to
+ *  the staff login, signed in without a quality role -> 403 access denied. */
+app.get('/quality', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store'); // per-user answer: never cache it
+  try {
+    const auth = (await authFromSession(req)) ?? (await getAuthProvider().authenticate(req));
+    if (!auth) return res.redirect(302, '/login');
+    if (!QUALITY_ROLES.includes(auth.role)) {
+      rlog(req).info({ userId: auth.userId, role: auth.role }, 'quality view refused');
+      return res
+        .status(403)
+        .type('html')
+        .send(
+          htmlPage(
+            'Access denied',
+            `<h1>Access denied</h1><p>The mission-quality view is for subject-matter experts, QC and admins. ` +
+              `<a href="/login">Sign in with a different account</a>.</p>`
+          )
+        );
+    }
+    res.sendFile(join(__dirname, '..', 'public', 'quality.html'));
+  } catch (err) {
+    const outage = isDbUnavailable(err);
+    rlog(req).error({ err }, outage ? 'database unavailable' : 'quality view failed');
+    res
+      .status(outage ? 503 : 500)
+      .type('html')
+      .send(
+        htmlPage(
+          outage ? 'Temporarily unavailable' : 'Something went wrong',
+          outage
+            ? '<h1>Temporarily unavailable</h1><p>The service is temporarily unavailable. Please try again in a moment.</p>'
+            : '<h1>Something went wrong</h1><p>Please try again.</p>'
+        )
+      );
+  }
 });
 
 /** GET /login — the staff login page (Mission Hub). Public shell; the actual
@@ -1036,12 +1091,23 @@ if (testHooksEnabled()) {
  * and returns the consistent JSON shape. A stack trace is NEVER sent to the client.
  */
 app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  rlog(req).error({ err }, 'unhandled error');
-  captureException(err);
-  if (res.headersSent) return;
   const status = Number.isInteger(err?.status) ? err.status : 500;
-  const message = status >= 500 ? 'internal server error' : String(err?.message ?? 'error');
-  sendError(req, res, status, err?.code ?? 'internal_error', message);
+  if (status < 500) {
+    // The CLIENT's error (malformed JSON, a body over the size limit, ...):
+    // expected, nothing for us to act on — WARN, not ERROR, and not reported
+    // to Sentry, or real errors drown in it.
+    rlog(req).warn({ err: { type: err?.type, message: err?.message }, status }, 'client error');
+    if (res.headersSent) return;
+    return sendError(req, res, status, err?.code ?? 'bad_request', String(err?.message ?? 'error'));
+  }
+  captureException(err);
+  if (res.headersSent) {
+    rlog(req).error({ err }, 'unhandled error');
+    return;
+  }
+  if (isDbUnavailable(err)) return sendServerError(req, res, err, 'internal server error');
+  rlog(req).error({ err }, 'unhandled error');
+  sendError(req, res, status, err?.code ?? 'internal_error', 'internal server error');
 });
 
 const PORT = Number(process.env.PORT) || 3000;

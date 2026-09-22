@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { pool } from './db.js';
 import { logger } from './logger.js';
-import { sendError } from './httpError.js';
+import { sendError, sendServerError } from './httpError.js';
 import { isProduction } from './testHooks.js';
 
 /**
@@ -73,17 +73,21 @@ export class DevAuthProvider implements AuthProvider {
 
 /**
  * LtiAuthProvider — will validate an LTI 1.3 launch token and map it to a user.
- * STUB: we do not have LTI access yet, so this throws. Selecting AUTH_MODE=lti
- * therefore fails loudly rather than silently allowing access.
+ * STUB: we do not have LTI access yet, so it authenticates NOBODY: every request
+ * without a session is unauthenticated (401). It used to throw, which surfaced
+ * as a 500 on every request (audit A4) — an outage-shaped answer to a request
+ * that is simply not signed in. Staff sessions (POST /api/login) still work.
  */
 export class LtiAuthProvider implements AuthProvider {
   readonly mode = 'lti';
+  private warned = false;
 
   async authenticate(_req: Request): Promise<AuthContext | null> {
-    throw new Error(
-      'LtiAuthProvider not yet implemented — LTI launch-token support is pending. ' +
-        'Set AUTH_MODE=dev for local development.'
-    );
+    if (!this.warned) {
+      this.warned = true;
+      logger.warn('LtiAuthProvider is a stub — LTI launch-token support is pending; only staff sessions can sign in');
+    }
+    return null;
   }
 }
 
@@ -147,10 +151,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.auth = auth;
     next();
   } catch (err) {
-    // e.g. the LTI stub throwing. Never leak details to the client.
-    const log = (req as any).log ?? logger;
-    log.error({ err }, 'authentication error');
-    sendError(req, res, 500, 'auth_error', 'authentication failed');
+    // Not an authentication failure — those return null above and get a 401.
+    // An exception here is the identity lookup failing: a database outage
+    // (503 service_unavailable, logged as a database error) or a bug (500).
+    // Never report either as "authentication failed" (audit #39).
+    sendServerError(req, res, err, 'internal server error', 'identity lookup failed');
   }
 }
 

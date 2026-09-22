@@ -120,6 +120,11 @@ try {
   // Production fails closed: refused boots, refused destructive commands, server-side session expiry.
   run('npm run verify:fail-closed');
 
+  // Correctness (Phase 5): outage is 503 not auth; LTI stub 401; idempotency key
+  // bound to its body; answer must be a real option; /quality gated; log levels.
+  run('npm run db:seed');
+  run('npm run verify:correctness');
+
   // Timezone (Item 7) — UTC storage, SQL time math, per-student streak boundary.
   run('npm run db:seed');
   run('npm run verify:timezone');

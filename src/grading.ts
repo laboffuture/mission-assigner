@@ -29,6 +29,21 @@ export interface GradeResult {
   timeToSubmitSeconds: number | null;
 }
 
+/**
+ * A submission refused for a reason that is the CLIENT's (the assignment is not
+ * open, the answer is not one of the mission's options). The route answers 400
+ * with `code` and logs it at WARN — it is expected, not an incident.
+ */
+export class SubmitRejection extends Error {
+  constructor(
+    readonly code: 'bad_request' | 'invalid_answer',
+    message: string
+  ) {
+    super(message);
+    this.name = 'SubmitRejection';
+  }
+}
+
 /** Maps a percentage to a score band. */
 export function toBand(pct: number): ScoreBand {
   if (pct >= 85) return 'pass_strong';
@@ -71,6 +86,7 @@ export async function submitAndGrade(assignmentId: number, selected: string): Pr
               a.student_id    AS student_id,
               a.opened_at     AS opened_at,
               a.assigned_at   AS assigned_at,
+              a.mission_id    AS mission_id,
               m.answer_key    AS answer_key,
               m.difficulty    AS difficulty
          FROM assignments a
@@ -81,11 +97,25 @@ export async function submitAndGrade(assignmentId: number, selected: string): Pr
     );
 
     if (rows.length === 0) {
-      throw new Error(`Assignment ${assignmentId} not found`);
+      throw new SubmitRejection('bad_request', `Assignment ${assignmentId} not found`);
     }
     const row = rows[0];
     if (row.status !== 'open') {
-      throw new Error(`Assignment ${assignmentId} is not open (status=${row.status})`);
+      throw new SubmitRejection('bad_request', `Assignment ${assignmentId} is not open (status=${row.status})`);
+    }
+
+    // The answer must be one of THIS mission's option keys — exactly. Compared
+    // in JS, not SQL: option_key is compared case- and accent-insensitively by
+    // the column collation, so `WHERE option_key = 'A'` would accept 'A' for 'a'
+    // (and grade it wrong). Anything else used to be stored as the response.
+    const [opts] = await conn.query<any[]>(`SELECT option_key FROM mission_options WHERE mission_id = ?`, [
+      row.mission_id,
+    ]);
+    if (!opts.some((o) => o.option_key === selected)) {
+      throw new SubmitRejection(
+        'invalid_answer',
+        `selected must be one of this mission's options (${opts.map((o) => o.option_key).join(', ')})`
+      );
     }
 
     const studentId = Number(row.student_id);

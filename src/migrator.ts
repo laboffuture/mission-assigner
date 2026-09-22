@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
+import { dbPort } from './dbConfig.js';
 import type { Pool } from 'mysql2/promise';
 import { Umzug } from 'umzug';
 import { logger } from './logger.js';
@@ -14,6 +15,7 @@ import * as m007 from './migrations/007_staff_credentials.js';
 import * as m008 from './migrations/008_assistance_workflow.js';
 import * as m009 from './migrations/009_curriculum.js';
 import * as m010 from './migrations/010_adopt_pipeline_schema.js';
+import * as m011 from './migrations/011_idempotency_request_hash.js';
 
 /**
  * Versioned migrations (Item 4).
@@ -43,6 +45,7 @@ const MIGRATIONS: Migration[] = [
   { name: '008_assistance_workflow', up: m008.up, down: m008.down },
   { name: '009_curriculum', up: m009.up, down: m009.down },
   { name: '010_adopt_pipeline_schema', up: m010.up, down: m010.down },
+  { name: '011_idempotency_request_hash', up: m011.up, down: m011.down },
 ];
 
 /** A pool bound to `dbName` with multi-statement SQL enabled (migrations need it). */
@@ -52,7 +55,7 @@ export function makePool(dbName: string): Pool {
     user: process.env.DB_USER ?? 'root',
     password: process.env.DB_PASS ?? '',
     database: dbName,
-    port: 3306,
+    port: dbPort(),
     timezone: 'Z',
     multipleStatements: true,
     waitForConnections: true,
@@ -111,7 +114,7 @@ async function ensureDatabase(dbName: string): Promise<void> {
     host: process.env.DB_HOST ?? '127.0.0.1',
     user: process.env.DB_USER ?? 'root',
     password: process.env.DB_PASS ?? '',
-    port: 3306,
+    port: dbPort(),
     multipleStatements: true,
   });
   try {

@@ -22,7 +22,8 @@ export function MissionRunner({ slotId }: { slotId: number }) {
   const [submitError, setSubmitError] = useState('');
 
   const submittingRef = useRef(false); // synchronous double-tap lock
-  const idemKeyRef = useRef<string | null>(null); // ONE key per attempt, reused on retry
+  // ONE key per (attempt, answer): reused on retry, replaced if the answer changes.
+  const idemRef = useRef<{ key: string; selected: string } | null>(null);
 
   // Open the slot (lazy-fill + attempt XP). Reusable so a failed open can retry.
   const loadOpen = useCallback(() => {
@@ -51,16 +52,18 @@ export function MissionRunner({ slotId }: { slotId: number }) {
     setSubmitError('');
     setPhase({ name: 'submitting', mission });
 
-    // Reuse ONE Idempotency-Key across retries: if the network dropped after the
-    // server graded (but before we saw the response), retrying with the same key
-    // returns the ORIGINAL result instead of creating a second attempt.
-    if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
+    // Reuse ONE Idempotency-Key across retries of the same answer: if the network
+    // dropped after the server graded (but before we saw the response), retrying
+    // with the same key returns the ORIGINAL result instead of a second attempt.
+    // The server binds a key to its request body, so a different answer needs a
+    // new key (the old one would be refused with 422 idempotency_key_reused).
+    if (idemRef.current?.selected !== selected) idemRef.current = { key: crypto.randomUUID(), selected };
 
     try {
       const result = await clientApi.post<SubmitResponse>(
         '/api/submit',
         { assignmentId: mission.assignment_id, selected },
-        { 'Idempotency-Key': idemKeyRef.current }
+        { 'Idempotency-Key': idemRef.current.key }
       );
       setPhase({ name: 'result', mission, selectedKey: selected, result });
     } catch (e) {
@@ -69,9 +72,11 @@ export function MissionRunner({ slotId }: { slotId: number }) {
       // a 401 is intercepted in the client and redirects to /login.
       submittingRef.current = false;
       setSubmitError(
-        e instanceof ApiError
-          ? `${e.message}. Your answer is safe — try again.`
-          : 'Network problem — your answer is safe, try again.'
+        e instanceof ApiError && e.code === 'service_unavailable'
+          ? 'The service is temporarily unavailable. Your answer is safe — try again in a moment.'
+          : e instanceof ApiError
+            ? `${e.message}. Your answer is safe — try again.`
+            : 'Network problem — your answer is safe, try again.'
       );
       setPhase({ name: 'answering', mission });
     }
