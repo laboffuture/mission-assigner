@@ -8,6 +8,23 @@ import { z } from 'zod';
  * start and prints exactly which variable is wrong — the app never runs
  * half-configured. Unknown env vars (PATH, etc.) are ignored.
  */
+/**
+ * Secrets that must be real in production. Kept next to the check so adding a
+ * secret to .env.production.example and forgetting this list is hard to do.
+ */
+const SECRET_VARS = ['SESSION_SECRET', 'DB_PASS', 'SEED_STAFF_PASSWORD', 'BACKUP_S3_SECRET_KEY'] as const;
+
+/**
+ * The shapes a copied template leaves behind: the words used in
+ * .env.production.example, the classic defaults, and "same value repeated".
+ */
+function looksLikePlaceholder(value: string): boolean {
+  const v = value.trim().toLowerCase();
+  if (/(^|[^a-z])(replace|change)[-_ ]?me/.test(v)) return true;
+  if (/(placeholder|example|your[-_ ]|<.*>|xxx+|todo)/.test(v)) return true;
+  return ['changeme', 'password', 'secret', 'devpass', 'test', 'notset', 'unset'].includes(v);
+}
+
 const EnvSchema = z
   .object({
     DB_HOST: z.string().min(1).default('127.0.0.1'),
@@ -78,6 +95,21 @@ const EnvSchema = z
         message:
           'AUTH_MODE=dev is not allowed when NODE_ENV=production: it trusts a client-supplied X-User-Id header. Use AUTH_MODE=lti',
       });
+    }
+    // A secret still holding its example value means .env.production.example was
+    // copied and not filled in. That is not a typo to discover later, when a
+    // forged session cookie works: refuse, and name the variable.
+    for (const name of SECRET_VARS) {
+      const value = (env as Record<string, unknown>)[name];
+      if (typeof value === 'string' && value && looksLikePlaceholder(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name],
+          message:
+            `still holds an example placeholder value. Set a real secret on the host ` +
+            `(see infra/README.md); .env.production.example is a template, never a source of secrets`,
+        });
+      }
     }
     // Test hooks reconfigure the running server (gating, selection mode,
     // rate-limit reset, log dump). No production configuration may expose them.

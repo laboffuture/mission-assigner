@@ -1,0 +1,43 @@
+# Mission Hub API — Express + TypeScript, compiled ahead of time.
+#
+# Multi-stage so the final image carries neither the TypeScript toolchain nor
+# any dev dependency: the build stage compiles src/ to dist/, the runtime stage
+# installs production dependencies only and runs `node dist/server.js`.
+#
+# Node is pinned to the same major as package.json "engines" and CI. Bookworm
+# slim rather than alpine: mysql2 and pino build against glibc without surprises.
+FROM node:22.21.1-bookworm-slim AS build
+WORKDIR /app
+
+# Dependencies first, so a source-only change does not reinstall them.
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build
+
+# ---------------------------------------------------------------- runtime ---
+FROM node:22.21.1-bookworm-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+
+# `npm ci --omit=dev` from the same lockfile: reproducible, and tsx/eslint/
+# prettier/playwright never reach the image.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=build /app/dist ./dist
+# Served by the API itself: the staff login page and the quality view.
+COPY public ./public
+
+# The node image already provides an unprivileged `node` user (uid 1000).
+USER node
+
+EXPOSE 3000
+# Liveness is checked by compose against /healthz; keeping it here too means a
+# plain `docker run` reports health as well.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "dist/server.js"]

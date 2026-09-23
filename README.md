@@ -386,9 +386,11 @@ is not our code and not a dependency we declare, so we cannot fix it without pat
 compiled output. `util._extend` is deprecated, not removed, so the warning is cosmetic: one line
 per server start, no effect on behaviour.
 
-It will go away when Next replaces that bundled dependency, or if the browser ever calls the API
-directly instead of through the rewrite (which would need CORS and cross-site cookies, so it is
-not worth doing for this). Left as-is deliberately.
+**It does not occur in production.** The deployed stack routes `/api/*` at Caddy, straight to
+the api container, and `web/next.config.mjs` disables its own rewrite when `NODE_ENV=production`
+— so Next never proxies anything there and the warning has nothing to raise it. It remains in
+local development, where the rewrite is what lets the whole app run on one port, and it is
+cosmetic. It would disappear entirely if Next replaced that bundled dependency.
 
 ## Curriculum-scoped selection (migration 009)
 
@@ -452,6 +454,18 @@ per track (`student_positions`); a mission belongs to one session (`missions.ses
 Seed data adds Tesla's Track (Robotics) with missions on C1 sessions 1–24 and C2/S1,
 and two students: *Ananya Rao* at C1/P1/S4 and *Kabir Mehta* at C1/P3/S2. Tests:
 `npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
+
+## Deployment
+
+The pilot runs as one `docker compose` stack — Caddy, the Next web app, the Express API, MySQL
+and a backup sidecar — on a single small VM. Everything needed to provision it is in
+[`infra/`](infra/README.md): both Dockerfiles, the compose file, the Caddy configuration, a
+production environment template, and a guide written for whoever administers the server.
+
+The API is compiled ahead of time for production (`npm run build` → `dist/`, run as
+`node dist/server.js`); `tsx` stays a development dependency and never reaches the image.
+The whole composition is brought up and exercised on every push by the `stack` CI job, since it
+cannot run on a Windows machine without Docker.
 
 ## The web app in the LMS (LTI)
 

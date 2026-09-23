@@ -1,0 +1,21 @@
+# The backup sidecar: takes the scheduled backup, verifies it, pushes it
+# offsite and applies retention.
+#
+# Deliberately NOT the api image: this needs the mysql client tools and the AWS
+# CLI, and the api image should carry neither. It runs the same scripts/ the
+# team runs by hand, so there is one backup path, not two.
+FROM alpine:3.20
+
+RUN apk add --no-cache bash mysql-client aws-cli gzip coreutils tzdata
+
+WORKDIR /app
+COPY scripts ./scripts
+COPY infra/backup-loop.sh ./backup-loop.sh
+RUN chmod +x ./backup-loop.sh ./scripts/*.sh
+
+# Unprivileged: this container needs the database and the bucket, nothing else.
+RUN adduser -D -u 1000 backup && mkdir -p /backups && chown backup:backup /backups
+USER backup
+ENV BACKUP_DIR=/backups
+
+CMD ["./backup-loop.sh"]

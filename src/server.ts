@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
-import pinoHttp from 'pino-http';
+// Named import, not default: pino-http is CommonJS whose typings are written in
+// ESM syntax, so under Node's own resolution the default import is the module
+// namespace and is not callable. `pinoHttp` is a real runtime export
+// (module.exports.pinoHttp) and is correct under both tsconfigs.
+import { pinoHttp } from 'pino-http';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { pool } from './db.js';
@@ -50,6 +54,7 @@ import {
 import { validate } from './validate.js';
 import { sendError, sendServerError } from './httpError.js';
 import { isDbUnavailable } from './dbErrors.js';
+import { healthz, readyz, installShutdownHandlers } from './lifecycle.js';
 import { validateEnv } from './env.js';
 import { issueSession, sessionMiddleware } from './session.js';
 import { isProduction, testHooksEnabled } from './testHooks.js';
@@ -116,6 +121,11 @@ app.use(sessionMiddleware());
 // both cookies are set together; enforcement is gated by CSRF_ENFORCED.
 app.use(csrfMiddleware());
 app.use(express.static(join(__dirname, '..', 'public')));
+
+// Liveness and readiness, for the container runtime and an uptime check.
+// Unauthenticated on purpose, and they disclose nothing beyond up/ready.
+app.get('/healthz', healthz);
+app.get('/readyz', readyz);
 
 // Staff auth: POST /api/login, POST /api/logout, GET /api/me.
 registerAuthRoutes(app);
@@ -1153,6 +1163,16 @@ if (testHooksEnabled()) {
   app.get('/api/test/boom', () => {
     throw new Error('boom: synthetic error to exercise the central error handler');
   });
+  // Windows cannot DELIVER SIGTERM to another process (process.kill maps to
+  // TerminateProcess, which kills outright), so the drain path cannot be
+  // exercised there by signalling. This hook runs the identical handler —
+  // process.emit('SIGTERM') — so the behaviour can be tested on a developer
+  // machine; CI on Linux sends the real signal. Test-hooks only: never in
+  // production.
+  app.post('/api/test/shutdown', (_req, res) => {
+    res.json({ ok: true });
+    setImmediate(() => process.emit('SIGTERM'));
+  });
   app.get('/api/test/logs', (req, res) => {
     const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
     res.json(getTestLogs(requestId));
@@ -1206,7 +1226,7 @@ initSentry()
     process.exit(1);
   })
   .then(() => {
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(
         { port: PORT, authMode: getAuthProvider().mode, selectionMode: selectionMode() },
         `Mission Hub listening on http://localhost:${PORT}`
@@ -1219,4 +1239,6 @@ initSentry()
         );
       }
     });
+    // A student's submit must not be cut off by a deploy.
+    installShutdownHandlers(server, { timeoutMs: Number(process.env.SHUTDOWN_TIMEOUT_MS) || 20_000 });
   });

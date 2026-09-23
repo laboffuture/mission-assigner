@@ -1,0 +1,189 @@
+# Mission Hub — the whole pilot stack on one small VM.
+#
+#   caddy   public :80/:443, TLS, the single origin the browser sees
+#   web     Next.js (student UI), internal only
+#   api     Express (the API and the staff pages), internal only
+#   mysql   MySQL 8.4 on a named volume, internal only
+#   migrate one-shot: runs migrations, then exits; api waits for it to succeed
+#
+# Nothing but caddy publishes a port: the api and the database are not reachable
+# from outside the compose network.
+#
+#   cd infra && docker compose --env-file .env.production up -d --build
+#
+# Deliberate omissions: no seed service (the seed refuses under NODE_ENV=production
+# anyway — see src/seed.ts), no test hooks (ENABLE_TEST_HOOKS is never set here,
+# and the app refuses to boot in production if it is).
+
+name: mission-hub
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - --default-time-zone=+00:00
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASS:?set DB_PASS}
+      MYSQL_DATABASE: ${DB_NAME:-mission_demo}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # Loads the named-timezone tables on first boot. CONVERT_TZ('…','Asia/
+      # Kolkata','+00:00') returns NULL without them and every streak silently
+      # breaks, so this is part of creating the database, not a manual step.
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${DB_PASS}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Schema changes run HERE, once per deploy, never from inside the app.
+  migrate:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    restart: 'no'
+    command: ['node', 'dist/migrator.js', 'up']
+    environment:
+      NODE_ENV: production
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USER: root
+      DB_PASS: ${DB_PASS:?set DB_PASS}
+      DB_NAME: ${DB_NAME:-mission_demo}
+      AUTH_MODE: ${AUTH_MODE:-lti}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USER: root
+      DB_PASS: ${DB_PASS:?set DB_PASS}
+      DB_NAME: ${DB_NAME:-mission_demo}
+      AUTH_MODE: ${AUTH_MODE:-lti}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      SESSION_MAX_AGE: ${SESSION_MAX_AGE:-43200}
+      SESSION_SAMESITE: ${SESSION_SAMESITE:-none}
+      CSRF_ENFORCED: ${CSRF_ENFORCED:-true}
+      SELECTION_MODE: ${SELECTION_MODE:-legacy}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      INSTANCE_COUNT: ${INSTANCE_COUNT:-1}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3001'
+      # Server components call the API directly over the compose network. The
+      # browser never uses this address — it only ever sees Caddy's origin.
+      API_ORIGIN: http://api:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Scheduled backups: verify, push offsite, apply retention. Same scripts a
+  # person runs by hand, so there is one backup path rather than two.
+  backup:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.backup
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USER: root
+      DB_PASS: ${DB_PASS:?set DB_PASS}
+      DB_NAME: ${DB_NAME:-mission_demo}
+      BACKUP_DIR: /backups
+      BACKUP_AT_HOUR: ${BACKUP_AT_HOUR:-2}
+      BACKUP_ON_START: ${BACKUP_ON_START:-false}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-7}
+      BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-4}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_ACCESS_KEY: ${BACKUP_S3_ACCESS_KEY:-}
+      BACKUP_S3_SECRET_KEY: ${BACKUP_S3_SECRET_KEY:-}
+    volumes:
+      - backups:/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      LMS_ORIGIN: ${LMS_ORIGIN:?set LMS_ORIGIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  mysql-data:
+  backups:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,21 @@
+{
+  // Production build: emit JavaScript to dist/, which the container runs with
+  // `node dist/server.js`. The dev config (tsconfig.json) only type-checks and
+  // uses "Bundler" resolution, which describes how tsx loads the sources, NOT
+  // how Node resolves them at runtime — so the build config uses NodeNext and
+  // is the one that tells the truth about a deployed process.
+  //
+  // Both configs are checked in CI: a type error is a failure either way.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "sourceMap": true,
+    "declaration": false,
+    "removeComments": false
+  },
+  "include": ["src/**/*.ts"]
+}

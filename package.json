@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Mission Hub — adaptive student-mission platform (Moodle SSO for students, staff login for SME/QC/admin)",
+  "description": "Mission Hub \u2014 adaptive student-mission platform (Moodle SSO for students, staff login for SME/QC/admin)",
   "scripts": {
     "db:migrate": "tsx src/migrator.ts up",
     "db:migrate:down": "tsx src/migrator.ts down",
@@ -16,6 +16,9 @@
     "backup:verify": "bash scripts/backup-verify.sh",
     "publish": "tsx src/publish.ts",
     "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck:build": "tsc -p tsconfig.build.json --noEmit",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",
@@ -46,6 +49,7 @@
     "verify:audit": "tsx verify-audit.mjs",
     "verify:fail-closed": "tsx verify-fail-closed.mjs",
     "verify:backups": "tsx verify-backups.mjs",
+    "verify:ops": "tsx verify-ops.mjs",
     "verify:correctness": "tsx verify-correctness.mjs",
     "check:tokens": "npm --prefix web run check:tokens"
   },
@@ -71,5 +75,8 @@
     "tsx": "^4.16.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.69.0"
+  },
+  "engines": {
+    "node": ">=22 <23"
   }
 }

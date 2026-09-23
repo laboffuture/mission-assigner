@@ -60,6 +60,10 @@ try {
   // backup before dropping; backup:verify passes end to end and cleans up.
   run('npm run verify:backups');
 
+  // Operational readiness: liveness/readiness probes, draining on SIGTERM, and
+  // production refusing a placeholder secret.
+  run('npm run verify:ops');
+
   // Stage 1 — free-play loop (gating irrelevant).
   run('npm run db:seed');
   run('npm run verify');

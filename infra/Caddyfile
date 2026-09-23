@@ -1,0 +1,57 @@
+# Mission Hub — TLS termination and the single public origin.
+#
+# LTI requires HTTPS, and an LTI tool runs inside the LMS's iframe, so every
+# response must be allowed to be framed by the LMS and the session cookie must
+# survive a cross-site iframe (SameSite=None; Secure — set on the API side).
+#
+# Caddy obtains and renews a certificate automatically for SITE_ADDRESS.
+{
+	# Fail fast and loudly rather than serving a half-configured site.
+	admin off
+	email {$ACME_EMAIL}
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# The API. Routed here rather than through Next: same origin to the browser,
+	# one hop fewer, and the app's cookies/CSRF are unaffected (see
+	# web/next.config.mjs, which disables its own rewrite in production).
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# The staff pages Express serves itself.
+	handle /quality* {
+		reverse_proxy api:3000
+	}
+	handle /login {
+		reverse_proxy web:3001
+	}
+
+	# Health probes, for an external uptime check. /readyz reports dependencies.
+	handle /healthz {
+		reverse_proxy api:3000
+	}
+	handle /readyz {
+		reverse_proxy api:3000
+	}
+
+	# Everything else is the student UI.
+	handle {
+		reverse_proxy web:3001
+	}
+
+	header {
+		# The LMS embeds us; only the LMS may.
+		Content-Security-Policy "frame-ancestors {$LMS_ORIGIN}"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

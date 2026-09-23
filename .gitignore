@@ -35,3 +35,8 @@ logs-server.txt
 # --- OS noise ---
 .DS_Store
 Thumbs.db
+
+# Production secrets live ON THE SERVER, never in the repo. The template
+# (infra/.env.production.example) is committed; a filled copy never is.
+infra/.env.production
+infra/.env.production.local

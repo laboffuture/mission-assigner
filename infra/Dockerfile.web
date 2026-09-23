@@ -1,0 +1,37 @@
+# Mission Hub web — Next.js 14 App Router, standalone output.
+#
+# `output: 'standalone'` (web/next.config.js) makes Next trace exactly the files
+# the server needs and emit a self-contained server.js, so the runtime image
+# needs no node_modules install of its own and stays small.
+FROM node:22.21.1-bookworm-slim AS build
+WORKDIR /app
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web ./
+# The generated LMS token file (their file minus the blocking @import) is
+# produced by prebuild; it is generated here rather than trusted from the
+# context, so the image cannot ship a stale copy.
+RUN npm run build
+
+# ---------------------------------------------------------------- runtime ---
+FROM node:22.21.1-bookworm-slim AS runtime
+ENV NODE_ENV=production
+ENV PORT=3001
+ENV HOSTNAME=0.0.0.0
+WORKDIR /app
+
+# standalone bundles its own minimal node_modules; static/ and public/ are
+# served by the Next server and must be copied alongside it.
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
+
+USER node
+
+EXPOSE 3001
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3001/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server.js"]

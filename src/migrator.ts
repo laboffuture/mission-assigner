@@ -34,6 +34,8 @@ interface Migration {
   down: (pool: Pool) => Promise<void>;
 }
 
+/** Every migration this build knows about, in order. Exported so /readyz can
+ *  say whether the database is at the schema this code expects. */
 const MIGRATIONS: Migration[] = [
   { name: '001_initial_schema', up: m001.up, down: m001.down },
   { name: '002_stage3_segments_weeks_xp', up: m002.up, down: m002.down },
@@ -47,6 +49,8 @@ const MIGRATIONS: Migration[] = [
   { name: '010_adopt_pipeline_schema', up: m010.up, down: m010.down },
   { name: '011_idempotency_request_hash', up: m011.up, down: m011.down },
 ];
+
+export const MIGRATION_NAMES = MIGRATIONS.map((m) => m.name);
 
 /** A pool bound to `dbName` with multi-statement SQL enabled (migrations need it). */
 export function makePool(dbName: string): Pool {

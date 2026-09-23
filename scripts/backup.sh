@@ -17,6 +17,8 @@ set -euo pipefail
 
 # shellcheck source=lib/db.sh
 source "$(dirname "$0")/lib/db.sh"
+# shellcheck source=lib/s3.sh
+source "$(dirname "$0")/lib/s3.sh"
 
 DB="${DB_NAME:-mission_demo}"
 DEST="${BACKUP_DIR:-./backups}"
@@ -43,4 +45,30 @@ if ! backup_is_valid "$TMP"; then
 fi
 
 mv "$TMP" "$FILE"
+
+# Offsite, or it is not a backup. A verified file that never left this machine
+# does not survive the machine, so in production a failed upload FAILS the
+# backup (loudly, exit 3) rather than quietly leaving only the local copy.
+# Locally, with no BACKUP_S3_* configured, it just says so and carries on.
+upload_status=0
+s3_upload "$FILE" || upload_status=$?
+if [ "$upload_status" = "1" ]; then
+  echo "backup.sh: FAILED — \`$DB\` was backed up locally but the upload to object storage failed." >&2
+  echo "backup.sh: the local copy is $FILE; fix object storage and re-run, do not rely on it." >&2
+  exit 3
+fi
+if [ "$upload_status" = "2" ] && s3_required; then
+  echo "backup.sh: FAILED — offsite storage is not configured and this is production." >&2
+  echo "backup.sh: set BACKUP_S3_* (see infra/.env.production.example)." >&2
+  exit 3
+fi
+
+# Retention, once the copy that matters is safely offsite.
+local_prune "$DEST" || true
+# `[ … ] && …` would be the last command in the list, so under `set -e` a false
+# test would end the script before it printed the path it just wrote.
+if [ "$upload_status" = "0" ]; then
+  s3_prune || true
+fi
+
 echo "$FILE"

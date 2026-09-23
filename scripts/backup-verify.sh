@@ -17,6 +17,8 @@ cd "$(dirname "$0")/.."
 
 # shellcheck source=lib/db.sh
 source scripts/lib/db.sh
+# shellcheck source=lib/s3.sh
+source scripts/lib/s3.sh
 
 SRC="mission_demo_bkpsrc"
 RESTORE="mission_demo_bkprestore"
@@ -46,6 +48,24 @@ DB_NAME="$SRC" npx tsx src/seed.ts >/dev/null 2>&1
 
 echo "[2/6] back up \`$SRC\`"
 FILE="$(DB_NAME="$SRC" BACKUP_DIR="${BACKUP_DIR:-./backups}" bash scripts/backup.sh)"
+
+# VERIFY_SOURCE=remote proves the copy that actually protects us: the one in
+# object storage. Restoring the local file only proves the disk we are already
+# standing on. Anything else (unset, "local") keeps the local file.
+if [ "${VERIFY_SOURCE:-local}" = "remote" ]; then
+  echo "      verifying the REMOTE copy, not the local one"
+  REMOTE_FILE="$(mktemp "${TMPDIR:-/tmp}/bkp-remote-XXXXXX.sql.gz")"
+  if ! KEY="$(s3_download_latest "$REMOTE_FILE")"; then
+    echo "backup-verify: FAILED — could not download a backup from object storage" >&2
+    exit 1
+  fi
+  echo "      downloaded $KEY"
+  if ! backup_is_valid "$REMOTE_FILE"; then
+    echo "backup-verify: FAILED — the REMOTE backup did not verify" >&2
+    exit 1
+  fi
+  FILE="$REMOTE_FILE"
+fi
 echo "      -> $FILE"
 
 echo "[3/6] restore into \`$RESTORE\`"
