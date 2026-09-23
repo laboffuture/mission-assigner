@@ -20,9 +20,15 @@ const SECRET_VARS = ['SESSION_SECRET', 'DB_PASS', 'SEED_STAFF_PASSWORD', 'BACKUP
  */
 function looksLikePlaceholder(value: string): boolean {
   const v = value.trim().toLowerCase();
-  if (/(^|[^a-z])(replace|change)[-_ ]?me/.test(v)) return true;
-  if (/(placeholder|example|your[-_ ]|<.*>|xxx+|todo)/.test(v)) return true;
-  return ['changeme', 'password', 'secret', 'devpass', 'test', 'notset', 'unset'].includes(v);
+  // Template markers: <set-on-host>, replace-me, your-key, TODO, …
+  if (/<[^>]*>/.test(v)) return true;
+  if (/(^|[^a-z])(replace|change|set)[-_ ]?(me|on[-_ ]host)/.test(v)) return true;
+  if (/(placeholder|example|your[-_ ]|todo)/.test(v)) return true;
+  // Shipped defaults. Deliberately exact matches, not substrings: a real secret
+  // may contain any of these as a fragment, and a check that cries wolf gets
+  // turned off. ('xxx' was matched loosely here and flagged a test fixture of
+  // repeated characters — the kind of false positive that does exactly that.)
+  return ['changeme', 'password', 'devpass', 'secret', 'notset', 'unset'].includes(v);
 }
 
 const EnvSchema = z

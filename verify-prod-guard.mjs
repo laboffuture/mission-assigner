@@ -5,6 +5,7 @@
 // Requires a fresh seed (default password 'changeme'). Run: npm run verify:prod-guard
 import 'dotenv/config';
 import { spawnSync, execSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { pool } from './src/db.js';
 import { findDefaultStaffPasswords, assertProductionSecurity } from './src/securityChecks.js';
 
@@ -21,12 +22,28 @@ function check(name, cond, detail = '') {
 // dev auth (including an unset AUTH_MODE, or AUTH_MODE=dev inherited from .env)
 // or with test hooks, so both must be valid here or env validation would stop
 // the boot before the password guard this harness exists to test.
+//
+// DB_PASS is its own problem here: production also refuses to boot when a secret
+// still looks like a placeholder or a shipped default, and the local database
+// password IS such a default ('devpass'). Rather than weaken that check to suit
+// the harness, this creates a throwaway MySQL user with a real password and
+// boots production as that user, so the run reaches the staff-password guard
+// this file exists to test.
+const GUARD_USER = 'mh_prodguard';
+const GUARD_PASS = `pg-${randomBytes(12).toString('hex')}`;
+await pool.query(`CREATE USER IF NOT EXISTS ?@'%' IDENTIFIED BY ?`, [GUARD_USER, GUARD_PASS]);
+await pool.query(`ALTER USER ?@'%' IDENTIFIED BY ?`, [GUARD_USER, GUARD_PASS]);
+await pool.query(`GRANT ALL PRIVILEGES ON \`${process.env.DB_NAME ?? 'mission_demo'}\`.* TO ?@'%'`, [GUARD_USER]);
+await pool.query(`FLUSH PRIVILEGES`);
+
 const prodEnv = {
   NODE_ENV: 'production',
-  SESSION_SECRET: 'x'.repeat(48),
+  SESSION_SECRET: randomBytes(32).toString('hex'),
   PORT: '3998',
   AUTH_MODE: 'lti',
   ENABLE_TEST_HOOKS: '',
+  DB_USER: GUARD_USER,
+  DB_PASS: GUARD_PASS,
 };
 
 console.log('\n[Refuses to boot in production while staff have the default password]');
@@ -76,6 +93,8 @@ console.log('\n[The gate passes once every staff password is changed]');
 
 // Restore the pristine demo seed (default password) for the rest of the suite.
 execSync('npm run db:seed', { stdio: 'ignore' });
+
+await pool.query(`DROP USER IF EXISTS ?@'%'`, [GUARD_USER]);
 await pool.end();
 
 console.log(`\n==== Prod guard: ${pass} passed, ${fail} failed ====`);

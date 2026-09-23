@@ -334,9 +334,16 @@ jobs:
           docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.ci.yml config > /dev/null
           echo "compose files valid"
 
+      # Job logs need repository-admin rights to read, so a build failure has to
+      # explain itself in an annotation instead.
       - name: Build images
         working-directory: infra
-        run: docker compose --env-file .env.production build api web backup
+        run: |
+          set -o pipefail
+          if ! docker compose --env-file .env.production build api web backup 2>&1 | tee /tmp/build.log; then
+            echo "::error title=Stack image build failed::$(tail -c 900 /tmp/build.log | paste -sd' ' -)"
+            exit 1
+          fi
 
       # ---- 1. Production shape: exactly what ships to the server.
       - name: Bring the stack up (production configuration)
