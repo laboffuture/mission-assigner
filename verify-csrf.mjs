@@ -98,8 +98,13 @@ try {
   }
 } finally {
   delete process.env.CSRF_ENFORCED;
-  server.close();
+  // AWAIT the close: server.close() is asynchronous, and calling process.exit()
+  // while the handle is still closing aborts the process on Windows with
+  // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" — which run-all
+  // then reports as a failed suite even though every check passed. It shows up
+  // under suite load, not in a standalone run.
+  await new Promise((resolve) => server.close(resolve));
 }
 
 console.log(`\n==== CSRF: ${pass} passed, ${fail} failed ====`);
-process.exit(fail ? 1 : 0);
+process.exitCode = fail ? 1 : 0;
