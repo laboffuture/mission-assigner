@@ -15,6 +15,9 @@ const check = (name, cond, detail = '') => {
   const ok = !!cond;
   ok ? pass++ : fail++;
   console.log(`  ${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`);
+  // Annotate every failure as it happens: the job log needs repository-admin
+  // rights to read, and this script can exit early on a hard check.
+  if (!ok) console.log(`::error title=Stack journey::${name} ${String(detail).slice(0, 300)}`);
   return ok;
 };
 
@@ -62,7 +65,11 @@ check('login-as sets a session cookie', login.status === 200 && jar.has('mh_sess
 
 // 2. The week board, server-rendered by Next, reading the api server-side.
 const week = await call('GET', '/week');
-check('the week board renders for the signed-in student', week.status === 200 && /This week/i.test(week.text), `(${week.status})`);
+check(
+  'the week board renders for the signed-in student',
+  week.status === 200 && /This week/i.test(week.text),
+  `(${week.status})`
+);
 
 // 3. Open a mission, answer it, and give feedback — the whole loop.
 const weekJson = await call('GET', `/api/week/${student.id}`);
