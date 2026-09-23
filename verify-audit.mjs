@@ -58,6 +58,11 @@ const { computeStreak, computeLongestStreak } = await import('./src/streaks.js')
 
 // ---------------------------------------------------------------- results --
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) ?? '').slice(7).split(',').filter(Boolean);
+// --shuffle runs the cases in a random order (--shuffle=<seed> replays one).
+// A case that only passes in file order is depending on another case, which is
+// a bug in the case, not a property of the system.
+const SHUFFLE_ARG = process.argv.find((a) => a === '--shuffle' || a.startsWith('--shuffle='));
+const SHUFFLE_SEED = SHUFFLE_ARG ? Number(SHUFFLE_ARG.split('=')[1] ?? Date.now() % 2147483647) || 1 : null;
 const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,8 +71,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * failing sub-check is VERIFIED; any failing sub-check makes it FAILED; calling
  * c.notTested(reason) makes it NOT TESTED regardless of sub-checks.
  */
-async function runCase(section, id, title, expected, fn) {
-  if (ONLY.length && !ONLY.includes(section)) return;
+/**
+ * Cases are REGISTERED here and executed later, so their order is data rather
+ * than the order of statements in this file. Every case declares the runtime
+ * state it needs (selection mode, feedback gating, curriculum config); the
+ * runner applies that state fresh before each one. That is what makes the
+ * suite order-independent: nothing is inherited from whatever ran before, so
+ * `--shuffle` is a fair test rather than a lottery.
+ */
+const CASES = [];
+function runCase(section, id, title, expected, fn, state = {}) {
+  CASES.push({ section, id, title, expected, fn, state });
+}
+
+async function execCase({ section, id, title, expected, fn }) {
+  void section;
   console.log(`\n[${id}] ${title}\n    EXPECTED: ${expected}`);
   const c = {
     checks: [],
@@ -406,17 +424,95 @@ async function studentPage(sid, { theme = 'nebula', width = 1280 } = {}) {
   return { ctx, page, errors };
 }
 
+/**
+ * The state every case starts from, plus its own overrides. Applied to BOTH the
+ * harness process (cfg.*, used by the cases that call selection directly) and
+ * the running API (the /api/test hooks), because a case can exercise either.
+ */
+const BASE_STATE = {
+  mode: 'legacy',
+  gating: true,
+  curriculum: { poolLookbackSessions: 0, percentScope: 'credit', revisionMixPercent: 20 },
+};
+async function applyState(state = {}) {
+  const mode = state.mode ?? BASE_STATE.mode;
+  const gating = state.gating ?? BASE_STATE.gating;
+  const curriculum = { ...BASE_STATE.curriculum, ...(state.curriculum ?? {}) };
+  cfg.setSelectionMode(mode);
+  cfg.setPoolLookbackSessions(curriculum.poolLookbackSessions);
+  cfg.setPercentScope(curriculum.percentScope);
+  cfg.setRevisionMixPercent(curriculum.revisionMixPercent);
+  await hook('selection-mode', { mode });
+  await hook('feedback-gating', { enabled: gating });
+  await hook('curriculum-config', curriculum);
+}
+
+/** Deterministic shuffle, so a failing order can be replayed: --shuffle=<seed>. */
+function shuffled(list, seed) {
+  let x = seed >>> 0 || 1;
+  const rand = () => ((x ^= x << 13), (x ^= x >>> 17), (x ^= x << 5), (x >>> 0) / 4294967296);
+  const out = [...list];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 // ============================================================ THE CASES ==
 console.log('Mission Hub audit harness');
 if (!ONLY.length || !ONLY.every((s) => ['4.10'].includes(s))) await reseed();
 await loadXpRules();
 trackId = await cur.findTrack('Robotics', "Tesla's Track");
-await hook('selection-mode', { mode: 'legacy' });
-await hook('feedback-gating', { enabled: true });
-await hook('curriculum-config', { poolLookbackSessions: 0, percentScope: 'credit', revisionMixPercent: 20 });
 
 // ============================================== 4.1 Student journey ==
+/**
+ * A student who has completed an entire week. Case 1 walks the week check by
+ * check and records the student here; case 8 needs the same end state but must
+ * not depend on case 1 having run first, so it builds its own when this is
+ * empty. Either way it is built at most once per run.
+ */
 let fullWeekStudent = null;
+/**
+ * The newest assistance event, raised the real way (a student stalls three
+ * times) when the database has none. Cases that act on an event used to take
+ * whatever an earlier case had left behind — case 35 failed under --shuffle
+ * because it ran before anything had raised one.
+ */
+async function ensureAssistanceEvent() {
+  const existing = (await one(`SELECT id FROM assistance_events ORDER BY id DESC LIMIT 1`))?.id;
+  if (existing) return Number(existing);
+  await hook('feedback-gating', { enabled: false });
+  const sid = await newCsStudent('assist-fixture');
+  for (let i = 1; i <= 3; i++) {
+    const w = await weekOf(sid);
+    await completeSlot(sid, slotByIndex(w, i).slot_id, false, { fb: false });
+  }
+  await hook('feedback-gating', { enabled: true });
+  const row = await one(`SELECT id FROM assistance_events WHERE student_id = ? ORDER BY id DESC LIMIT 1`, [sid]);
+  return row ? Number(row.id) : null;
+}
+
+async function completedWeekStudent() {
+  if (fullWeekStudent) return fullWeekStudent;
+  const sid = await newCsStudent('journey-fixture');
+  let week = await weekOf(sid);
+  const order = [
+    ...week.slots
+      .filter((s) => !s.is_weekly)
+      .map((s) => s.slot_index)
+      .sort((a, b) => a - b),
+    ...week.slots.filter((s) => s.is_weekly).map((s) => s.slot_index),
+  ];
+  for (const idx of order) {
+    week = await weekOf(sid);
+    const slot = slotByIndex(week, idx);
+    if (!slot || slot.status !== 'open') continue;
+    await completeSlot(sid, slot.slot_id, true);
+  }
+  fullWeekStudent = sid;
+  return sid;
+}
 
 await runCase(
   '4.1',
@@ -720,8 +816,9 @@ await runCase(
   'A student completes the week and tries to open another slot',
   'For the student from case 1: no slot is open; re-opening each completed slot returns its existing assignment without creating a new one or awarding XP; re-submitting a graded assignment returns the stored result for that assignment, marked already_submitted, and awards no XP and no second grade.',
   async (c) => {
-    if (!fullWeekStudent) return c.notTested('case 1 did not produce a completed week');
-    const sid = fullWeekStudent;
+    // Case 1 leaves one behind; if it has not run (or ran after this one),
+    // build the same end state here rather than skipping the case.
+    const sid = await completedWeekStudent();
     const week = await weekOf(sid);
     c.check(
       'no slot left open',
@@ -777,10 +874,10 @@ await runCase(
 );
 
 // ========================================= 4.2 Curriculum boundaries ==
-cfg.setSelectionMode('curriculum');
-cfg.setPoolLookbackSessions(0);
-cfg.setPercentScope('credit');
-cfg.setRevisionMixPercent(0);
+// Sections 4.2 and 4.3 run in curriculum mode with the revision mix off. It is
+// declared per case (the CURRICULUM state below) rather than set here, so a
+// case still gets it when the cases run in another order.
+const CURRICULUM = { mode: 'curriculum', curriculum: { revisionMixPercent: 0 } };
 const sessionInfo = async (id) =>
   one(
     `SELECT s.id, s.credit_sequence cs, s.sequence seq, p.sequence pseq, c.code FROM sessions s
@@ -822,7 +919,8 @@ await runCase(
     const p = await poolLabels(sid);
     c.check('pool is exactly session 1', JSON.stringify(p) === '["C1:1"]', `(${p})`);
     c.check('chosen mission from C1:1', (await chosenLabel(await choose(sid))) === 'C1:1');
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -845,7 +943,8 @@ await runCase(
       (await chosenLabel(await choose(sid))) === 'C1:24',
       `(${await chosenLabel(await choose(sid))})`
     );
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -864,7 +963,8 @@ await runCase(
       `(${p})`
     );
     c.check('chosen from C1:10', (await chosenLabel(await choose(sid))) === 'C1:10');
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -885,7 +985,8 @@ await runCase(
       (ch.relaxations ?? []).includes('curriculum:previous_credits'),
       `(${ch.relaxations})`
     );
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -902,7 +1003,8 @@ await runCase(
     const ch = await choose(sid);
     c.check('served C2:1', (await chosenLabel(ch)) === 'C2:1', `(${await chosenLabel(ch)})`);
     c.check('no relaxation needed', (ch.relaxations ?? []).length === 0, `(${ch.relaxations})`);
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -931,7 +1033,8 @@ await runCase(
     } finally {
       await hook('selection-mode', { mode: 'legacy' });
     }
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -964,7 +1067,8 @@ await runCase(
         `(got ${i.code}/P${i.pseq}/S${i.seq})`
       );
     }
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -983,7 +1087,8 @@ await runCase(
       }
       c.check(`${p}% rejected`, threw, threw ? '' : `(returned ${got})`);
     }
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -1022,7 +1127,8 @@ await runCase(
       cb.chosen?.mission_id === keep.id,
       `(got ${cb.chosen?.mission_id})`
     );
-  }
+  },
+  CURRICULUM
 );
 
 // ====================================== 4.3 Revision and exhaustion ==
@@ -1068,7 +1174,8 @@ await runCase(
     } finally {
       cfg.setPoolLookbackSessions(0);
     }
-  }
+  },
+  CURRICULUM
 );
 
 let revisionFixture = null;
@@ -1142,7 +1249,8 @@ await runCase(
       !rev.sub.json?.xp?.correct?.awarded,
       `(${JSON.stringify(rev.sub.json?.xp?.correct)})`
     );
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -1164,7 +1272,8 @@ await runCase(
     );
     c.check('mission graded on two passes', Number(passes.n) === 2, `(passes=${passes.n})`);
     c.check('exactly one correct xp_event across both', Number(r.n) === 1, `(correct events=${r.n})`);
-  }
+  },
+  CURRICULUM
 );
 
 await runCase(
@@ -1189,10 +1298,9 @@ await runCase(
       c.check(`${p}%: ${earlier}/200 earlier`, earlier >= lo && earlier <= hi, `(allowed ${lo}-${hi})`);
     }
     cfg.setRevisionMixPercent(0);
-  }
+  },
+  CURRICULUM
 );
-cfg.setSelectionMode('legacy');
-
 // ========================================= 4.4 Concurrency ==
 await runCase(
   '4.4',
@@ -1396,8 +1504,6 @@ await runCase(
     c.check('all 15 trials clean', bad === 0, `(bad=${bad} ${detail.join(' ; ')})`);
   }
 );
-await hook('feedback-gating', { enabled: true });
-
 // =================================== 4.5 Authentication and authorisation ==
 await runCase(
   '4.5',
@@ -1639,7 +1745,7 @@ await runCase(
       )
         return;
       const session = [csrfCookie, cookieOf(login)].filter(Boolean).join('; ');
-      const ev = (await one(`SELECT id FROM assistance_events ORDER BY id DESC LIMIT 1`))?.id;
+      const ev = await ensureAssistanceEvent();
       if (!c.check('an assistance event exists to act on', !!ev)) return;
       const bad = await api('POST', `/api/assistance/${ev}/acknowledge`, {
         base: inst.base,
@@ -1734,7 +1840,7 @@ await runCase(
     const aid = o.json.assignment_id;
     const k = await answerKey(aid);
     const s = await staffLogin('instructor');
-    const ev = (await one(`SELECT id FROM assistance_events LIMIT 1`))?.id ?? 1;
+    const ev = (await ensureAssistanceEvent()) ?? 1;
     const BIG = 'x'.repeat(1_000_000);
     const SQLI = "' OR 1=1 --";
     const studentsBefore = Number((await one(`SELECT COUNT(*) n FROM students`)).n);
@@ -2816,6 +2922,21 @@ await runCase(
     }
   }
 );
+
+// ============================================================ RUN THEM ==
+{
+  const selected = CASES.filter((k) => !ONLY.length || ONLY.includes(k.section));
+  const order = SHUFFLE_SEED == null ? selected : shuffled(selected, SHUFFLE_SEED);
+  if (SHUFFLE_SEED != null) {
+    console.log(`\nSHUFFLED ORDER (seed ${SHUFFLE_SEED}): ${order.map((k) => k.id).join(', ')}`);
+  }
+  for (const kase of order) {
+    await applyState(kase.state);
+    await execCase(kase);
+  }
+  // Report in case-number order however they ran, so two runs can be compared.
+  results.sort((a, b) => a.id - b.id);
+}
 
 // ================================================================= report ==
 if (pw) await pw.b.close();
