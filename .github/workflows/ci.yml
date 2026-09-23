@@ -412,23 +412,44 @@ jobs:
           expect "/healthz body" '{"status":"ok"}' "$(curl -s http://localhost/healthz)"
           expect "/readyz body" '{"status":"ready"}' "$(curl -s http://localhost/readyz)"
           # The API is reachable THROUGH CADDY (not via the Next rewrite) and
-          # refuses an unauthenticated mutation.
-          expect "unauthenticated POST /api/submit" 401 \
-            "$(code -X POST http://localhost/api/submit -H 'Content-Type: application/json' -d '{"assignmentId":1,"selected":"a"}')"
-          # The staff page is gated server-side: anonymous is redirected to login.
-          expect "anonymous GET /quality" 302 "$(code http://localhost/quality)"
-          # Dev login does not exist in the production configuration.
-          expect "POST /api/dev/login-as" 404 \
-            "$(code -X POST http://localhost/api/dev/login-as -H 'Content-Type: application/json' -d '{"studentId":1}')"
-          # The student UI is served by the web container.
-          expect "GET /login" 200 "$(code http://localhost/login)"
-          body=$(curl -s http://localhost/login | tr -d '\n' | head -c 400)
-          case "$body" in
-            *[Mm]ission*) echo "  PASS /login is the student UI" ;;
-            *) echo "  FAIL /login body: $body"
-               echo "::error title=Production shape::/login did not look like the student UI: $(echo "$body" | head -c 200)"
+          # refuses an unauthenticated mutation. In this configuration
+          # CSRF_ENFORCED=true, so a POST with no token is refused 403 by the
+          # double-submit check BEFORE authentication is even reached — earlier
+          # than the 401 the same request gets in development. Either is a
+          # refusal; what matters is that it is refused and nothing is created.
+          submit_code=$(code -X POST http://localhost/api/submit -H 'Content-Type: application/json' -d '{"assignmentId":1,"selected":"a"}')
+          case "$submit_code" in
+            401 | 403) echo "  PASS unauthenticated POST /api/submit refused ($submit_code)" ;;
+            *) echo "::error title=Production shape::unauthenticated POST /api/submit was not refused (got $submit_code)"
                fails=$((fails + 1)) ;;
           esac
+          # The staff page is gated server-side: anonymous is redirected to login.
+          expect "anonymous GET /quality" 302 "$(code http://localhost/quality)"
+          # Dev login must not sign anyone in here. It is not registered at all
+          # under AUTH_MODE=lti (404); CSRF refuses it first (403). The thing
+          # that must never happen is a session.
+          devlogin=$(curl -s -D - -o /dev/null -X POST http://localhost/api/dev/login-as \
+            -H 'Content-Type: application/json' -d '{"studentId":1}')
+          devcode=$(printf '%s' "$devlogin" | head -1 | awk '{print $2}')
+          case "$devcode" in
+            403 | 404) echo "  PASS dev login-as refused ($devcode)" ;;
+            *) echo "::error title=Production shape::dev login-as was not refused (got $devcode)"; fails=$((fails + 1)) ;;
+          esac
+          if printf '%s' "$devlogin" | grep -qi 'set-cookie: *mh_session'; then
+            echo "::error title=Production shape::dev login-as SET A SESSION in the production configuration"
+            fails=$((fails + 1))
+          else
+            echo "  PASS dev login-as set no session cookie"
+          fi
+          # The student UI is served by the web container. "Mission Hub" is in
+          # the <title>, which is past the first few hundred bytes of head.
+          expect "GET /login" 200 "$(code http://localhost/login)"
+          if curl -s http://localhost/login | grep -qi 'mission hub'; then
+            echo "  PASS /login is the student UI"
+          else
+            echo "::error title=Production shape::/login did not look like the student UI"
+            fails=$((fails + 1))
+          fi
           [ "$fails" = "0" ] || exit 1
 
       # ---- 2. A real student journey, end to end, through Caddy.
