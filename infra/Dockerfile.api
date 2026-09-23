@@ -30,6 +30,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 # Served by the API itself: the staff login page and the quality view.
 COPY public ./public
+# The curriculum definition the seed and `npm run curriculum:load` read. Data,
+# not code, so it is copied rather than compiled — without it the seed fails
+# with ENOENT on /app/curriculum/teslas-track.json.
+COPY curriculum ./curriculum
 
 # The node image already provides an unprivileged `node` user (uid 1000).
 USER node
