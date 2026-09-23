@@ -309,13 +309,15 @@ jobs:
         working-directory: infra
         run: |
           # Real-shaped values; secrets are generated here and never committed.
+          DB_PASS_VALUE=$(openssl rand -hex 16)
+          SESSION_SECRET_VALUE=$(openssl rand -hex 32)
           cat > .env.production <<EOF
           SITE_ADDRESS=:80
           ACME_EMAIL=ci@example.org
           LMS_ORIGIN=https://lms.example.org
           DB_NAME=mission_demo
-          DB_PASS=$(openssl rand -hex 16)
-          SESSION_SECRET=$(openssl rand -hex 32)
+          DB_PASS=$DB_PASS_VALUE
+          SESSION_SECRET=$SESSION_SECRET_VALUE
           SESSION_MAX_AGE=43200
           SESSION_SAMESITE=none
           AUTH_MODE=lti
@@ -325,6 +327,19 @@ jobs:
           LOG_LEVEL=info
           EOF
           echo "wrote infra/.env.production ($(wc -l < .env.production) lines)"
+
+          # This workflow sets DB_PASS=devpass and AUTH_MODE=dev at the top level
+          # for the harness jobs, and Docker Compose gives the SHELL environment
+          # precedence over --env-file. Without this, the production-shape test
+          # would be handed dev auth and a shipped-default password — which the
+          # app rightly refuses to boot with. Override them for this job so the
+          # generated file is what actually reaches the containers.
+          {
+            echo "DB_PASS=$DB_PASS_VALUE"
+            echo "SESSION_SECRET=$SESSION_SECRET_VALUE"
+            echo "AUTH_MODE=lti"
+            echo "DB_NAME=mission_demo"
+          } >> "$GITHUB_ENV"
 
       # The compose file cannot rot unnoticed.
       - name: docker compose config
