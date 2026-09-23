@@ -25,6 +25,12 @@ services:
       NODE_ENV: test
       AUTH_MODE: dev
       CSRF_ENFORCED: 'false'
+      # The runner has no certificate, so Caddy serves plain HTTP here and
+      # X-Forwarded-Proto is http. A SameSite=None cookie must be Secure, which
+      # a browser (and the journey script) would then never receive. The journey
+      # therefore runs with a lax cookie; the production shape above still uses
+      # SameSite=None, and TRUST_PROXY is what makes it work over real TLS.
+      SESSION_SAMESITE: lax
 
   web:
     environment:

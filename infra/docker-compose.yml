@@ -82,6 +82,9 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
       SESSION_MAX_AGE: ${SESSION_MAX_AGE:-43200}
       SESSION_SAMESITE: ${SESSION_SAMESITE:-none}
+      # Caddy terminates TLS and forwards http to this container. Without this
+      # the session cookie (Secure, as SameSite=None requires) is never set.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       CSRF_ENFORCED: ${CSRF_ENFORCED:-true}
       SELECTION_MODE: ${SELECTION_MODE:-legacy}
       LOG_LEVEL: ${LOG_LEVEL:-info}

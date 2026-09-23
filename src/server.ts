@@ -90,6 +90,20 @@ validateEnv();
 
 const app = express();
 
+// Behind a reverse proxy (Caddy in the deployed stack) TLS ends at the proxy and
+// this process sees plain HTTP. Express then reports req.secure = false, and
+// cookie-session SILENTLY refuses to set a Secure cookie — which is every
+// session cookie in production, so nobody could sign in at all. Trusting the
+// proxy makes Express read X-Forwarded-Proto, which Caddy sets.
+//
+// Off by default: trusting a forwarded header when nothing trustworthy sets it
+// would let a client claim any protocol or client IP. TRUST_PROXY is the number
+// of proxy hops in front of us (1 for the compose stack).
+const TRUST_PROXY = process.env.TRUST_PROXY;
+if (TRUST_PROXY && TRUST_PROXY !== '0' && TRUST_PROXY !== 'false') {
+  app.set('trust proxy', Number.isNaN(Number(TRUST_PROXY)) ? TRUST_PROXY : Number(TRUST_PROXY));
+}
+
 /** Per-request logger accessor (pino-http attaches req.log; fall back to base). */
 const rlog = (req: express.Request) => (req as any).log ?? logger;
 

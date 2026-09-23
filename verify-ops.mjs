@@ -248,6 +248,47 @@ console.log('\n[3] SIGTERM during a submission: it finishes and grades exactly o
   }
 }
 
+// ------------------------------------------------------------------------ [5]
+console.log('\n[5] Behind a TLS-terminating proxy, the Secure session cookie is still set');
+{
+  // The deployed stack puts Caddy in front: TLS ends there and this process sees
+  // plain HTTP. Express only believes X-Forwarded-Proto when it trusts the
+  // proxy; without that, cookie-session silently declines to set a Secure
+  // cookie and NOBODY can sign in. Caught by the CI stack journey, so it has a
+  // test here too.
+  const trusting = await startApi(3046, { SESSION_SAMESITE: 'none', TRUST_PROXY: '1', AUTH_MODE: 'dev' });
+  const blind = await startApi(3047, { SESSION_SAMESITE: 'none', TRUST_PROXY: '', AUTH_MODE: 'dev' });
+  try {
+    const [[student]] = await db.query(`SELECT id FROM students WHERE role = 'student' ORDER BY id LIMIT 1`);
+    const login = async (base) => {
+      const r = await fetch(`${base}/api/dev/login-as`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Proto': 'https' },
+        body: JSON.stringify({ studentId: Number(student.id) }),
+      });
+      return { status: r.status, cookies: (r.headers.getSetCookie?.() ?? []).join(' ') };
+    };
+    const good = await login(trusting.base);
+    check('login succeeds behind the proxy', good.status === 200, `(got ${good.status})`);
+    check(
+      'TRUST_PROXY=1: the session cookie IS set on a forwarded https request',
+      /mh_session=/.test(good.cookies),
+      `(set-cookie: ${good.cookies.slice(0, 120) || 'none'})`
+    );
+    check('  ...and it is marked Secure', /secure/i.test(good.cookies), `(${good.cookies.slice(0, 120)})`);
+
+    const bad = await login(blind.base);
+    check(
+      'without TRUST_PROXY the same request sets NO session (the bug this guards)',
+      !/mh_session=/.test(bad.cookies),
+      `(set-cookie: ${bad.cookies.slice(0, 120) || 'none'})`
+    );
+  } finally {
+    killTree(listenerPid(3046) ?? trusting.child.pid);
+    killTree(listenerPid(3047) ?? blind.child.pid);
+  }
+}
+
 // ------------------------------------------------------------------------ [4]
 console.log('\n[4] Production refuses to boot on a placeholder secret');
 {
