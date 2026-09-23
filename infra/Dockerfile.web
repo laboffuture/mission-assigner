@@ -22,11 +22,12 @@ ENV PORT=3001
 ENV HOSTNAME=0.0.0.0
 WORKDIR /app
 
-# standalone bundles its own minimal node_modules; static/ and public/ are
-# served by the Next server and must be copied alongside it.
+# standalone bundles its own minimal node_modules; .next/static must be copied
+# alongside it. There is deliberately no public/ here: this app serves no static
+# files of its own (the API serves its own public/ for the staff pages), and
+# copying a directory that does not exist fails the build.
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
 
 USER node
 

@@ -18,7 +18,15 @@ const BASE = 'http://localhost:3000';
 
 function run(cmd, opts = {}) {
   console.log(`\n\x1b[36m$ ${cmd}\x1b[0m`);
-  execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root });
+  try {
+    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root });
+  } catch (err) {
+    // In CI the job log needs repository-admin rights to read, so a failure
+    // visible only there is invisible to everyone else. Name the suite in an
+    // annotation, which anyone can see on the run.
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
+    throw err;
+  }
 }
 
 // Preflight: server up + test hooks enabled.
