@@ -14,6 +14,7 @@ import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { spawn, spawnSync } from 'node:child_process';
 import { killTree, TREE_OPTS } from './test-support/proc.mjs';
+import { createProdDbUser } from './test-support/prod-db-user.mjs';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -121,7 +122,16 @@ await q(
 );
 
 // ================================================================ boot ==
-const PROD = { NODE_ENV: 'production', SESSION_SECRET: PROD_SECRET };
+// Production also refuses a secret that still looks like a shipped default, and
+// the local database password IS one ('devpass'). A harness cannot use it while
+// pretending to be production, so it boots as a throwaway user instead — the
+// check stays strict and these cases still reach what they are testing.
+// The cases boot against the SCRATCH database, so the throwaway user needs
+// rights there as well as on the live one.
+const prodDb = await createProdDbUser(root, 'failclosed', {
+  databases: [SCRATCH, process.env.DB_NAME ?? 'mission_demo'],
+});
+const PROD = { NODE_ENV: 'production', SESSION_SECRET: PROD_SECRET, ...prodDb.env };
 
 console.log('\n[1] NODE_ENV=production with AUTH_MODE unset refuses to boot');
 {
@@ -361,6 +371,7 @@ console.log('\n[15] Real-time expiry: SESSION_MAX_AGE=2 rejects the same cookie 
 }
 
 await q(`DROP DATABASE IF EXISTS \`${SCRATCH}\``);
+await prodDb.drop();
 await root.end();
 console.log(`\n==== Fail-closed: ${pass} passed, ${fail} failed ====`);
 process.exitCode = fail ? 1 : 0;

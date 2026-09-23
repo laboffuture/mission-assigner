@@ -5,7 +5,7 @@
 // Requires a fresh seed (default password 'changeme'). Run: npm run verify:prod-guard
 import 'dotenv/config';
 import { spawnSync, execSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createProdDbUser } from './test-support/prod-db-user.mjs';
 import { pool } from './src/db.js';
 import { findDefaultStaffPasswords, assertProductionSecurity } from './src/securityChecks.js';
 
@@ -29,12 +29,7 @@ function check(name, cond, detail = '') {
 // the harness, this creates a throwaway MySQL user with a real password and
 // boots production as that user, so the run reaches the staff-password guard
 // this file exists to test.
-const GUARD_USER = 'mh_prodguard';
-const GUARD_PASS = `pg-${randomBytes(12).toString('hex')}`;
-await pool.query(`CREATE USER IF NOT EXISTS ?@'%' IDENTIFIED BY ?`, [GUARD_USER, GUARD_PASS]);
-await pool.query(`ALTER USER ?@'%' IDENTIFIED BY ?`, [GUARD_USER, GUARD_PASS]);
-await pool.query(`GRANT ALL PRIVILEGES ON \`${process.env.DB_NAME ?? 'mission_demo'}\`.* TO ?@'%'`, [GUARD_USER]);
-await pool.query(`FLUSH PRIVILEGES`);
+const prodDb = await createProdDbUser(pool, 'prodguard');
 
 const prodEnv = {
   NODE_ENV: 'production',
@@ -42,8 +37,7 @@ const prodEnv = {
   PORT: '3998',
   AUTH_MODE: 'lti',
   ENABLE_TEST_HOOKS: '',
-  DB_USER: GUARD_USER,
-  DB_PASS: GUARD_PASS,
+  ...prodDb.env,
 };
 
 console.log('\n[Refuses to boot in production while staff have the default password]');
@@ -94,7 +88,7 @@ console.log('\n[The gate passes once every staff password is changed]');
 // Restore the pristine demo seed (default password) for the rest of the suite.
 execSync('npm run db:seed', { stdio: 'ignore' });
 
-await pool.query(`DROP USER IF EXISTS ?@'%'`, [GUARD_USER]);
+await prodDb.drop();
 await pool.end();
 
 console.log(`\n==== Prod guard: ${pass} passed, ${fail} failed ====`);
