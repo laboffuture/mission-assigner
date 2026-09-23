@@ -396,20 +396,40 @@ jobs:
 
       - name: The production shape refuses what it should
         run: |
-          set -x
-          # Health and readiness are public and say nothing else.
-          curl -sf http://localhost/healthz | grep -q '"status":"ok"'
+          fails=0
+          expect() { # expect <what> <expected> <actual>
+            if [ "$2" = "$3" ]; then
+              echo "  PASS $1 ($3)"
+            else
+              echo "  FAIL $1 (expected $2, got $3)"
+              echo "::error title=Production shape::$1 — expected $2, got $3"
+              fails=$((fails + 1))
+            fi
+          }
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
+          # Health and readiness are public, and say nothing else.
+          expect "/healthz body" '{"status":"ok"}' "$(curl -s http://localhost/healthz)"
+          expect "/readyz body" '{"status":"ready"}' "$(curl -s http://localhost/readyz)"
           # The API is reachable THROUGH CADDY (not via the Next rewrite) and
           # refuses an unauthenticated mutation.
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost/api/submit \
-            -H 'Content-Type: application/json' -d '{"assignmentId":1,"selected":"a"}')" = "401"
+          expect "unauthenticated POST /api/submit" 401 \
+            "$(code -X POST http://localhost/api/submit -H 'Content-Type: application/json' -d '{"assignmentId":1,"selected":"a"}')"
           # The staff page is gated server-side: anonymous is redirected to login.
-          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/quality)" = "302"
+          expect "anonymous GET /quality" 302 "$(code http://localhost/quality)"
           # Dev login does not exist in the production configuration.
-          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost/api/dev/login-as \
-            -H 'Content-Type: application/json' -d '{"studentId":1}')" = "404"
-          # The student UI is served.
-          curl -sf http://localhost/login | grep -qi "mission hub"
+          expect "POST /api/dev/login-as" 404 \
+            "$(code -X POST http://localhost/api/dev/login-as -H 'Content-Type: application/json' -d '{"studentId":1}')"
+          # The student UI is served by the web container.
+          expect "GET /login" 200 "$(code http://localhost/login)"
+          body=$(curl -s http://localhost/login | tr -d '\n' | head -c 400)
+          case "$body" in
+            *[Mm]ission*) echo "  PASS /login is the student UI" ;;
+            *) echo "  FAIL /login body: $body"
+               echo "::error title=Production shape::/login did not look like the student UI: $(echo "$body" | head -c 200)"
+               fails=$((fails + 1)) ;;
+          esac
+          [ "$fails" = "0" ] || exit 1
 
       # ---- 2. A real student journey, end to end, through Caddy.
       - name: Layer the CI overrides (dev login, seed data, MinIO)
