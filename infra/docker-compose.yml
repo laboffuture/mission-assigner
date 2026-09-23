@@ -38,8 +38,12 @@ services:
       test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${DB_PASS}']
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      # First boot does more than start a server: it initialises the data
+      # directory AND loads the named-timezone tables (thousands of rows), which
+      # on a small or shared machine can take minutes. A window that is too
+      # short makes the whole deploy fail on a cold start.
+      retries: 30
+      start_period: 60s
 
   # Schema changes run HERE, once per deploy, never from inside the app.
   migrate:
