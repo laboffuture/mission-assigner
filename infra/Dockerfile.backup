@@ -1,21 +1,32 @@
 # The backup sidecar: takes the scheduled backup, verifies it, pushes it
 # offsite and applies retention.
 #
+# Based on the MySQL image, NOT alpine: Alpine's "mysql-client" package is
+# MariaDB's client, which cannot authenticate against MySQL 8's default
+# caching_sha2_password and fails with
+#   "Plugin caching_sha2_password could not be loaded ... /usr/lib/mariadb/..."
+# The dump must be taken by a client that speaks the server's protocol, so this
+# uses the same major version as the database itself.
+#
 # Deliberately NOT the api image: this needs the mysql client tools and the AWS
 # CLI, and the api image should carry neither. It runs the same scripts/ the
 # team runs by hand, so there is one backup path, not two.
-FROM alpine:3.20
+FROM mysql:8.4
 
-RUN apk add --no-cache bash mysql-client aws-cli gzip coreutils tzdata
+# awscli for the offsite upload; gzip is already present for the dump.
+USER root
+RUN microdnf install -y python3-pip gzip tar findutils \
+  && pip3 install --no-cache-dir awscli \
+  && microdnf clean all
 
 WORKDIR /app
 COPY scripts ./scripts
 COPY infra/backup-loop.sh ./backup-loop.sh
-RUN chmod +x ./backup-loop.sh ./scripts/*.sh
+RUN chmod +x ./backup-loop.sh ./scripts/*.sh \
+  && mkdir -p /backups && chown mysql:mysql /backups
 
 # Unprivileged: this container needs the database and the bucket, nothing else.
-RUN adduser -D -u 1000 backup && mkdir -p /backups && chown backup:backup /backups
-USER backup
+USER mysql
 ENV BACKUP_DIR=/backups
 
 CMD ["./backup-loop.sh"]

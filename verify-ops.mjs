@@ -43,6 +43,20 @@ function check(name, cond, detail = '') {
 }
 const q = async (sql, p = []) => (await db.query(sql, p))[0];
 
+// A crash before any check runs would otherwise reach CI as a bare exit code:
+// run-all names the suite, but not what went wrong inside it.
+for (const event of ['uncaughtException', 'unhandledRejection']) {
+  process.on(event, (err) => {
+    const message = String(err?.stack ?? err)
+      .split('\n')
+      .slice(0, 3)
+      .join(' | ');
+    console.log(`\nOPS CRASHED (${event}): ${message}`);
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Ops crashed::${event}: ${message.slice(0, 400)}`);
+    process.exit(1);
+  });
+}
+
 // Booting with NODE_ENV=production needs a database password that is not a
 // shipped default — production refuses 'devpass' as a placeholder, which is the
 // right behaviour and exactly why the harness needs its own user.
