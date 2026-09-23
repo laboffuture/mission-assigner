@@ -456,9 +456,18 @@ jobs:
       - name: Layer the CI overrides (dev login, seed data, MinIO)
         working-directory: infra
         run: |
-          docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.ci.yml up -d
-          docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.ci.yml \
-            run --rm -e NODE_ENV=test migrate node dist/seed.js
+          set -o pipefail
+          compose() { docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.ci.yml "$@"; }
+          if ! compose up -d 2>&1 | tee /tmp/ci-up.log; then
+            echo "::error title=CI overrides::up failed — $(tail -c 700 /tmp/ci-up.log | paste -sd' ' -)"
+            compose ps -a > /tmp/ci-ps.log 2>&1 || true
+            echo "::error title=CI overrides state::$(tail -c 700 /tmp/ci-ps.log | paste -sd' ' -)"
+            exit 1
+          fi
+          if ! compose run --rm -e NODE_ENV=test migrate node dist/seed.js 2>&1 | tee /tmp/seed.log; then
+            echo "::error title=CI overrides::seed failed — $(tail -c 700 /tmp/seed.log | paste -sd' ' -)"
+            exit 1
+          fi
           for i in $(seq 1 40); do
             [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost/readyz)" = "200" ] && break
             sleep 5
