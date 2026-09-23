@@ -5,6 +5,7 @@
 // Requires a fresh seed (default password 'changeme'). Run: npm run verify:prod-guard
 import 'dotenv/config';
 import { spawnSync, execSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { createProdDbUser } from './test-support/prod-db-user.mjs';
 import { pool } from './src/db.js';
 import { findDefaultStaffPasswords, assertProductionSecurity } from './src/securityChecks.js';
