@@ -112,6 +112,8 @@ services:
       # Server components call the API directly over the compose network. The
       # browser never uses this address — it only ever sees Caddy's origin.
       API_ORIGIN: http://api:3000
+      # Caddy routes /api/* itself here, so Next must NOT also proxy it.
+      WEB_PROXIES_API: 'false'
     depends_on:
       api:
         condition: service_healthy

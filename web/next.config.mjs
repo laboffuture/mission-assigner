@@ -6,12 +6,14 @@
  *
  *   local dev  — Next rewrites /api/* to the Express API (API_ORIGIN). One
  *                command, one port, nothing else to run.
- *   production — Caddy routes /api/* straight to the api container and
+ *   deployed   — Caddy routes /api/* straight to the api container and
  *                everything else to this server (infra/Caddyfile). The same
  *                origin as far as the browser is concerned, so cookies and CSRF
- *                behave exactly as they do locally, with one hop fewer.
+ *                behave exactly as they do locally, with one hop fewer. The
+ *                compose file sets WEB_PROXIES_API=false there.
  *
- * The rewrite is therefore off in production: leaving it on would mean
+ * The rewrite is therefore off only where Caddy is in front: leaving it on
+ * would mean
  * Caddy → Next → Express for every API call, an extra hop that buys nothing
  * (and is where Next's bundled http-proxy raises the DEP0060 warning — see
  * "Known warnings" in the README).
@@ -20,7 +22,10 @@
  * emit a self-contained server.js, which is what infra/Dockerfile.web ships.
  */
 const API_ORIGIN = process.env.API_ORIGIN ?? 'http://localhost:3000';
-const PROXY_API = process.env.NODE_ENV !== 'production';
+// Keyed on whether something ELSE proxies /api, not on NODE_ENV: CI and any
+// `next start` without Caddy are production builds that still need this
+// rewrite, and switching on NODE_ENV silently 404s every API call there.
+const PROXY_API = process.env.WEB_PROXIES_API !== 'false';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

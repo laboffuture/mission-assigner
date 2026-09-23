@@ -17,6 +17,7 @@ import mysql from 'mysql2/promise';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { killTree, listenerPid, TREE_OPTS } from './test-support/proc.mjs';
+import { pool as appPool } from './src/db.js';
 import { assignSegment } from './src/segmentation.js';
 import { applyColdStart } from './src/coldstart.js';
 import { publishWeek } from './src/weekPublisher.js';
@@ -279,5 +280,10 @@ console.log('\n[4] Production refuses to boot on a placeholder secret');
 }
 
 await db.end();
+// Importing the app's modules (segmentation, coldstart, weekPublisher) creates
+// the shared pool in src/db.ts. Leaving it open holds the event loop open, so
+// this process printed its result and then never exited — which is how it
+// stalled run-all.mjs until the timeout.
+await appPool.end();
 console.log(`\n==== Ops: ${pass} passed, ${fail} failed ====`);
 process.exitCode = fail ? 1 : 0;
