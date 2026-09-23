@@ -17,6 +17,7 @@ import mysql from 'mysql2/promise';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { killTree, listenerPid, TREE_OPTS } from './test-support/proc.mjs';
+import { createProdDbUser } from './test-support/prod-db-user.mjs';
 import { pool as appPool } from './src/db.js';
 import { assignSegment } from './src/segmentation.js';
 import { applyColdStart } from './src/coldstart.js';
@@ -33,9 +34,19 @@ let pass = 0,
   fail = 0;
 function check(name, cond, detail = '') {
   cond ? (pass++, console.log(`  PASS ${name} ${detail}`)) : (fail++, console.log(`  FAIL ${name} ${detail}`));
+  // CI job logs need repository-admin rights to read, so a failure has to name
+  // itself in an annotation.
+  if (!cond && process.env.GITHUB_ACTIONS) {
+    console.log(`::error title=Ops::${name} ${String(detail).slice(0, 250)}`);
+  }
   return !!cond;
 }
 const q = async (sql, p = []) => (await db.query(sql, p))[0];
+
+// Booting with NODE_ENV=production needs a database password that is not a
+// shipped default — production refuses 'devpass' as a placeholder, which is the
+// right behaviour and exactly why the harness needs its own user.
+const prodDb = await createProdDbUser(db, 'ops');
 
 /** Start an API instance. Returns the child so a signal can be sent to it. */
 async function startApi(port, env = {}, { waitForReady = true } = {}) {
@@ -302,7 +313,8 @@ console.log('\n[4] Production refuses to boot on a placeholder secret');
       AUTH_MODE: 'lti',
       ENABLE_TEST_HOOKS: '',
       SESSION_SECRET: 'f'.repeat(64),
-      DB_PASS: process.env.DB_PASS,
+      ...prodDb.env,
+      TRUST_PROXY: '0',
       [name]: value,
       DOTENV_CONFIG_PATH: 'no-such-env-file',
     };
@@ -320,6 +332,57 @@ console.log('\n[4] Production refuses to boot on a placeholder secret');
   }
 }
 
+// ------------------------------------------------------------------------ [6]
+console.log('\n[6] Production refuses to boot without an explicit proxy decision');
+{
+  const base = {
+    NODE_ENV: 'production',
+    AUTH_MODE: 'lti',
+    ENABLE_TEST_HOOKS: '',
+    SESSION_SECRET: 'f'.repeat(64),
+    ...prodDb.env,
+    DOTENV_CONFIG_PATH: 'no-such-env-file',
+  };
+  const boot = async (env) => {
+    const child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
+      env: { ...process.env, PORT: '3048', ...base, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    const code = await new Promise((resolve) => {
+      const t = setTimeout(() => {
+        killTree(child.pid);
+        resolve('started');
+      }, 12000);
+      child.on('exit', (c) => {
+        clearTimeout(t);
+        resolve(c);
+      });
+    });
+    return { code, out };
+  };
+  const unset = await boot({ TRUST_PROXY: undefined });
+  check('TRUST_PROXY unset refuses to boot', unset.code !== 'started' && unset.code !== 0, `(exit=${unset.code})`);
+  check(
+    '  ...and names TRUST_PROXY',
+    unset.out.includes('TRUST_PROXY'),
+    `(${unset.out.replace(/\s+/g, ' ').slice(-200)})`
+  );
+  // An explicit 0 ("TLS terminates here") satisfies the requirement. Whether the
+  // process then goes on to start depends on the rest of the environment — the
+  // seeded staff passwords stop it in this database — so the assertion is that
+  // the configuration is ACCEPTED, i.e. it is no longer TRUST_PROXY being named.
+  const explicit = await boot({ TRUST_PROXY: '0' });
+  check(
+    'TRUST_PROXY=0 (no proxy) is accepted by env validation',
+    explicit.code === 'started' || !explicit.out.includes('TRUST_PROXY'),
+    `(exit=${explicit.code}, ${explicit.out.replace(/\s+/g, ' ').slice(-160)})`
+  );
+}
+
+await prodDb.drop();
 await db.end();
 // Importing the app's modules (segmentation, coldstart, weekPublisher) creates
 // the shared pool in src/db.ts. Leaving it open holds the event loop open, so

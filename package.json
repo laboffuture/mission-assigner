@@ -51,7 +51,8 @@
     "verify:backups": "tsx verify-backups.mjs",
     "verify:ops": "tsx verify-ops.mjs",
     "verify:correctness": "tsx verify-correctness.mjs",
-    "check:tokens": "npm --prefix web run check:tokens"
+    "check:tokens": "npm --prefix web run check:tokens",
+    "check:images": "node scripts/check-image-tags.mjs"
   },
   "dependencies": {
     "@sentry/node": "^10.73.0",

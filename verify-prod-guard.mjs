@@ -38,6 +38,8 @@ const prodEnv = {
   PORT: '3998',
   AUTH_MODE: 'lti',
   ENABLE_TEST_HOOKS: '',
+  // Reached directly in this harness: no proxy in front.
+  TRUST_PROXY: '0',
   ...prodDb.env,
 };
 

@@ -341,6 +341,11 @@ jobs:
             echo "DB_NAME=mission_demo"
           } >> "$GITHUB_ENV"
 
+      # Every image tag we name must exist. Three invented tags reached CI in one
+      # batch and each cost a round trip to discover at pull time.
+      - name: Image tags resolve
+        run: node scripts/check-image-tags.mjs
+
       # The compose file cannot rot unnoticed.
       - name: docker compose config
         working-directory: infra
@@ -501,7 +506,11 @@ jobs:
           docker compose --env-file infra/.env.production -f infra/docker-compose.yml -f infra/docker-compose.ci.yml \
             logs backup | tail -20
           aws --endpoint-url http://localhost:9000 s3 ls s3://mission-hub-backups/mission_demo/ | tee /tmp/remote.txt
-          test -s /tmp/remote.txt || { echo "::error title=Backups::the sidecar uploaded nothing"; exit 1; }
+          if [ ! -s /tmp/remote.txt ]; then
+            docker compose --env-file infra/.env.production -f infra/docker-compose.yml -f infra/docker-compose.ci.yml               logs backup > /tmp/backup.log 2>&1 || true
+            echo "::error title=Backups::the sidecar uploaded nothing — $(tail -c 900 /tmp/backup.log | paste -sd' ' -)"
+            exit 1
+          fi
 
           echo "--- a manual backup uploads too"
           BACKUP_DIR=./ci-backups bash scripts/backup.sh

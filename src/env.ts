@@ -105,6 +105,22 @@ const EnvSchema = z
           'AUTH_MODE=dev is not allowed when NODE_ENV=production: it trusts a client-supplied X-User-Id header. Use AUTH_MODE=lti',
       });
     }
+    // Behind a TLS-terminating proxy the app sees plain HTTP, and cookie-session
+    // then refuses to set the Secure session cookie — silently, so every student
+    // simply fails to sign in. Production must therefore SAY which it is:
+    // TRUST_PROXY=1 behind a proxy (the compose stack), or TRUST_PROXY=0 when
+    // this process terminates TLS itself. Unset is not a safe default either
+    // way, so it is a refusal rather than a guess.
+    if (env.TRUST_PROXY === undefined || env.TRUST_PROXY === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY'],
+        message:
+          'must be set explicitly when NODE_ENV=production: TRUST_PROXY=1 if a reverse proxy terminates TLS ' +
+          '(the infra/ compose stack does), or TRUST_PROXY=0 if this process terminates TLS itself. ' +
+          'Unset means the Secure session cookie is never set behind a proxy and nobody can sign in',
+      });
+    }
     // A secret still holding its example value means .env.production.example was
     // copied and not filled in. That is not a typo to discover later, when a
     // forged session cookie works: refuse, and name the variable.

@@ -131,7 +131,8 @@ await q(
 const prodDb = await createProdDbUser(root, 'failclosed', {
   databases: [SCRATCH, process.env.DB_NAME ?? 'mission_demo'],
 });
-const PROD = { NODE_ENV: 'production', SESSION_SECRET: PROD_SECRET, ...prodDb.env };
+// TRUST_PROXY=0: these instances are reached directly, with no proxy.
+const PROD = { NODE_ENV: 'production', SESSION_SECRET: PROD_SECRET, TRUST_PROXY: '0', ...prodDb.env };
 
 console.log('\n[1] NODE_ENV=production with AUTH_MODE unset refuses to boot');
 {
