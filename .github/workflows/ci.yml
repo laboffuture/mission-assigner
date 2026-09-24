@@ -503,6 +503,13 @@ jobs:
           BACKUP_S3_REQUIRED: 'true'
           BACKUP_KEEP_DAILY: '2'
           BACKUP_KEEP_WEEKLY: '1'
+          # The bare `aws` calls in this step read the AWS_* names, not ours.
+          # Without them the listing fails on credentials and the step reports
+          # "uploaded nothing" even when the sidecar uploaded correctly.
+          AWS_ACCESS_KEY_ID: ci-access-key
+          AWS_SECRET_ACCESS_KEY: ci-secret-key
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_EC2_METADATA_DISABLED: 'true'
         run: |
           npm ci
           export DB_PASS=$(grep '^DB_PASS=' infra/.env.production | cut -d= -f2)
@@ -511,10 +518,13 @@ jobs:
           echo "--- the scheduled sidecar took one on start"
           docker compose --env-file infra/.env.production -f infra/docker-compose.yml -f infra/docker-compose.ci.yml \
             logs backup | tail -20
-          aws --endpoint-url http://localhost:9000 s3 ls s3://mission-hub-backups/mission_demo/ | tee /tmp/remote.txt
-          if [ ! -s /tmp/remote.txt ]; then
+          # Keep the listing's own error text: piping into tee hid its exit code.
+          aws --endpoint-url http://localhost:9000 s3 ls s3://mission-hub-backups/mission_demo/ > /tmp/remote.txt 2>&1 || true
+          cat /tmp/remote.txt
+          if ! grep -q 'sql.gz' /tmp/remote.txt; then
             docker compose --env-file infra/.env.production -f infra/docker-compose.yml -f infra/docker-compose.ci.yml               logs backup > /tmp/backup.log 2>&1 || true
-            echo "::error title=Backups::the sidecar uploaded nothing — $(tail -c 900 /tmp/backup.log | paste -sd' ' -)"
+            echo "::error title=Backups::no remote object found. listing said: $(tail -c 300 /tmp/remote.txt | paste -sd' ' -)"
+            echo "::error title=Backup sidecar log::$(tail -c 700 /tmp/backup.log | paste -sd' ' -)"
             exit 1
           fi
 
