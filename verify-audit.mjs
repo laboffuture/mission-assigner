@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { buildUmzug, makePool } from './src/migrator.js';
+import { buildUmzug, makePool, MIGRATION_NAMES } from './src/migrator.js';
 
 process.env.ENABLE_TEST_HOOKS ||= '1'; // in-process modules only; spawned servers decide their own
 
@@ -1191,7 +1191,7 @@ async function revisionRun() {
   await hook('selection-mode', { mode: 'curriculum' });
   await hook('curriculum-config', { revisionMixPercent: 0 });
   await hook('feedback-gating', { enabled: false });
-  const sid = await newRoboticsStudent('revision', 2, ['C1', 1, 1]);
+  const sid = await newRoboticsStudent('revision', 2, ['C1', 1]);
   await publishWeek(sid, await currentMonday());
   const served = [];
   try {
@@ -2172,7 +2172,7 @@ await runCase(
   '4.7',
   45,
   'Restore the latest backup into a scratch database and run Stage 1 against it',
-  'backup.sh (no Docker) takes a verified backup of the live DB; the newest dump in backups/ restores into a scratch DB, db:migrate brings it to the current 11 migrations, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
+  'backup.sh (no Docker) takes a verified backup of the live DB; the newest dump in backups/ restores into a scratch DB, db:migrate brings it to the full migration chain, and the Stage 1 suite (verify.mjs, 20 checks) passes against an API pointed at that DB.',
   async (c) => {
     const dir = join(ROOT, 'backups');
     // Take a backup now, with the real script, so the case never depends on a
@@ -2242,7 +2242,9 @@ await runCase(
     });
     c.check('db:migrate on the restore exit 0', mig.status === 0, `(${(mig.stdout + mig.stderr).slice(-200)})`);
     const after = (await q(`SELECT name FROM \`${scratch}\`.schema_migrations`)).length;
-    c.check('restore now at 11 migrations', after === 11, `(${after})`);
+    // Counted from the chain, never hardcoded: a new migration must not fail
+    // this case for the wrong reason.
+    c.check(`restore now at all ${MIGRATION_NAMES.length} migrations`, after === MIGRATION_NAMES.length, `(${after})`);
     const inst = await spawnApi(3015, { DB_NAME: scratch, ENABLE_TEST_HOOKS: '1' });
     try {
       if (!c.check('API on the restored DB started', inst.ok, inst.ok ? '' : inst.log().slice(-200))) return;

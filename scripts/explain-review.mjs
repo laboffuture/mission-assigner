@@ -151,10 +151,20 @@ const QUERIES = [
     params: [],
   },
   {
-    name: 'session: one student’s recent sessions (src/curriculum.ts)',
-    sql: `SELECT s.id FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
-           WHERE c.id = ? ORDER BY s.id ASC LIMIT 25`,
+    name: 'curriculum: the hours of one credit (src/curriculum.ts getHourPool)',
+    core: true,
+    sql: `SELECT h.id FROM hours h JOIN credits c ON c.id = h.credit_id
+           WHERE c.id = ? ORDER BY h.hour_number ASC LIMIT 30`,
     params: ['$creditId'],
+  },
+  {
+    name: 'curriculum: a student’s position and its credit (src/curriculum.ts getPosition)',
+    sql: `SELECT sp.hour_id, h.hour_number, c.code, c.total_hours
+            FROM student_positions sp
+            JOIN hours h ON h.id = sp.hour_id
+            JOIN credits c ON c.id = h.credit_id
+           WHERE sp.student_id = ? AND sp.track_id = ?`,
+    params: ['$positionStudent', '$positionTrack'],
   },
 ];
 
@@ -171,9 +181,12 @@ const idOf = async (table, column = 'id') => {
 // "Impossible WHERE" instead of a plan.
 const [[owned]] = await conn.query(`SELECT id, student_id FROM assignments ORDER BY id LIMIT 1`);
 const [[idem]] = await conn.query(`SELECT idempotency_key, assignment_id FROM idempotency_keys ORDER BY id LIMIT 1`);
+const [[position]] = await conn.query(`SELECT student_id, track_id FROM student_positions ORDER BY id LIMIT 1`);
 const REAL = {
   $assignmentId: owned?.id ?? (await idOf('assignments')),
   $ownerId: owned?.student_id ?? (await idOf('students')),
+  $positionStudent: position?.student_id ?? null,
+  $positionTrack: position?.track_id ?? null,
   $idemKey: idem?.idempotency_key ?? null,
   $idemAssignment: idem?.assignment_id ?? null,
   $studentId: await idOf('students'),
