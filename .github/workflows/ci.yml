@@ -375,7 +375,13 @@ jobs:
             docker compose --env-file .env.production ps -a > /tmp/ps.log 2>&1 || true
             echo "::error title=Stack state::$(tail -c 700 /tmp/ps.log | paste -sd' ' -)"
             docker compose --env-file .env.production logs --tail=40 > /tmp/svc.log 2>&1 || true
-            echo "::error title=Service logs::$(tail -c 1400 /tmp/svc.log | paste -sd' ' -)"
+            echo "::error title=Service logs::$(tail -c 1200 /tmp/svc.log | paste -sd' ' -)"
+            # What the health probe itself said, which the service log does not show.
+            cid=$(docker compose --env-file .env.production ps -aq mysql | head -1)
+            if [ -n "$cid" ]; then
+              docker inspect --format '{{json .State.Health}}' "$cid" > /tmp/health.json 2>&1 || true
+              echo "::error title=MySQL health::$(tail -c 900 /tmp/health.json | paste -sd' ' -)"
+            fi
             exit 1
           fi
 

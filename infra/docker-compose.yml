@@ -35,7 +35,9 @@ services:
       # breaks, so this is part of creating the database, not a manual step.
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-p${DB_PASS}']
+      # CMD-SHELL with the container's OWN variable: no compose interpolation of
+      # a password into an argv array, and no quoting to get wrong.
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
       interval: 10s
       timeout: 5s
       # First boot does more than start a server: it initialises the data

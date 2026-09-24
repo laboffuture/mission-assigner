@@ -284,7 +284,18 @@ console.log('\n[5] Behind a TLS-terminating proxy, the Secure session cookie is 
   const trusting = await startApi(3046, { SESSION_SAMESITE: 'none', TRUST_PROXY: '1', AUTH_MODE: 'dev' });
   const blind = await startApi(3047, { SESSION_SAMESITE: 'none', TRUST_PROXY: '', AUTH_MODE: 'dev' });
   try {
-    const [[student]] = await db.query(`SELECT id FROM students WHERE role = 'student' ORDER BY id LIMIT 1`);
+    // Any existing student will do; create one when the database has none. This
+    // suite runs before the seed in CI, where assuming one exists crashed the
+    // whole harness before a single check had run.
+    let [[student]] = await db.query(`SELECT id FROM students WHERE role = 'student' ORDER BY id LIMIT 1`);
+    if (!student) {
+      const created = await q(
+        `INSERT INTO students (display_name, age, subject, current_level, placement_status)
+         VALUES (?, 15, 'Computer Science', 0, 'pending')`,
+        [`OPS-proxy-${Date.now()}`]
+      );
+      student = { id: Number(created.insertId) };
+    }
     const login = async (base) => {
       const r = await fetch(`${base}/api/dev/login-as`, {
         method: 'POST',
