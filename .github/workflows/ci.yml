@@ -505,7 +505,6 @@ jobs:
           DB_PORT: '3306'
           DB_USER: root
           DB_NAME: mission_demo
-          EXPLAIN_REQUIRE_ALL: '1'
         run: |
           export DB_PASS=$(grep '^DB_PASS=' infra/.env.production | cut -d= -f2)
           npm run db:explain

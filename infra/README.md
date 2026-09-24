@@ -206,11 +206,16 @@ keeps the browser on a single origin, so the session cookie is still first-party
 unaffected — exactly as in development. It also avoids Next's bundled `http-proxy`, which is
 where the `DEP0060 util._extend` warning comes from (see "Known warnings" in the root README).
 
-**One instance.** The login rate limiter and the feedback-question cache live in the api
-process. A second api container would keep its own copy of both and the two would disagree —
-so the pilot runs exactly one. `INSTANCE_COUNT` is in `.env.production` to make that a
-deliberate setting rather than an assumption; the startup guard that enforces it lands with
-the next batch of work.
+**One instance, and it is enforced.** The rate limiters and the feedback-question cache live
+in the api process. A second api container would keep its own copy of all of them and the two
+would disagree — six failed sign-ins would become twelve — so the pilot runs exactly one.
+`INSTANCE_COUNT` declares that; it does not enforce it, because neither
+`docker compose up --scale api=2` nor a redeploy that leaves the old container running changes
+the value. The api therefore **claims** the database with a MySQL named lock held for the life
+of the process (`src/singleInstance.ts`): a second process refuses to start and names the
+database, and the claim is released as soon as the first exits, so a normal redeploy is
+unaffected. Moving either piece of state to a shared store is what would have to happen first
+to run two.
 
 **Request logs record Caddy's address, not the student's.** Behind the proxy the socket peer
 *is* Caddy, and we do not restore the real client address into the logs. This is a decision,
@@ -239,6 +244,8 @@ This directory is exercised on every push by the `stack` job in
 anonymous `/quality` redirected, unauthenticated API 401), runs a **real student journey**
 through the proxy — sign in, open a mission, answer it, give feedback, view progress — and then
 does the backup round-trip against MinIO, including a restore **from the remote copy**. It also
-proves that an unreachable bucket fails the backup.
+proves that an unreachable bucket fails the backup, and runs the **index review** (`EXPLAIN`
+on every query on a student's path) against that same containerised MySQL, so the plans that
+are checked are the plans this deployment will actually use.
 
 If you change anything here, that job is the thing to watch.

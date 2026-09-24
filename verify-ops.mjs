@@ -418,8 +418,24 @@ console.log('\n[6] Production refuses to boot without an explicit proxy decision
 console.log('\n[7] Idempotency keys are kept for a window, not forever');
 {
   // The table has a foreign key, so the rows need a real assignment to hang off.
-  const [assignment] = await q('SELECT id FROM assignments ORDER BY id LIMIT 1');
-  if (check('an assignment exists to attach keys to', !!assignment, '(is the database seeded?)')) {
+  // It makes its OWN: a migrated-but-unplayed database has no assignments at all
+  // (CI's api job is exactly that), and a case that borrows whatever happens to
+  // be lying around passes on a developer's machine and fails everywhere else.
+  const [[seedStudent]] = await db.query(
+    `SELECT id FROM students WHERE role IS NULL OR role = 'student' ORDER BY id LIMIT 1`
+  );
+  const [[seedMission]] = await db.query('SELECT id FROM missions ORDER BY id LIMIT 1');
+  let ownAssignment = null;
+  if (seedStudent && seedMission) {
+    const ins = await q(
+      `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status, assigned_at)
+       VALUES (?, ?, 1, 1, 'open', UTC_TIMESTAMP())`,
+      [seedStudent.id, seedMission.id]
+    );
+    ownAssignment = { id: Number(ins.insertId) };
+  }
+  const assignment = ownAssignment;
+  if (check('an assignment to attach keys to', !!assignment, '(no student or mission in the database)')) {
     const aid = assignment.id;
     const old = `ops-old-${Date.now()}`;
     const fresh = `ops-fresh-${Date.now()}`;
@@ -457,6 +473,8 @@ console.log('\n[7] Idempotency keys are kept for a window, not forever');
     );
     killTree(api.child.pid);
     await q('DELETE FROM idempotency_keys WHERE idempotency_key = ?', [booted]);
+    // The assignment this case created goes with it (its keys cascade).
+    await q('DELETE FROM assignments WHERE id = ?', [aid]).catch(() => {});
   }
 }
 

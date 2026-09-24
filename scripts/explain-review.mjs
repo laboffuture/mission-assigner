@@ -21,6 +21,18 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 
+for (const event of ['uncaughtException', 'unhandledRejection']) {
+  process.on(event, (err) => {
+    const message = String(err?.stack ?? err)
+      .split('\n')
+      .slice(0, 3)
+      .join(' | ');
+    console.log(`INDEX REVIEW CRASHED (${event}): ${message}`);
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Index review crashed::${message.slice(0, 400)}`);
+    process.exit(1);
+  });
+}
+
 const conn = await mysql.createConnection({
   host: process.env.DB_HOST ?? '127.0.0.1',
   port: Number(process.env.DB_PORT) || 3306,
@@ -49,6 +61,7 @@ const GROWING = new Set([
 const QUERIES = [
   {
     name: 'week: the slots of one week (src/server.ts GET /api/week)',
+    core: true,
     sql: `SELECT ws.id, ws.slot_index, ws.status, ws.assignment_id, COALESCE(wts.is_weekly, 0) AS is_weekly
             FROM week_slots ws
             LEFT JOIN week_template_slots wts ON wts.template_id = ? AND wts.slot_index = ws.slot_index
@@ -58,6 +71,7 @@ const QUERIES = [
   },
   {
     name: 'week: mission content for the filled slots (src/server.ts GET /api/week)',
+    core: true,
     sql: `SELECT ws.id AS week_slot_id, m.id AS mission_id, m.title, m.difficulty
             FROM week_slots ws
             JOIN assignments a ON a.id = ws.assignment_id
@@ -67,6 +81,7 @@ const QUERIES = [
   },
   {
     name: 'submit: the assignment being graded (src/grading.ts submitAndGrade)',
+    core: true,
     sql: `SELECT a.id, a.status, a.student_id, a.mission_id, m.answer_key, m.difficulty
             FROM assignments a JOIN missions m ON m.id = a.mission_id
            WHERE a.id = ?`,
@@ -74,6 +89,7 @@ const QUERIES = [
   },
   {
     name: 'submit: ownership check (src/server.ts POST /api/submit)',
+    core: true,
     sql: `SELECT status FROM assignments WHERE id = ? AND student_id = ?`,
     params: ['$assignmentId', '$ownerId'],
   },
@@ -89,17 +105,20 @@ const QUERIES = [
   },
   {
     name: 'streak: a student’s submission days (src/streaks.ts)',
+    core: true,
     sql: `SELECT DISTINCT DATE(CONVERT_TZ(created_at, '+00:00', ?)) AS d
             FROM attempt_logs WHERE student_id = ? AND event = 'submitted'`,
     params: ['Asia/Kolkata', '$studentId'],
   },
   {
     name: 'progress: a student’s XP events (src/tracking.ts)',
+    core: true,
     sql: `SELECT event_type, points, created_at FROM xp_events WHERE student_id = ? ORDER BY created_at DESC LIMIT 50`,
     params: ['$studentId'],
   },
   {
     name: 'attempts: the audit trail of one assignment (src/server.ts GET /api/attempts)',
+    core: true,
     sql: `SELECT id, event, created_at FROM attempt_logs WHERE assignment_id = ? ORDER BY created_at ASC`,
     params: ['$assignmentId'],
   },
@@ -113,6 +132,7 @@ const QUERIES = [
   },
   {
     name: 'selection: missions this student has not seen (src/selection.ts)',
+    core: true,
     sql: `SELECT m.id FROM missions m
            WHERE m.subject = ? AND m.difficulty = ?
              AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id)
@@ -169,7 +189,7 @@ let skipped = 0;
 const rowsOf = async (sql, params) => (await conn.query(`EXPLAIN ${sql}`, resolve(params)))[0];
 
 console.log(`Index review against ${process.env.DB_NAME ?? 'mission_demo'}\n`);
-for (const { name, sql, params } of QUERIES) {
+for (const { name, sql, params, core } of QUERIES) {
   let plan;
   try {
     plan = await rowsOf(sql, params);
@@ -189,6 +209,16 @@ for (const { name, sql, params } of QUERIES) {
   if (degenerate) {
     skipped++;
     console.log('      SKIPPED — nothing in the database matches these values, so MySQL chose no plan');
+    // A query on the student's path has to be plannable wherever this runs: if
+    // it is not, the review proved nothing about the part that matters. Queries
+    // that depend on data an environment may simply not have yet (an assistance
+    // event, a stored idempotency key) are reported and allowed.
+    if (core) {
+      findings++;
+      const message = `${name} — on the student path, but nothing in the database matches, so no plan was produced`;
+      console.log(`      ^^^^ ${message}`);
+      if (process.env.GITHUB_ACTIONS) console.log(`::error title=Index review::${message.slice(0, 250)}`);
+    }
     continue;
   }
   for (const step of plan) {
@@ -209,12 +239,4 @@ await conn.end();
 console.log(
   `\n==== Index review: ${QUERIES.length} queries, ${QUERIES.length - skipped} planned, ${skipped} skipped for lack of data, ${findings} needing an index ====`
 );
-if (skipped > 0 && process.env.EXPLAIN_REQUIRE_ALL === '1') {
-  console.log(`FAILED: ${skipped} of these queries had no data to plan against`);
-  if (process.env.GITHUB_ACTIONS) {
-    console.log(`::error title=Index review::${skipped} queries had no data to plan against — seed first`);
-  }
-  process.exitCode = 1;
-} else {
-  process.exitCode = findings ? 1 : 0;
-}
+process.exitCode = findings ? 1 : 0;
