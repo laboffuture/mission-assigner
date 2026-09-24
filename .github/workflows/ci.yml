@@ -289,6 +289,22 @@ jobs:
           MYSQL_CLIENT: mysql
         run: npm run verify:audit
 
+      # Every case sets up its own state, so the order must not matter. A fresh
+      # random seed each run (printed, so a failure is reproducible) turns that
+      # from a claim into something CI keeps testing.
+      - name: Audit harness again, in a shuffled order
+        env:
+          AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CID }}
+          AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
+          MYSQL_CLIENT: mysql
+        run: |
+          SEED=$RANDOM$RANDOM
+          echo "shuffle seed: $SEED  (reproduce with: npm run verify:audit -- --shuffle=$SEED)"
+          if ! npm run verify:audit -- --shuffle=$SEED; then
+            echo "::error title=Audit (shuffled)::the audit failed in shuffled order with seed $SEED"
+            exit 1
+          fi
+
       - name: Logs (on failure)
         if: failure()
         run: cat /tmp/server.log /tmp/web.log || true
