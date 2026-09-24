@@ -528,6 +528,13 @@ jobs:
             exit 1
           fi
 
+          # The remote copy is a backup of the LIVE database, and step [5] of
+          # backup-verify runs Stage 1 against the restore — which judges a
+          # freshly seeded state. The journey above left real activity behind, so
+          # reseed before taking the backup that will be verified.
+          docker compose --env-file infra/.env.production -f infra/docker-compose.yml -f infra/docker-compose.ci.yml             run --rm -e NODE_ENV=test migrate node dist/seed.js > /tmp/reseed.log 2>&1 || {
+              echo "::error title=Backups::reseed before the verified backup failed — $(tail -c 500 /tmp/reseed.log | paste -sd' ' -)"; exit 1; }
+
           echo "--- a manual backup uploads too"
           if ! BACKUP_DIR=./ci-backups bash scripts/backup.sh > /tmp/manual.log 2>&1; then
             cat /tmp/manual.log

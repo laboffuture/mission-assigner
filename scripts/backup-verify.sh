@@ -24,6 +24,19 @@ SRC="mission_demo_bkpsrc"
 RESTORE="mission_demo_bkprestore"
 PORT="${VERIFY_PORT:-3999}"
 
+# VERIFY_SOURCE=remote proves the copy that actually protects us: the one in
+# object storage. That object is a backup of the LIVE database, not of the
+# fixture this script builds, so in remote mode the fixture is skipped and the
+# comparison is against the live database the backup was taken from. Comparing a
+# live backup with a freshly seeded fixture reports every row of real activity
+# as a mismatch — which says nothing about the backup.
+REMOTE="${VERIFY_SOURCE:-local}"
+if [ "$REMOTE" = "remote" ]; then
+  COMPARE_DB="${DB_NAME:-mission_demo}"
+else
+  COMPARE_DB="$SRC"
+fi
+
 cleanup() {
   local rc=$?
   # The temp API server, by port (works on Windows and POSIX alike; the main :3000 is untouched).
@@ -42,18 +55,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "[1/6] build fixture DB \`$SRC\` (migrate + seed)"
-DB_NAME="$SRC" npx tsx src/migrator.ts up >/dev/null 2>&1
-DB_NAME="$SRC" npx tsx src/seed.ts >/dev/null 2>&1
-
-echo "[2/6] back up \`$SRC\`"
-FILE="$(DB_NAME="$SRC" BACKUP_DIR="${BACKUP_DIR:-./backups}" bash scripts/backup.sh)"
-
-# VERIFY_SOURCE=remote proves the copy that actually protects us: the one in
-# object storage. Restoring the local file only proves the disk we are already
-# standing on. Anything else (unset, "local") keeps the local file.
-if [ "${VERIFY_SOURCE:-local}" = "remote" ]; then
-  echo "      verifying the REMOTE copy, not the local one"
+if [ "$REMOTE" = "remote" ]; then
+  echo "[1/6] (skipped) no fixture needed — verifying the copy in object storage"
+  echo "[2/6] fetch the newest remote backup of \`$COMPARE_DB\`"
   REMOTE_FILE="$(mktemp "${TMPDIR:-/tmp}/bkp-remote-XXXXXX.sql.gz")"
   if ! KEY="$(s3_download_latest "$REMOTE_FILE")"; then
     echo "backup-verify: FAILED — could not download a backup from object storage" >&2
@@ -65,17 +69,24 @@ if [ "${VERIFY_SOURCE:-local}" = "remote" ]; then
     exit 1
   fi
   FILE="$REMOTE_FILE"
+else
+  echo "[1/6] build fixture DB \`$SRC\` (migrate + seed)"
+  DB_NAME="$SRC" npx tsx src/migrator.ts up >/dev/null 2>&1
+  DB_NAME="$SRC" npx tsx src/seed.ts >/dev/null 2>&1
+
+  echo "[2/6] back up \`$SRC\`"
+  FILE="$(DB_NAME="$SRC" BACKUP_DIR="${BACKUP_DIR:-./backups}" bash scripts/backup.sh)"
 fi
 echo "      -> $FILE"
 
 echo "[3/6] restore into \`$RESTORE\`"
 bash scripts/restore.sh "$FILE" "$RESTORE" >/dev/null
 
-echo "[4/6] row-count check on every table"
-TABLES="$(db_query "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${SRC}' AND TABLE_TYPE='BASE TABLE'")"
+echo "[4/6] row-count check on every table (against \`$COMPARE_DB\`)"
+TABLES="$(db_query "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='${COMPARE_DB}' AND TABLE_TYPE='BASE TABLE'")"
 fail=0
 for t in $TABLES; do
-  a="$(db_query "SELECT COUNT(*) FROM \`${SRC}\`.\`${t}\`")"
+  a="$(db_query "SELECT COUNT(*) FROM \`${COMPARE_DB}\`.\`${t}\`")"
   b="$(db_query "SELECT COUNT(*) FROM \`${RESTORE}\`.\`${t}\`")"
   if [ "$a" != "$b" ]; then
     echo "      MISMATCH ${t}: source=${a} restored=${b}"
