@@ -62,6 +62,7 @@ import { csrfMiddleware } from './csrf.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import type { SubmitResponse } from './dto.js';
 import { assertProductionSecurity } from './securityChecks.js';
+import { claimSingleInstance } from './singleInstance.js';
 import { resetRateLimiter } from './rateLimit.js';
 import {
   studentIdParams,
@@ -1233,6 +1234,9 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 const PORT = Number(process.env.PORT) || 3000;
 initSentry()
   .then(() => assertProductionSecurity())
+  // One api process per database, claimed rather than declared. Production only:
+  // development boots harness servers alongside the dev server on purpose.
+  .then(() => (process.env.NODE_ENV === 'production' ? claimSingleInstance().then(() => undefined) : undefined))
   .catch((err) => {
     // Fatal, pre-listen security failure (e.g. default staff passwords in
     // production). Print the reason and refuse to start.

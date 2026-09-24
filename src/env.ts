@@ -66,6 +66,11 @@ const EnvSchema = z
     COLD_START_STRATEGY: z.enum(['SEGMENT_START', 'PLACEMENT']).default('SEGMENT_START'),
     FEEDBACK_GATES_UNLOCK: z.string().optional(),
     // Curriculum selection (see src/config.ts).
+    // Declares how many api processes are meant to run. The enforcement is not
+    // here: src/singleInstance.ts claims the database with a MySQL named lock,
+    // because neither `--scale api=2` nor a redeploy that leaves the old
+    // container running changes this value.
+    INSTANCE_COUNT: z.coerce.number().int().positive().default(1),
     SELECTION_MODE: z.enum(['legacy', 'curriculum']).default('legacy'),
     POOL_LOOKBACK_SESSIONS: z.coerce.number().int().min(0).default(0),
     PERCENT_SCOPE: z.enum(['credit', 'project', 'track']).default('credit'),

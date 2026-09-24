@@ -19,6 +19,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Keygrip from 'keygrip';
+import bcrypt from 'bcryptjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000';
@@ -369,6 +370,70 @@ console.log('\n[15] Real-time expiry: SESSION_MAX_AGE=2 rejects the same cookie 
     );
   }
   r.stop();
+}
+
+// Case [8] deliberately ran the seed under production, so the scratch DB now has
+// staff accounts holding the shipped default password — and production rightly
+// refuses to boot on that. The instance cases are about a different refusal, so
+// give those accounts a real password first, exactly as an operator would.
+await q(`UPDATE \`${SCRATCH}\`.students SET password_hash = ? WHERE password_hash IS NOT NULL`, [
+  bcrypt.hashSync('a-real-pilot-password', 10),
+]);
+
+console.log('\n[16] INSTANCE_COUNT other than 1 refuses to boot in production');
+{
+  const r = await boot(3027, { ...PROD, AUTH_MODE: 'lti', INSTANCE_COUNT: '2' });
+  const out = String(typeof r.out === 'function' ? r.out() : r.out).replace(/\s+/g, ' ');
+  check('refused (did not listen)', r.refused, r.refused ? `(exit ${r.code})` : '(it booted)');
+  check(
+    'fatal message names INSTANCE_COUNT and the in-process state',
+    r.refused && /INSTANCE_COUNT=2/.test(out) && /rate limiter/.test(out),
+    `(${out.slice(out.indexOf('FATAL'), out.indexOf('FATAL') + 200)})`
+  );
+  r.stop();
+}
+
+console.log('\n[17] A SECOND production instance on the same database refuses to boot');
+{
+  // The declaration in [16] is an honour system: `--scale api=2` and a redeploy
+  // that leaves the old container running both keep INSTANCE_COUNT=1. This is
+  // the case that catches them.
+  const first = await boot(3028, { ...PROD, AUTH_MODE: 'lti' });
+  if (
+    check(
+      'the first instance boots',
+      !first.refused && !first.timedOut,
+      first.refused ? String(first.out).slice(-200) : ''
+    )
+  ) {
+    const second = await boot(3029, { ...PROD, AUTH_MODE: 'lti' });
+    const out = String(typeof second.out === 'function' ? second.out() : second.out).replace(/\s+/g, ' ');
+    check('the second instance refused', second.refused, second.refused ? `(exit ${second.code})` : '(it booted too)');
+    check(
+      'its message names the database and says another process holds it',
+      second.refused && new RegExp(SCRATCH).test(out) && /another api process is already running/.test(out),
+      `(${out.slice(out.indexOf('FATAL'), out.indexOf('FATAL') + 220)})`
+    );
+    second.stop();
+    // The first is still serving — a failed second start must not disturb it.
+    let alive = 0;
+    try {
+      alive = (await fetch(`${first.base}/healthz`, { signal: AbortSignal.timeout(2000) })).status;
+    } catch {
+      /* stays 0 */
+    }
+    check('the first instance is still serving', alive === 200, `(healthz ${alive})`);
+  }
+  first.stop();
+  // Once it is gone the claim must be free again, or a redeploy could never start.
+  await sleep(1500);
+  const third = await boot(3030, { ...PROD, AUTH_MODE: 'lti' });
+  check(
+    'a replacement instance can claim it after the first exits',
+    !third.refused && !third.timedOut,
+    third.refused ? `(refused: ${String(third.out).slice(-200)})` : ''
+  );
+  third.stop();
 }
 
 await q(`DROP DATABASE IF EXISTS \`${SCRATCH}\``);

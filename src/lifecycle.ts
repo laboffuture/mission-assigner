@@ -1,6 +1,7 @@
 import type { Server } from 'node:http';
 import type { Request, Response } from 'express';
 import { pool } from './db.js';
+import { currentClaim } from './singleInstance.js';
 import { MIGRATION_NAMES } from './migrator.js';
 import { logger } from './logger.js';
 
@@ -71,6 +72,14 @@ export function installShutdownHandlers(server: Server, { timeoutMs = 20_000 } =
 
     server.close(async () => {
       clearTimeout(forced);
+      try {
+        // Hand the database back before the pool goes: the next container can
+        // then claim it immediately instead of waiting for MySQL to notice a
+        // dropped connection.
+        await currentClaim()?.release();
+      } catch (err) {
+        logger.warn({ err }, 'shutdown: releasing the instance lock failed');
+      }
       try {
         await pool.end();
       } catch (err) {

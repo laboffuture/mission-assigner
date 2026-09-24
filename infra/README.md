@@ -107,6 +107,13 @@ Rules that matter more than the mechanism:
   they restore fine, but you will be re-issuing logins.
 - Rotating a secret means editing `.env.production` and `docker compose up -d`, nothing else.
 
+**Why a file and not a secret manager.** For the pilot this is the right size: the file is
+`chmod 600`, owned by the one admin who also owns the host, never committed and never shared,
+and compose injects it into the container environment. If this ever runs somewhere with a
+separate ops team — where the person deploying should not be able to read the values — the
+next step is Docker secrets or systemd credentials (`LoadCredential=`), which keep the values
+out of any file the deployer can read. Decided deliberately, not overlooked.
+
 ## 5. Start it
 
 ```bash
@@ -204,6 +211,15 @@ process. A second api container would keep its own copy of both and the two woul
 so the pilot runs exactly one. `INSTANCE_COUNT` is in `.env.production` to make that a
 deliberate setting rather than an assumption; the startup guard that enforces it lands with
 the next batch of work.
+
+**Request logs record Caddy's address, not the student's.** Behind the proxy the socket peer
+*is* Caddy, and we do not restore the real client address into the logs. This is a decision,
+not an oversight, so please do not "fix" it: these are minors' IP addresses, the pilot has no
+use for them, and the one failure people reach for `X-Forwarded-For` to avoid — a shared proxy
+IP throttling every student at once — cannot happen here, because the login rate limiter keys
+on the **username**, not the address. If a future incident genuinely needs client addresses,
+it is one line (`req.ip`, correct now that `TRUST_PROXY` is set), and it should be a conscious
+choice with a retention period attached.
 
 **The seed cannot run here.** `npm run db:seed` refuses under `NODE_ENV=production`, and no
 service in this composition runs it. Demo data never appears on the pilot server by accident.
