@@ -529,10 +529,20 @@ jobs:
           fi
 
           echo "--- a manual backup uploads too"
-          BACKUP_DIR=./ci-backups bash scripts/backup.sh
+          if ! BACKUP_DIR=./ci-backups bash scripts/backup.sh > /tmp/manual.log 2>&1; then
+            cat /tmp/manual.log
+            echo "::error title=Manual backup::$(tail -c 800 /tmp/manual.log | paste -sd' ' -)"
+            exit 1
+          fi
+          cat /tmp/manual.log
 
           echo "--- restore FROM THE REMOTE COPY and run Stage 1 against it"
-          VERIFY_SOURCE=remote BACKUP_DIR=./ci-backups bash scripts/backup-verify.sh
+          if ! VERIFY_SOURCE=remote BACKUP_DIR=./ci-backups bash scripts/backup-verify.sh > /tmp/verify.log 2>&1; then
+            tail -40 /tmp/verify.log
+            echo "::error title=Restore from remote::$(tail -c 900 /tmp/verify.log | paste -sd' ' -)"
+            exit 1
+          fi
+          tail -5 /tmp/verify.log
 
       - name: A failed upload fails the backup
         run: |
