@@ -63,6 +63,7 @@ import { registerAuthRoutes } from './authRoutes.js';
 import type { SubmitResponse } from './dto.js';
 import { assertProductionSecurity } from './securityChecks.js';
 import { claimSingleInstance } from './singleInstance.js';
+import { startIdempotencyPruner } from './idempotencyPrune.js';
 import { resetRateLimiter } from './rateLimit.js';
 import {
   studentIdParams,
@@ -1250,6 +1251,8 @@ initSentry()
         `Mission Hub listening on http://localhost:${PORT}`
       );
       warnIfInsecureAuth();
+      // Retention for the idempotency store — see src/idempotencyPrune.ts.
+      startIdempotencyPruner();
       if (testHooksEnabled()) {
         logger.warn(
           { testHooks: true },

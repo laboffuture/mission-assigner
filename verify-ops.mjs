@@ -22,6 +22,7 @@ import { pool as appPool } from './src/db.js';
 import { assignSegment } from './src/segmentation.js';
 import { applyColdStart } from './src/coldstart.js';
 import { publishWeek } from './src/weekPublisher.js';
+import { pruneIdempotencyKeys } from './src/idempotencyPrune.js';
 
 const db = await mysql.createConnection({
   host: process.env.DB_HOST,
@@ -405,6 +406,55 @@ console.log('\n[6] Production refuses to boot without an explicit proxy decision
     explicit.code === 'started' || !explicit.out.includes('TRUST_PROXY'),
     `(exit=${explicit.code}, ${explicit.out.replace(/\s+/g, ' ').slice(-160)})`
   );
+}
+
+// ------------------------------------------------------------------------ [7]
+// Every submit writes an idempotency key and nothing ever removed one. The rows
+// answer "was this exact submit already graded?" for a student who retried
+// seconds ago; nobody asks days later, and the graded result lives in attempts.
+console.log('\n[7] Idempotency keys are kept for a window, not forever');
+{
+  // The table has a foreign key, so the rows need a real assignment to hang off.
+  const [assignment] = await q('SELECT id FROM assignments ORDER BY id LIMIT 1');
+  if (check('an assignment exists to attach keys to', !!assignment, '(is the database seeded?)')) {
+    const aid = assignment.id;
+    const old = `ops-old-${Date.now()}`;
+    const fresh = `ops-fresh-${Date.now()}`;
+    await q(
+      `INSERT INTO idempotency_keys (idempotency_key, assignment_id, request_hash, response, created_at)
+       VALUES (?, ?, 'aged', NULL, UTC_TIMESTAMP() - INTERVAL 30 DAY), (?, ?, 'today', NULL, UTC_TIMESTAMP())`,
+      [old, aid, fresh, aid]
+    );
+    const removed = await pruneIdempotencyKeys(appPool, 7);
+    const left = (
+      await q('SELECT idempotency_key FROM idempotency_keys WHERE idempotency_key IN (?, ?)', [old, fresh])
+    ).map((r) => r.idempotency_key);
+    check('the sweep deleted at least the expired row', removed >= 1, `(removed=${removed})`);
+    check('a 30-day-old key is gone', !left.includes(old), `(left=${left.join(',') || 'none'})`);
+    check("today's key is untouched", left.includes(fresh), `(left=${left.join(',') || 'none'})`);
+    await q('DELETE FROM idempotency_keys WHERE idempotency_key IN (?, ?)', [old, fresh]);
+
+    // Available to call is not the same as running: prove the api starts it.
+    const booted = `ops-boot-${Date.now()}`;
+    await q(
+      `INSERT INTO idempotency_keys (idempotency_key, assignment_id, request_hash, created_at)
+       VALUES (?, ?, 'aged', UTC_TIMESTAMP() - INTERVAL 30 DAY)`,
+      [booted, aid]
+    );
+    const api = await startApi(3049, { IDEMPOTENCY_TTL_DAYS: '7' });
+    let gone = false;
+    for (let i = 0; i < 20 && !gone; i++) {
+      gone = (await q('SELECT 1 AS n FROM idempotency_keys WHERE idempotency_key = ?', [booted])).length === 0;
+      if (!gone) await sleep(500);
+    }
+    check(
+      'starting the api sweeps expired keys without being asked',
+      gone,
+      api.failed ? `(the api did not start: ${api.log().replace(/\s+/g, ' ').slice(-200)})` : ''
+    );
+    killTree(api.child.pid);
+    await q('DELETE FROM idempotency_keys WHERE idempotency_key = ?', [booted]);
+  }
 }
 
 await prodDb.drop();
