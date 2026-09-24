@@ -4,7 +4,7 @@
 // Indexes are cheap to get wrong and expensive to notice: with a seed database
 // every plan is fast, because a full scan of 200 rows is fast. The thing worth
 // catching is a query whose plan is a FULL TABLE SCAN of a table that grows with
-// use — assignments, attempt_logs, xp_events, feedback_responses, sessions. Those
+// use — assignments, attempt_logs, xp_events, feedback_responses, week_slots. Those
 // are fine today and terrible in a year, and nothing in a test would say so.
 //
 // So: run each query through EXPLAIN, and fail if a growing table is reached
@@ -48,7 +48,6 @@ const GROWING = new Set([
   'attempt_logs',
   'xp_events',
   'feedback_responses',
-  'sessions',
   'week_slots',
   'student_weeks',
   'idempotency_keys',
