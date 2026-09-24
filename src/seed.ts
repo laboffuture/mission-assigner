@@ -4,7 +4,7 @@ import { pool } from './db.js';
 import { assignSegment } from './segmentation.js';
 import { publishWeek } from './weekPublisher.js';
 import { logger } from './logger.js';
-import { loadCurriculum, findSession, setPosition } from './curriculum.js';
+import { loadCurriculum, findHour, setPosition } from './curriculum.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { PoolConnection } from 'mysql2/promise';
@@ -54,8 +54,7 @@ async function main() {
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
     for (const t of [
       'student_positions',
-      'sessions',
-      'projects',
+      'hours',
       'credits',
       'tracks',
       'idempotency_keys',
@@ -424,45 +423,51 @@ async function seedBoundaryStudents(conn: PoolConnection): Promise<number[]> {
 
 /**
  * Robotics / Tesla's Track, for curriculum-scoped selection:
- *  - the track from curriculum/teslas-track.json (5 credits; C1 = 9+8+8 sessions)
- *  - 5 missions (difficulty 0..4) on every C1 session except S25, which is left
- *    empty on purpose so the coverage report has a real gap
- *  - 5 missions on C2 session 1, to prove C1 students never receive them
- *  - a week template, and two students: one at C1/P1/S4, one at C1/P3/S2
+ *  - the track from curriculum/teslas-track.json — C1 24 hours, C2 24, C3 30,
+ *    C4 30, C5 24 (C5's figure is a PLACEHOLDER, to be confirmed by the SME;
+ *    it is data, so a new figure needs no code change)
+ *  - 5 missions (difficulty 0..4) on every C1 hour except hour 23, left empty
+ *    on purpose so the coverage report has a real gap to find
+ *  - 5 missions on C2 hour 1, to prove a C1 student never receives them
+ *  - a week template, and two students: one at C1 hour 7, one at C1 hour 24
  * Inserts are batched: the seed runs before nearly every harness.
  */
+/** C1 hour left with no missions on purpose, so the coverage report has a real gap. */
+export const EMPTY_HOUR = 23;
+
 async function seedRobotics(conn: PoolConnection): Promise<number[]> {
   const load = await loadCurriculum(CURRICULUM_FILE);
   const trackId = load.trackId;
 
-  const [sessionRows] = await conn.query<any[]>(
-    `SELECT s.id, s.credit_sequence, c.code
-       FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
+  // Every C1 hour except 23 (the deliberate coverage gap), plus C2 hour 1.
+  const [hourRows] = await conn.query<any[]>(
+    `SELECT h.id, h.hour_number, c.code
+       FROM hours h JOIN credits c ON c.id = h.credit_id
       WHERE c.track_id = ?
-        AND ((c.code = 'C1' AND s.credit_sequence <= 24) OR (c.code = 'C2' AND s.credit_sequence = 1))
-      ORDER BY c.sequence, s.credit_sequence`,
-    [trackId]
+        AND ((c.code = 'C1' AND h.hour_number <> ?) OR (c.code = 'C2' AND h.hour_number = 1))
+      ORDER BY c.sequence, h.hour_number`,
+    [trackId, EMPTY_HOUR]
   );
 
   const missionValues: any[] = [];
   const titles: string[] = [];
-  for (const s of sessionRows) {
-    const seq = String(s.credit_sequence).padStart(2, '0');
+  for (const h of hourRows) {
+    const num = String(h.hour_number).padStart(2, '0');
     for (let difficulty = 0; difficulty <= 4; difficulty++) {
-      const correct = LETTERS[(Number(s.credit_sequence) + difficulty) % LETTERS.length];
-      const title = `Robotics ${s.code} S${seq} L${difficulty}`;
+      const correct = LETTERS[(Number(h.hour_number) + difficulty) % LETTERS.length];
+      const title = `Robotics ${h.code} H${num} L${difficulty}`;
       titles.push(title);
       missionValues.push(
         1,
         ROBOTICS,
         title,
-        `A ${s.code} session ${s.credit_sequence} robotics question at difficulty ${difficulty}. Pick the correct answer.`,
+        `A ${h.code} hour ${h.hour_number} robotics question at difficulty ${difficulty}. Pick the correct answer.`,
         difficulty,
         JSON.stringify({
           correct,
-          explanation: `Option ${correct.toUpperCase()} is correct for ${s.code} session ${s.credit_sequence}.`,
+          explanation: `Option ${correct.toUpperCase()} is correct for ${h.code} hour ${h.hour_number}.`,
         }),
-        Number(s.id)
+        Number(h.id)
       );
     }
   }
@@ -470,7 +475,7 @@ async function seedRobotics(conn: PoolConnection): Promise<number[]> {
   await conn.query(
     `INSERT INTO missions
        (version, subject, title, body, mission_type, grading_mode,
-        difficulty, age_min, age_max, time_band, answer_key, rubric, status, session_id)
+        difficulty, age_min, age_max, time_band, answer_key, rubric, status, hour_id)
      VALUES ${titles.map(() => rowPh).join(', ')}`,
     missionValues
   );
@@ -511,9 +516,11 @@ async function seedRobotics(conn: PoolConnection): Promise<number[]> {
     );
   }
 
-  const students: Array<{ name: string; position: [string, number, number]; interests: string[] }> = [
-    { name: 'Ananya Rao', position: ['C1', 1, 4], interests: ['sensors'] },
-    { name: 'Kabir Mehta', position: ['C1', 3, 2], interests: ['motors'] },
+  // One mid-credit student and one at the very last hour of C1: between them
+  // they cover a pool that grows and a pool that is the whole credit.
+  const students: Array<{ name: string; position: [string, number]; interests: string[] }> = [
+    { name: 'Ananya Rao', position: ['C1', 7], interests: ['sensors'] },
+    { name: 'Kabir Mehta', position: ['C1', 24], interests: ['motors'] },
   ];
   const ids: number[] = [];
   for (const s of students) {
@@ -529,10 +536,10 @@ async function seedRobotics(conn: PoolConnection): Promise<number[]> {
     for (const tag of s.interests) {
       await conn.query(`INSERT INTO student_interests (student_id, tag) VALUES (?, ?)`, [id, tag]);
     }
-    const [credit, project, session] = s.position;
-    const sessionId = await findSession(trackId, credit, project, session);
-    if (sessionId == null) throw new Error(`seed: no session ${credit}/P${project}/S${session}`);
-    await setPosition(id, trackId, sessionId, 'explicit', { seeded: true });
+    const [credit, hourNumber] = s.position;
+    const hourId = await findHour(trackId, credit, hourNumber);
+    if (hourId == null) throw new Error(`seed: no hour ${credit}/H${hourNumber}`);
+    await setPosition(id, trackId, hourId, 'explicit', { seeded: true });
   }
 
   logger.info(

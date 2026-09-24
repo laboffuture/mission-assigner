@@ -13,8 +13,8 @@ export interface FillResult {
   targetLevel: number;
   relaxations: string[]; // ordered log of each relaxation applied
   gap: boolean; // true = no mission available, coverage gap recorded
-  /** Curriculum mode only: the chosen mission's session, and whether it is a revision repeat. */
-  sessionId?: number | null;
+  /** Curriculum mode only: the chosen mission's hour, and whether it is a revision repeat. */
+  hourId?: number | null;
   revision?: boolean;
 }
 
@@ -107,7 +107,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
 
     const studentId = Number(slot.student_id);
 
-    // Curriculum mode: the session pool is the first hard filter; difficulty is
+    // Curriculum mode: the hour pool is the first hard filter; difficulty is
     // only a ranking within it. The slot row lock above (which also locks the
     // student row via the join) serialises fills per student.
     if (selectionMode() === 'curriculum') {
@@ -135,7 +135,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
           targetLevel: curriculumTarget,
           relaxations: choice.relaxations,
           gap: true,
-          sessionId: null,
+          hourId: null,
           revision: false,
         };
       }
@@ -152,7 +152,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
         cAssignmentId,
         studentId,
         'opened',
-        { weekSlotId, targetLevel: curriculumTarget, sessionId: top.session_id, revision: choice.revision },
+        { weekSlotId, targetLevel: curriculumTarget, hourId: top.hour_id, revision: choice.revision },
         conn
       );
       await logCurriculumSelection(conn, studentId, choice, extra);
@@ -164,7 +164,7 @@ export async function fillSlot(weekSlotId: number): Promise<FillResult> {
         targetLevel: curriculumTarget,
         relaxations: choice.relaxations,
         gap: false,
-        sessionId: top.session_id,
+        hourId: top.hour_id,
         revision: choice.revision,
       };
     }

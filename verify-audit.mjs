@@ -237,7 +237,7 @@ async function newRoboticsStudent(tag, level, pos) {
     [`AUD-${tag}-${++seq}`, level]
   );
   const id = Number(r.insertId);
-  if (pos) await cur.setPosition(id, trackId, await cur.findSession(trackId, ...pos), 'explicit');
+  if (pos) await cur.setPosition(id, trackId, await cur.findHour(trackId, ...pos), 'explicit');
   return id;
 }
 
@@ -432,14 +432,14 @@ async function studentPage(sid, { theme = 'nebula', width = 1280 } = {}) {
 const BASE_STATE = {
   mode: 'legacy',
   gating: true,
-  curriculum: { poolLookbackSessions: 0, percentScope: 'credit', revisionMixPercent: 20 },
+  curriculum: { poolLookbackHours: 0, percentScope: 'credit', revisionMixPercent: 20 },
 };
 async function applyState(state = {}) {
   const mode = state.mode ?? BASE_STATE.mode;
   const gating = state.gating ?? BASE_STATE.gating;
   const curriculum = { ...BASE_STATE.curriculum, ...(state.curriculum ?? {}) };
   cfg.setSelectionMode(mode);
-  cfg.setPoolLookbackSessions(curriculum.poolLookbackSessions);
+  cfg.setPoolLookbackHours(curriculum.poolLookbackHours);
   cfg.setPercentScope(curriculum.percentScope);
   cfg.setRevisionMixPercent(curriculum.revisionMixPercent);
   await hook('selection-mode', { mode });
@@ -878,10 +878,10 @@ await runCase(
 // declared per case (the CURRICULUM state below) rather than set here, so a
 // case still gets it when the cases run in another order.
 const CURRICULUM = { mode: 'curriculum', curriculum: { revisionMixPercent: 0 } };
-const sessionInfo = async (id) =>
+const hourInfo = async (id) =>
   one(
-    `SELECT s.id, s.credit_sequence cs, s.sequence seq, p.sequence pseq, c.code FROM sessions s
-       JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id WHERE s.id = ?`,
+    `SELECT h.id, h.hour_number n, c.code, c.total_hours total
+       FROM hours h JOIN credits c ON c.id = h.credit_id WHERE h.id = ?`,
     [id]
   );
 async function choose(sid, extra = {}) {
@@ -895,29 +895,29 @@ async function choose(sid, extra = {}) {
   });
 }
 async function poolLabels(sid) {
-  const ids = await cur.getSessionPool(sid, trackId);
+  const ids = await cur.getHourPool(sid, trackId);
   const out = [];
   for (const id of ids) {
-    const i = await sessionInfo(id);
-    out.push(`${i.code}:${i.cs}`);
+    const i = await hourInfo(id);
+    out.push(`${i.code}:${i.n}`);
   }
   return out;
 }
 const chosenLabel = async (choice) => {
   if (!choice?.chosen) return 'none';
-  const i = await sessionInfo(choice.chosen.session_id);
-  return `${i.code}:${i.cs}`;
+  const i = await hourInfo(choice.chosen.hour_id);
+  return `${i.code}:${i.n}`;
 };
 
 await runCase(
   '4.2',
   9,
-  'Student at the very first session (C1/P1/S1)',
-  'The session pool is exactly [C1:1], and the chosen mission comes from C1 session 1.',
+  'Student at the very first hour (C1 hour 1)',
+  'The hour pool is exactly [C1:1], and the chosen mission comes from C1 hour 1.',
   async (c) => {
-    const sid = await newRoboticsStudent('first', 2, ['C1', 1, 1]);
+    const sid = await newRoboticsStudent('first', 2, ['C1', 1]);
     const p = await poolLabels(sid);
-    c.check('pool is exactly session 1', JSON.stringify(p) === '["C1:1"]', `(${p})`);
+    c.check('pool is exactly hour 1', JSON.stringify(p) === '["C1:1"]', `(${p})`);
     c.check('chosen mission from C1:1', (await chosenLabel(await choose(sid))) === 'C1:1');
   },
   CURRICULUM
@@ -926,16 +926,20 @@ await runCase(
 await runCase(
   '4.2',
   10,
-  'Student at the last session of a credit (C1/P3/S8, credit_sequence 25)',
-  'Position resolves to credit_sequence 25. The pool is the 25 C1 sessions, 25 down to 1, nothing from C2. Session 25 has no missions (deliberate seed gap), so the chosen mission comes from C1:24.',
+  'Student at the last hour of a credit (C1 hour 24)',
+  'Position resolves to hour 24 of 24. The pool is the 24 C1 hours, 24 down to 1, nothing from C2, and the chosen mission comes from C1:24.',
   async (c) => {
-    const sid = await newRoboticsStudent('lastofcredit', 2, ['C1', 3, 8]);
+    const sid = await newRoboticsStudent('lastofcredit', 2, ['C1', 24]);
     const pos = await cur.getPosition(sid, trackId);
-    c.check('position credit_sequence 25', Number(pos.creditSequence) === 25, `(got ${pos.creditSequence})`);
+    c.check(
+      'position is hour 24 of a 24-hour credit',
+      Number(pos.hourNumber) === 24 && Number(pos.creditTotalHours) === 24,
+      `(got hour ${pos.hourNumber} of ${pos.creditTotalHours})`
+    );
     const p = await poolLabels(sid);
     c.check(
-      'pool is C1:25..C1:1',
-      p.length === 25 && p[0] === 'C1:25' && p.at(-1) === 'C1:1' && p.every((x) => x.startsWith('C1:')),
+      'pool is C1:24..C1:1',
+      p.length === 24 && p[0] === 'C1:24' && p.at(-1) === 'C1:1' && p.every((x) => x.startsWith('C1:')),
       `(n=${p.length} first=${p[0]} last=${p.at(-1)})`
     );
     c.check(
@@ -950,12 +954,12 @@ await runCase(
 await runCase(
   '4.2',
   11,
-  'Student at the first session of the second project (C1/P2/S1)',
-  'credit_sequence is 10, the pool is exactly C1 sessions 10 down to 1, and the chosen mission is from C1:10.',
+  'Student part-way through a credit (C1 hour 10)',
+  'The position is hour 10, the pool is exactly C1 hours 10 down to 1, and the chosen mission is from C1:10.',
   async (c) => {
-    const sid = await newRoboticsStudent('p2s1', 2, ['C1', 2, 1]);
+    const sid = await newRoboticsStudent('h10', 2, ['C1', 10]);
     const pos = await cur.getPosition(sid, trackId);
-    c.check('credit_sequence 10', Number(pos.creditSequence) === 10, `(got ${pos.creditSequence})`);
+    c.check('hour 10', Number(pos.hourNumber) === 10, `(got ${pos.hourNumber})`);
     const p = await poolLabels(sid);
     c.check(
       'pool is C1:10..C1:1',
@@ -970,14 +974,14 @@ await runCase(
 await runCase(
   '4.2',
   12,
-  'Student at the last session of the last credit in the track (C5/P2/S8)',
-  'credit_sequence 17. The pool is the 17 C5 sessions. C5 has no missions, so selection relaxes to an EARLIER credit (logged as previous_credits) and serves C2:1, the latest earlier session with content. Never anything ahead (there is nothing ahead).',
+  'Student at the last hour of the last credit in the track (C5 hour 24)',
+  'The pool is the 24 C5 hours. C5 has no missions, so selection relaxes to an EARLIER credit (logged as previous_credits) and serves C2:1, the latest earlier hour with content. Never anything ahead (there is nothing ahead).',
   async (c) => {
-    const sid = await newRoboticsStudent('lastoftrack', 2, ['C5', 2, 8]);
+    const sid = await newRoboticsStudent('lastoftrack', 2, ['C5', 24]);
     const pos = await cur.getPosition(sid, trackId);
-    c.check('credit_sequence 17', Number(pos.creditSequence) === 17, `(got ${pos.creditSequence})`);
+    c.check('hour 24 of C5', Number(pos.hourNumber) === 24, `(got ${pos.hourNumber})`);
     const p = await poolLabels(sid);
-    c.check('pool is the 17 C5 sessions', p.length === 17 && p.every((x) => x.startsWith('C5:')), `(n=${p.length})`);
+    c.check('pool is the 24 C5 hours', p.length === 24 && p.every((x) => x.startsWith('C5:')), `(n=${p.length})`);
     const ch = await choose(sid);
     c.check('served C2:1', (await chosenLabel(ch)) === 'C2:1', `(${await chosenLabel(ch)})`);
     c.check(
@@ -992,14 +996,15 @@ await runCase(
 await runCase(
   '4.2',
   13,
-  'A student whose position points at a session with zero live missions (C2/P1/S3)',
-  'Not empty: the chosen mission comes from C2:1 (the only earlier C2 session with content), from inside the base pool, with no relaxation step.',
+  'A student whose position points at an hour with zero live missions (C2 hour 3)',
+  'Not empty: the chosen mission comes from C2:1 (the only earlier C2 hour with content), from inside the base pool, with no relaxation step.',
   async (c) => {
-    const sid = await newRoboticsStudent('emptysession', 2, ['C2', 1, 3]);
+    const sid = await newRoboticsStudent('emptyhour', 2, ['C2', 3]);
     const live = await one(
-      `SELECT COUNT(*) n FROM missions m JOIN sessions s ON s.id = m.session_id JOIN projects p ON p.id = s.project_id JOIN credits cr ON cr.id = p.credit_id WHERE cr.code='C2' AND s.credit_sequence=3 AND m.status='live'`
+      `SELECT COUNT(*) n FROM missions m JOIN hours h ON h.id = m.hour_id JOIN credits cr ON cr.id = h.credit_id
+        WHERE cr.code='C2' AND h.hour_number=3 AND m.status='live'`
     );
-    c.check('C2:3 has zero live missions', Number(live.n) === 0, `(live=${live.n})`);
+    c.check('C2 hour 3 has zero live missions', Number(live.n) === 0, `(live=${live.n})`);
     const ch = await choose(sid);
     c.check('served C2:1', (await chosenLabel(ch)) === 'C2:1', `(${await chosenLabel(ch)})`);
     c.check('no relaxation needed', (ch.relaxations ?? []).length === 0, `(${ch.relaxations})`);
@@ -1040,31 +1045,33 @@ await runCase(
 await runCase(
   '4.2',
   15,
-  'Percentages at the edges (credit C1, 25 sessions)',
-  '0% -> 1 (floor 0, clamped up to the first session), 1% -> 1, 99% -> 24 (24.75 rounds DOWN), 100% -> 25, 36% -> 9 exactly (last session of P1), 40% -> 10 exactly (first session of P2). Mapped positions: 36% = C1/P1/S9, 40% = C1/P2/S1.',
+  'Percentages at the edges (credit C1, 24 hours)',
+  '0% -> hour 1 (floor 0, clamped up to the first hour), 1% -> 1, 99% -> 23 (23.76 rounds DOWN), 100% -> 24, 36% -> 8 (8.64 rounds DOWN), 50% -> 12. The same percentages against the 30-hour C3 give different hours, because the total comes from the credit.',
   async (c) => {
     for (const [p, want] of [
       [0, 1],
       [1, 1],
-      [99, 24],
-      [100, 25],
-      [36, 9],
-      [40, 10],
+      [99, 23],
+      [100, 24],
+      [36, 8],
+      [50, 12],
     ]) {
-      const got = cur.sessionIndexFromPercent(p, 25); // -> { raw, index }
-      c.check(`${p}% of 25 -> ${want}`, got.index === want, `(raw=${got.raw} index=${got.index})`);
+      const got = cur.hourNumberFromPercent(p, 24); // -> { raw, hour }
+      c.check(`${p}% of 24 -> ${want}`, got.hour === want, `(raw=${got.raw} hour=${got.hour})`);
     }
-    const c1 = (await one(`SELECT id FROM credits WHERE track_id = ? AND code = 'C1'`, [trackId])).id;
-    for (const [p, want] of [
-      [36, 'C1/P1/S9'],
-      [40, 'C1/P2/S1'],
+    const creditId = async (code) =>
+      (await one(`SELECT id FROM credits WHERE track_id = ? AND code = ?`, [trackId, code])).id;
+    for (const [code, p, want] of [
+      ['C1', 36, 8],
+      ['C1', 50, 12],
+      ['C3', 50, 15],
     ]) {
-      const d = await cur.derivePositionFromPercent(p, 'credit', trackId, { creditId: c1 });
-      const i = await sessionInfo(d.sessionId);
+      const d = await cur.derivePositionFromPercent(p, 'credit', trackId, { creditId: await creditId(code) });
+      const i = await hourInfo(d.hourId);
       c.check(
-        `${p}% maps to ${want}`,
-        `${i.code}/P${i.pseq}/S${i.seq}` === want,
-        `(got ${i.code}/P${i.pseq}/S${i.seq})`
+        `${p}% of ${code} maps to hour ${want}`,
+        i.code === code && i.n === want,
+        `(got ${i.code} hour ${i.n} of ${i.total})`
       );
     }
   },
@@ -1081,7 +1088,7 @@ await runCase(
       let threw = false;
       let got;
       try {
-        got = cur.sessionIndexFromPercent(p, 25);
+        got = cur.hourNumberFromPercent(p, 24);
       } catch {
         threw = true;
       }
@@ -1095,14 +1102,14 @@ await runCase(
   '4.2',
   17,
   'Two students at the same position can receive the same mission',
-  'Repeat avoidance is per student: when A and B at C1/P1/S1 have each seen the same 4 of the 5 S1 missions, both are served the remaining one — and B still gets it after A has been assigned it.',
+  'Repeat avoidance is per student: when A and B at C1 hour 1 have each seen the same 4 of the 5 hour-1 missions, both are served the remaining one — and B still gets it after A has been assigned it.',
   async (c) => {
-    const a = await newRoboticsStudent('sameA', 2, ['C1', 1, 1]);
-    const b = await newRoboticsStudent('sameB', 2, ['C1', 1, 1]);
-    const s1 = await cur.findSession(trackId, 'C1', 1, 1);
+    const a = await newRoboticsStudent('sameA', 2, ['C1', 1]);
+    const b = await newRoboticsStudent('sameB', 2, ['C1', 1]);
+    const h1 = await cur.findHour(trackId, 'C1', 1);
     const ms = await q(
-      `SELECT id, version, difficulty FROM missions WHERE session_id = ? AND status = 'live' ORDER BY difficulty`,
-      [s1]
+      `SELECT id, version, difficulty FROM missions WHERE hour_id = ? AND status = 'live' ORDER BY difficulty`,
+      [h1]
     );
     const keep = ms.find((m) => Number(m.difficulty) === 2) ?? ms[0];
     for (const sid of [a, b])
@@ -1135,16 +1142,16 @@ await runCase(
 await runCase(
   '4.3',
   18,
-  'Exhaust a session pool completely and check the relaxation order',
+  'Exhaust an hour pool completely and check the relaxation order',
   'With every mission consumed and a slot type nothing satisfies, fillSlot walks, in exactly this order: widen_credit, previous_credits, widen_time_band, repeat_oldest, exhausted — and selection_log records the same order.',
   async (c) => {
-    cfg.setPoolLookbackSessions(1);
+    cfg.setPoolLookbackHours(1);
     try {
-      const sid = await newRoboticsStudent('exhaust', 2, ['C1', 1, 4]);
+      const sid = await newRoboticsStudent('exhaust', 2, ['C1', 7]);
       await q(
         `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status, assigned_at)
        SELECT ?, m.id, m.version, 2, 'graded', DATE_SUB(UTC_TIMESTAMP(), INTERVAL m.id MINUTE) FROM missions m
-         JOIN sessions s ON s.id = m.session_id JOIN projects p ON p.id = s.project_id JOIN credits cr ON cr.id = p.credit_id
+         JOIN hours h ON h.id = m.hour_id JOIN credits cr ON cr.id = h.credit_id
         WHERE cr.track_id = ?`,
         [sid, trackId]
       );
@@ -1172,7 +1179,7 @@ await runCase(
         `(${parse(log.f).relaxations})`
       );
     } finally {
-      cfg.setPoolLookbackSessions(0);
+      cfg.setPoolLookbackHours(0);
     }
   },
   CURRICULUM
@@ -1280,10 +1287,10 @@ await runCase(
   '4.3',
   21,
   'REVISION_MIX_PERCENT at 0, 20 and 100 over 200 draws each',
-  'Student at C1/P1/S4 with unseen missions in S4. 0% -> 0/200 draws from an earlier session. 100% -> 200/200. 20% -> between 24 and 56 of 200 (12%-28%, roughly +/-2.8 standard deviations of a binomial(200, 0.2)).',
+  'Student at C1 hour 7 with unseen missions in hour 7. 0% -> 0/200 draws from an earlier hour. 100% -> 200/200. 20% -> between 24 and 56 of 200 (12%-28%, roughly +/-2.8 standard deviations of a binomial(200, 0.2)).',
   async (c) => {
-    const sid = await newRoboticsStudent('mix', 2, ['C1', 1, 4]);
-    const s4 = await cur.findSession(trackId, 'C1', 1, 4);
+    const sid = await newRoboticsStudent('mix', 2, ['C1', 7]);
+    const h7 = await cur.findHour(trackId, 'C1', 7);
     for (const [p, lo, hi] of [
       [0, 0, 0],
       [20, 24, 56],
@@ -1293,7 +1300,7 @@ await runCase(
       let earlier = 0;
       for (let i = 0; i < 200; i++) {
         const ch = await choose(sid);
-        if (ch.chosen && ch.chosen.session_id !== s4) earlier++;
+        if (ch.chosen && ch.chosen.hour_id !== h7) earlier++;
       }
       c.check(`${p}%: ${earlier}/200 earlier`, earlier >= lo && earlier <= hi, `(allowed ${lo}-${hi})`);
     }
@@ -2615,23 +2622,24 @@ await runCase(
 
 // ======================================================== 4.10 Pipeline ==
 const TOPICS = ['Chassis', 'Wheels', 'Motors', 'Batteries', 'Switches', 'Sensors', 'Wiring', 'Testing', 'Showcase'];
-const sessionBlock = (heading, topic) =>
-  `${heading}\n\nIn this session students study ${topic.toLowerCase()} on the robot kit in careful detail. ` +
+const hourBlock = (heading, topic) =>
+  `${heading}\n\nIn this hour students study ${topic.toLowerCase()} on the robot kit in careful detail. ` +
   `A robot that loops through its control code repeats the same steps many times each second. ` +
   `Understanding ${topic.toLowerCase()} lets students predict how the robot will behave on the track.`;
-function projectText(n, headingFor = (i) => `## Session ${i}: ${TOPICS[i - 1]}`) {
-  const out = ['# Audit project', 'This project builds a small robot, one session at a time.'];
-  for (let i = 1; i <= n; i++) out.push(sessionBlock(headingFor(i), TOPICS[i - 1]));
+/** SME content for hours `first`..`last`, one heading per hour. */
+function hourText(first, last, headingFor = (i) => `## Hour ${i}: ${TOPICS[(i - 1) % TOPICS.length]}`) {
+  const out = ['# Audit credit', 'This credit builds a small robot, one hour at a time.'];
+  for (let i = first; i <= last; i++) out.push(hourBlock(headingFor(i), TOPICS[(i - 1) % TOPICS.length]));
   return out.join('\n\n');
 }
-/** Run the real pipeline CLI against an isolated input dir mapped to C1/P<project>. */
-function pipelineFor(files, project, extraEnv = {}) {
+/** Run the real pipeline CLI against an isolated input dir declaring C1 hours [first, last]. */
+function pipelineFor(files, hours, extraEnv = {}) {
   const work = mkdtempSync(join(tmpdir(), 'mh-audit-pipe-'));
   const input = join(work, 'input');
   mkdirSync(input, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(input, name), text);
   const map = Object.fromEntries(
-    Object.keys(files).map((n) => [n, { subject: 'Robotics', track: "Tesla's Track", credit: 'C1', project }])
+    Object.keys(files).map((n) => [n, { subject: 'Robotics', track: "Tesla's Track", credit: 'C1', hours }])
   );
   writeFileSync(join(work, 'curriculum.json'), JSON.stringify({ files: map, legacy_files: [] }));
   const env = {
@@ -2656,10 +2664,10 @@ function pipelineFor(files, project, extraEnv = {}) {
   };
 }
 const chunksFor = (file) =>
-  q(`SELECT id, chunk_ref, session_id, content_hash FROM content_chunks WHERE source_file = ? ORDER BY id`, [file]);
+  q(`SELECT id, chunk_ref, hour_id, content_hash FROM content_chunks WHERE source_file = ? ORDER BY id`, [file]);
 const missionsFor = (file) =>
   q(
-    `SELECT m.id, m.status, m.session_id, c.chunk_ref FROM missions m JOIN content_chunks c ON c.id = m.source_chunk_id WHERE c.source_file = ? ORDER BY m.id`,
+    `SELECT m.id, m.status, m.hour_id, c.chunk_ref FROM missions m JOIN content_chunks c ON c.id = m.source_chunk_id WHERE c.source_file = ? ORDER BY m.id`,
     [file]
   );
 const fullRun = (p) => ['ingest', 'generate', 'validate', 'import'].map((s) => ({ s, ...p.run(s) }));
@@ -2667,27 +2675,27 @@ const fullRun = (p) => ['ingest', 'generate', 'validate', 'import'].map((s) => (
 await runCase(
   '4.10',
   56,
-  'A project file with correct session headings',
-  'All 9 "## Session n:" headings of a C1/P1 file are detected; every chunk carries the session_id of C1/P1/Sn; ingest -> generate -> validate -> import all exit 0 and every imported mission carries its chunk\'s session_id, as a draft.',
+  'A file with correct hour headings',
+  'All 9 "## Hour n:" headings of a file declaring C1 hours 1-9 are detected; every chunk carries the hour_id of C1 hour n; ingest -> generate -> validate -> import all exit 0 and every imported mission carries its chunk\'s hour_id, as a draft.',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f = `audit56-${Date.now()}.md`;
-    const p = pipelineFor({ [f]: projectText(9) }, 1);
+    const p = pipelineFor({ [f]: hourText(1, 9) }, [1, 9]);
     try {
       for (const r of fullRun(p)) c.check(`${r.s} exit 0`, r.code === 0, r.code ? `(${r.out.slice(-200)})` : '');
       const ch = await chunksFor(f);
       c.check('9 chunks', ch.length === 9, `(${ch.length})`);
       let wrong = 0;
       for (const x of ch) {
-        const n = Number(/Session (\d+)/.exec(x.chunk_ref)?.[1]);
-        if (x.session_id !== (await cur.findSession(trackId, 'C1', 1, n))) wrong++;
+        const n = Number(/Hour (\d+)/.exec(x.chunk_ref)?.[1]);
+        if (x.hour_id !== (await cur.findHour(trackId, 'C1', n))) wrong++;
       }
-      c.check('every chunk tagged with its own session', wrong === 0, `(wrong=${wrong})`);
+      c.check('every chunk tagged with its own hour', wrong === 0, `(wrong=${wrong})`);
       const ms = await missionsFor(f);
       c.check('missions imported', ms.length > 0, `(${ms.length})`);
       c.check(
-        'each mission carries its chunk session_id',
-        ms.every((m) => ch.find((x) => x.chunk_ref === m.chunk_ref)?.session_id === m.session_id)
+        'each mission carries its chunk hour_id',
+        ms.every((m) => ch.find((x) => x.chunk_ref === m.chunk_ref)?.hour_id === m.hour_id)
       );
       c.check(
         'all drafts, none live',
@@ -2703,19 +2711,19 @@ await runCase(
 await runCase(
   '4.10',
   57,
-  'A project file whose session count does not match its definition',
-  'A C1/P2 file (8 sessions defined) containing 7 sessions: ingest exits non-zero, the error names the file and both counts, and no content_chunks row is stored for it.',
+  'A file whose hours do not match the range it declares',
+  'A file declaring C1 hours 10-17 (8 hours) that contains 7: ingest exits non-zero, the error names the file, the declared range and the number found, and no content_chunks row is stored for it.',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f = `audit57-${Date.now()}.md`;
-    const p = pipelineFor({ [f]: projectText(7) }, 2);
+    const p = pipelineFor({ [f]: hourText(10, 16) }, [10, 17]);
     try {
       const r = p.run('ingest');
       c.check('ingest exits non-zero', r.code !== 0, `(exit ${r.code})`);
       c.check('error names the file', r.out.includes(f));
       c.check(
-        'error names 8 and 7',
-        /\b8\b/.test(r.out) && /\b7\b/.test(r.out),
+        'error names the declared range and the number found',
+        /hours 10\.\.17/.test(r.out) && /7 were found/.test(r.out),
         `(${r.out.replace(/\s+/g, ' ').slice(-220)})`
       );
       c.check('nothing stored', (await chunksFor(f)).length === 0);
@@ -2729,17 +2737,17 @@ await runCase(
   '4.10',
   58,
   'A file with no headings at all',
-  'Rejected loudly at ingest (non-zero exit, message naming the file and that no sessions were found), nothing stored.',
+  'Rejected loudly at ingest (non-zero exit, message naming the file and that no hours were found), nothing stored.',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f = `audit58-${Date.now()}.md`;
     const p = pipelineFor(
       {
         [f]: TOPICS.slice(0, 8)
-          .map((t) => sessionBlock('', t))
+          .map((t) => hourBlock('', t))
           .join('\n\n'),
       },
-      2
+      [1, 8]
     );
     try {
       const r = p.run('ingest');
@@ -2756,21 +2764,21 @@ await runCase(
 await runCase(
   '4.10',
   59,
-  'Session headings in an unexpected format ("SESSION-3", "Sess 5")',
-  'The two malformed headings are not silently absorbed into a neighbouring session: the file (C1/P3, 8 sessions) is rejected at ingest with the sessions actually found, and nothing is stored. A file using "SESSION-n" throughout is likewise rejected.',
+  'Hour headings in an unexpected format ("HOUR-3", "Hr 5")',
+  'The two malformed headings are not silently absorbed into a neighbouring hour: the file (declaring C1 hours 1-8) is rejected at ingest with the hours actually found, and nothing is stored. A file using "HOUR-n" throughout is likewise rejected.',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f1 = `audit59a-${Date.now()}.md`;
     const f2 = `audit59b-${Date.now()}.md`;
-    const mixed = projectText(8, (i) =>
-      i === 3 ? `## SESSION-3: ${TOPICS[2]}` : i === 5 ? `## Sess 5: ${TOPICS[4]}` : `## Session ${i}: ${TOPICS[i - 1]}`
+    const mixed = hourText(1, 8, (i) =>
+      i === 3 ? `## HOUR-3: ${TOPICS[2]}` : i === 5 ? `## Hr 5: ${TOPICS[4]}` : `## Hour ${i}: ${TOPICS[i - 1]}`
     );
-    const allBad = projectText(8, (i) => `## SESSION-${i}: ${TOPICS[i - 1]}`);
+    const allBad = hourText(1, 8, (i) => `## HOUR-${i}: ${TOPICS[i - 1]}`);
     for (const [f, text, label] of [
       [f1, mixed, 'mixed'],
       [f2, allBad, 'all SESSION-n'],
     ]) {
-      const p = pipelineFor({ [f]: text }, 3);
+      const p = pipelineFor({ [f]: text }, [1, 8]);
       try {
         const r = p.run('ingest');
         c.note(`${label}: ${r.out.replace(/\s+/g, ' ').slice(-200)}`);
@@ -2795,7 +2803,7 @@ await runCase(
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f = `audit60-${Date.now()}.md`;
-    const p = pipelineFor({ [f]: projectText(9) }, 1);
+    const p = pipelineFor({ [f]: hourText(1, 9) }, [1, 9]);
     try {
       fullRun(p);
       const ch1 = await chunksFor(f);
@@ -2823,19 +2831,19 @@ await runCase(
 await runCase(
   '4.10',
   61,
-  'One session edited and re-ingested',
-  'After editing only Session 4 and re-running the pipeline: every previous Session 4 mission is retired and new Session 4 drafts exist; missions of every other session keep the same ids and status.',
+  'One hour edited and re-ingested',
+  'After editing only hour 4 and re-running the pipeline: every previous hour-4 mission is retired and new hour-4 drafts exist; missions of every other hour keep the same ids and status.',
   async (c) => {
     if (!VENV_PY) return c.notTested('pipeline/.venv not found');
     const f = `audit61-${Date.now()}.md`;
-    const p = pipelineFor({ [f]: projectText(9) }, 1);
+    const p = pipelineFor({ [f]: hourText(1, 9) }, [1, 9]);
     try {
       fullRun(p);
       const before = await missionsFor(f);
-      const is4 = (m) => /Session 4\b/.test(m.chunk_ref);
+      const is4 = (m) => /Hour 4\b/.test(m.chunk_ref);
       p.write(
         f,
-        projectText(9).replace('students study batteries', 'students study rechargeable batteries and charging safety')
+        hourText(1, 9).replace('students study batteries', 'students study rechargeable batteries and charging safety')
       );
       const r = fullRun(p);
       c.check(
@@ -2849,19 +2857,19 @@ await runCase(
       );
       const old4 = before.filter(is4);
       c.check(
-        'old Session 4 missions all retired',
+        'old hour-4 missions all retired',
         old4.length > 0 && old4.every((m) => all.find((x) => x.id === m.id)?.status === 'retired'),
         `(old4=${old4.length}, statuses=${old4.map((m) => all.find((x) => x.id === m.id)?.status)})`
       );
       const new4 = all.filter((m) => is4(m) && !old4.some((o) => o.id === m.id));
       c.check(
-        'new Session 4 drafts created',
+        'new hour-4 drafts created',
         new4.length > 0 && new4.every((m) => m.status === 'draft'),
         `(new=${new4.length})`
       );
       const others = before.filter((m) => !is4(m));
       c.check(
-        'other sessions untouched',
+        'other hours untouched',
         others.every((m) => all.find((x) => x.id === m.id)?.status === m.status),
         `(changed=${others.filter((m) => all.find((x) => x.id === m.id)?.status !== m.status).length})`
       );
@@ -2905,7 +2913,7 @@ await runCase(
         .map((r) => r.x)
         .join(',');
     const before = await schema();
-    const p = pipelineFor({ 'x.md': projectText(9) }, 1, { DB_NAME: scratch });
+    const p = pipelineFor({ 'x.md': hourText(1, 9) }, [1, 9], { DB_NAME: scratch });
     try {
       const r = p.run('ingest');
       c.note(`output: ${r.out.replace(/\s+/g, ' ').slice(-260)}`);
@@ -2942,7 +2950,7 @@ await runCase(
 if (pw) await pw.b.close();
 await hook('selection-mode', { mode: 'legacy' });
 await hook('feedback-gating', { enabled: true });
-await hook('curriculum-config', { poolLookbackSessions: 0, percentScope: 'credit', revisionMixPercent: 20 });
+await hook('curriculum-config', { poolLookbackHours: 0, percentScope: 'credit', revisionMixPercent: 20 });
 await hook('reset-rate-limit');
 if (!ONLY.length) await reseed().catch((e) => console.log(`(final reseed failed: ${e.message})`));
 

@@ -5,7 +5,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { execSync, spawnSync } from 'node:child_process';
-import { buildUmzug, makePool } from './src/migrator.js';
+import { buildUmzug, makePool, MIGRATION_NAMES } from './src/migrator.js';
 
 const CURRENT = process.env.DB_NAME ?? 'mission_demo';
 const SCRATCH = 'mm_migr_scratch';
@@ -52,10 +52,9 @@ const NODE_TABLES = [
   'week_templates',
   'xp_events',
   'xp_rules',
-  // 009_curriculum
+  // 009_curriculum, as reshaped by 012_hours (projects and sessions are gone)
   'credits',
-  'projects',
-  'sessions',
+  'hours',
   'student_positions',
   'tracks',
 ];
@@ -90,7 +89,10 @@ await root.query(`CREATE DATABASE \`${SCRATCH}\` CHARACTER SET utf8mb4 COLLATE u
 const pool = makePool(SCRATCH);
 const umzug = buildUmzug(pool);
 
-const EXPECTED = 11;
+// Counted from the migrator itself: a hardcoded number here means every new
+// migration fails this suite for the wrong reason, and the real assertion — that
+// what ran is what the chain declares — is the same either way.
+const EXPECTED = MIGRATION_NAMES.length;
 console.log('\n[Migrating a fresh database applies every migration]');
 const applied1 = await umzug.up();
 check(`all ${EXPECTED} migrations applied`, applied1.length === EXPECTED, `(applied=${applied1.length})`);
@@ -199,7 +201,10 @@ console.log('\n[Every down migration reverses cleanly on a SEEDED database]');
     (
       await pool.query(
         `SELECT COUNT(*) n FROM information_schema.COLUMNS
-          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'selection_log' AND COLUMN_NAME IN ('chosen_session_id','pool_size')`,
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'selection_log'
+            -- 012's down has already run by the time 009's does, so the column
+            -- is back to its 009 name here.
+            AND COLUMN_NAME IN ('chosen_session_id', 'pool_size')`,
         [SCRATCH]
       )
     )[0][0].n;

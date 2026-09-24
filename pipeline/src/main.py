@@ -55,26 +55,27 @@ def _group_by_file(sections: list[dict]) -> dict[str, list[dict]]:
 
 
 def chunks_for_file(file_name: str, sections: list[dict], config: dict, conn, legacy_subject: str) -> list[dict]:
-    """Session-tag one file's sections and turn them into chunks. Raises
-    CurriculumError / SessionBoundaryError when the file cannot be placed safely."""
+    """Hour-tag one file's sections and turn them into chunks. Raises
+    CurriculumError / HourBoundaryError when the file cannot be placed safely —
+    in which case nothing from the file is stored."""
     mapping = curriculum.mapping_for(file_name, config)
     if mapping == curriculum.LEGACY:
-        print(f"  WARNING: {file_name} is a legacy file — its missions carry no session and are "
+        print(f"  WARNING: {file_name} is a legacy file — its missions carry no hour and are "
               f"never served in curriculum selection mode.")
         return chunker.sections_to_chunks(sections, subject=legacy_subject)
 
-    project = curriculum.resolve_project(conn, mapping, file_name)
-    tagged, untagged = chunker.assign_sessions(
-        sections, project["session_count"], curriculum.session_pattern(config), file_name
+    credit = curriculum.resolve_credit(conn, mapping, file_name)
+    tagged, untagged = chunker.assign_hours(
+        sections, credit["first_hour"], credit["last_hour"], curriculum.hour_pattern(config), file_name
     )
     for s in tagged:
-        s["session_id"] = project["sessions"][s["session_number"]]
+        s["hour_id"] = credit["hours"][s["hour_number"]]
     if untagged:
         headings = ", ".join(repr(s["heading"]) for s in untagged)
-        print(f"  NOTE: {file_name}: {len(untagged)} section(s) outside any session, not used: {headings}")
-    print(f"  {file_name}: {project['session_count']} sessions -> "
-          f"{project['track']} / {project['credit']} / P{project['project']}")
-    return chunker.sections_to_chunks(tagged, subject=project["subject"])
+        print(f"  NOTE: {file_name}: {len(untagged)} section(s) outside any hour, not used: {headings}")
+    print(f"  {file_name}: hours {credit['first_hour']}..{credit['last_hour']} of {credit['total_hours']} -> "
+          f"{credit['track']} / {credit['credit']}")
+    return chunker.sections_to_chunks(tagged, subject=credit["subject"])
 
 
 # --- commands ----------------------------------------------------------------
@@ -92,7 +93,7 @@ def cmd_ingest(args) -> list[dict]:
         for file_name, file_sections in _group_by_file(sections).items():
             try:
                 chunks.extend(chunks_for_file(file_name, file_sections, config, conn, levels["subject"]))
-            except (curriculum.CurriculumError, chunker.SessionBoundaryError) as e:
+            except (curriculum.CurriculumError, chunker.HourBoundaryError) as e:
                 failures.append((file_name, str(e)))
                 print(f"  FAILED {e}")
     finally:
@@ -222,82 +223,79 @@ def cmd_coverage(args):
     print("-" * len(header))
     print(f"\n{evln['gaps']} gap cell(s) with fewer than {COVERAGE_MIN} live missions.")
 
-    session_gaps = print_session_coverage()
-    thin = print_session_difficulty_coverage()
-    return {"gaps": evln["gaps"], "session_gaps": session_gaps, "thin_sessions": thin}
+    hour_gaps = print_hour_coverage()
+    thin = print_hour_difficulty_coverage()
+    return {"gaps": evln["gaps"], "hour_gaps": hour_gaps, "thin_hours": thin}
 
 
-def print_session_coverage() -> int:
-    """Live missions per curriculum session. A session with none is a HARD gap:
-    curriculum selection never serves content from a later session, so a student
-    who reaches it gets nothing new from it."""
+def print_hour_coverage() -> int:
+    """Live missions per curriculum HOUR. An hour with none is a HARD gap:
+    curriculum selection never serves content from a later hour, so a student who
+    reaches it gets nothing new from it."""
     conn = db.get_connection()
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            """SELECT t.name AS track, c.code AS credit, p.sequence AS project, s.sequence AS session,
-                      s.credit_sequence, COUNT(m.id) AS live
-                 FROM sessions s
-                 JOIN projects p ON p.id = s.project_id
-                 JOIN credits c ON c.id = p.credit_id
+            """SELECT t.name AS track, c.code AS credit, h.hour_number AS hour,
+                      c.total_hours, COUNT(m.id) AS live
+                 FROM hours h
+                 JOIN credits c ON c.id = h.credit_id
                  JOIN tracks t ON t.id = c.track_id AND t.active = TRUE
-                 LEFT JOIN missions m ON m.session_id = s.id AND m.status = 'live'
-                GROUP BY t.id, t.name, c.id, c.code, c.sequence, p.sequence, s.id, s.sequence, s.credit_sequence
-                ORDER BY t.id, c.sequence, s.credit_sequence"""
+                 LEFT JOIN missions m ON m.hour_id = h.id AND m.status = 'live'
+                GROUP BY t.id, t.name, c.id, c.code, c.sequence, c.total_hours, h.id, h.hour_number
+                ORDER BY t.id, c.sequence, h.hour_number"""
         )
         rows = cur.fetchall()
         cur.close()
     finally:
         conn.close()
 
-    evln = curriculum.evaluate_session_coverage(rows)
-    print("\nLive missions per curriculum session (GAP = none; students reaching it get nothing new):\n")
+    evln = curriculum.evaluate_hour_coverage(rows)
+    print("\nLive missions per curriculum hour (GAP = none; students reaching it get nothing new):\n")
     last = None
     for r in rows:
         key = (r["track"], r["credit"])
         if key != last:
-            print(f"  {r['track']} / {r['credit']}")
+            print(f"  {r['track']} / {r['credit']} ({r['total_hours']} hours)")
             last = key
         mark = "  GAP" if int(r["live"]) == 0 else ""
-        print(f"    P{r['project']} S{r['session']} (credit #{r['credit_sequence']}): {r['live']}{mark}")
-    print(f"\n{evln['gaps']} of {evln['sessions']} session(s) have no live missions.")
+        print(f"    Hour {r['hour']}: {r['live']}{mark}")
+    print(f"\n{evln['gaps']} of {evln['hours']} hour(s) have no live missions.")
     return evln["gaps"]
 
 
-def print_session_difficulty_coverage() -> int:
-    """Distinct live difficulties per session. Selection ranks difficulty WITHIN a
-    session, so a session with only one variant cannot adapt to the student's
-    level at all."""
+def print_hour_difficulty_coverage() -> int:
+    """Distinct live difficulties per hour. Selection ranks difficulty WITHIN an
+    hour, so an hour with only one variant cannot adapt to the student's level at
+    all."""
     conn = db.get_connection()
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute(
-            """SELECT t.name AS track, c.code AS credit, p.sequence AS project, s.sequence AS session,
-                      s.credit_sequence, COUNT(DISTINCT m.difficulty) AS variants
-                 FROM sessions s
-                 JOIN projects p ON p.id = s.project_id
-                 JOIN credits c ON c.id = p.credit_id
+            """SELECT t.name AS track, c.code AS credit, h.hour_number AS hour,
+                      COUNT(DISTINCT m.difficulty) AS variants
+                 FROM hours h
+                 JOIN credits c ON c.id = h.credit_id
                  JOIN tracks t ON t.id = c.track_id AND t.active = TRUE
-                 LEFT JOIN missions m ON m.session_id = s.id AND m.status = 'live'
-                GROUP BY t.id, t.name, c.id, c.code, c.sequence, p.sequence, s.id, s.sequence, s.credit_sequence
-                ORDER BY t.id, c.sequence, s.credit_sequence"""
+                 LEFT JOIN missions m ON m.hour_id = h.id AND m.status = 'live'
+                GROUP BY t.id, t.name, c.id, c.code, c.sequence, h.id, h.hour_number
+                ORDER BY t.id, c.sequence, h.hour_number"""
         )
         rows = cur.fetchall()
         cur.close()
     finally:
         conn.close()
 
-    evln = curriculum.evaluate_session_difficulty_coverage(rows)
+    evln = curriculum.evaluate_hour_difficulty_coverage(rows)
     print(
-        f"\nDistinct live difficulties per session "
+        f"\nDistinct live difficulties per hour "
         f"(THIN = fewer than {evln['minimum_variants']}; difficulty cannot adapt):\n"
     )
-    for r in evln["thin_sessions"]:
-        print(f"    {r['track']} / {r['credit']} P{r['project']} S{r['session']} "
-              f"(credit #{r['credit_sequence']}): {r['variants']} variant(s)  THIN")
-    if not evln["thin_sessions"]:
-        print("    none — every session carries a difficulty spread.")
-    print(f"\n{evln['thin']} of {evln['sessions']} session(s) carry fewer than "
+    for r in evln["thin_hours"]:
+        print(f"    {r['track']} / {r['credit']} Hour {r['hour']}: {r['variants']} variant(s)  THIN")
+    if not evln["thin_hours"]:
+        print("    none — every hour carries a difficulty spread.")
+    print(f"\n{evln['thin']} of {evln['hours']} hour(s) carry fewer than "
           f"{evln['minimum_variants']} difficulty variants.")
     return evln["thin"]
 

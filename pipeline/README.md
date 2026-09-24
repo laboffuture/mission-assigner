@@ -44,8 +44,8 @@ cp .env.example .env      # then edit .env
 checks for it. Every object it needs (`content_chunks`, and
 `source_chunk_id` / `generated_at` / `review_notes` / `source_chunk_hash` plus
 `idx_missions_source_chunk` on `missions`) belongs to migration
-`010_adopt_pipeline_schema`, with `missions.session_id` coming from
-`009_curriculum`:
+`010_adopt_pipeline_schema`, with `missions.hour_id` coming from
+`009_curriculum` as reshaped by `012_hours`:
 
 ```bash
 cd ../  &&  npm run db:migrate      # in mission-demo
@@ -59,8 +59,8 @@ FATAL: The database is missing 2 object(s) owned by the migration chain:
   - column missions.review_notes
   - index missions.idx_missions_source_chunk
 
-Run `npm run db:migrate` in mission-demo (migrations 009_curriculum and
-010_adopt_pipeline_schema) before running the pipeline.
+Run `npm run db:migrate` in mission-demo (migrations 009_curriculum,
+010_adopt_pipeline_schema and 012_hours) before running the pipeline.
 ```
 
 It used to create these itself at runtime with `CREATE TABLE IF NOT EXISTS` and
@@ -138,47 +138,60 @@ pure coverage-gap logic.
 
 ---
 
-## Curriculum sessions
+## Curriculum hours
 
-Every SME file is **one project**, with its sessions marked by headings matching
-`^Session\s+(\d+)` (case-insensitive; change it with `session_heading_pattern` in
-`config/curriculum.json` or `SESSION_HEADING_PATTERN`). `config/curriculum.json`
-says which track, credit and project each file is:
+The unit is the **hour**. The SME writes what is taught in hour 1, hour 2, and so
+on up to the credit's total, with each hour marked by a heading matching
+`^Hour\s+(\d+)` (case-insensitive; change it with `hour_heading_pattern` in
+`config/curriculum.json` or `HOUR_HEADING_PATTERN`).
+
+**One file per credit is the expected shape.** `config/curriculum.json` says which
+track and credit each file belongs to, and **which hours it covers**:
 
 ```json
 {
-  "files": { "tesla-c1-p1.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "project": 1 } },
+  "hour_heading_pattern": "^Hour\\s+(\\d+)",
+  "files": {
+    "tesla-c1.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "hours": [1, 24] },
+    "tesla-c2-p1.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C2", "hours": [1, 9] },
+    "tesla-c2-p2.md": { "subject": "Robotics", "track": "Tesla's Track", "credit": "C2", "hours": [10, 24] }
+  },
   "legacy_files": ["sample-cs.md"]
 }
 ```
 
-- Every chunk carries its session, and every imported mission gets that `session_id`
-  and the track's subject.
-- The sessions found must be exactly `1..session_count` of the project, in order,
-  each once. Otherwise that file is **rejected** at ingest with its name, the
-  sessions found and the count expected; nothing from it is stored, and `ingest`
-  exits non-zero after processing the other files.
+A credit split into project-sized files is supported: each file declares the hours
+it covers, as C2 does above. The declared range is the contract.
+
+- Every chunk carries its hour, and every imported mission gets that `hour_id` and
+  the track's subject.
+- The hours found in a file must be exactly the range it DECLARES, in order, each
+  once. Otherwise that file is **rejected** at ingest with its name, the range
+  declared and the hours actually found; **nothing from it is stored**, and
+  `ingest` exits non-zero after processing the other files.
 - A file that is neither mapped nor in `legacy_files` is rejected too. Legacy files
-  import with no session and are never served in curriculum mode.
-- Headings outside any session (a project intro, an appendix) are reported and not
+  import with no hour and are never served in curriculum mode.
+- Headings outside any hour (an introduction, an appendix) are reported and not
   used.
 - The curriculum must be loaded into the database first (`npm run curriculum:load`
-  in mission-demo), and migration 009 applied (`npm run db:migrate`).
-- `coverage` now also lists live missions per session. A session with none is a
-  **hard gap**: a student who reaches it gets nothing new from it.
-- `coverage` also reports **session × difficulty**: a session carrying fewer than
+  in mission-demo) and migrations applied (`npm run db:migrate` — 009, 010 and
+  012). The pipeline also re-checks that the credit's hour rows match its
+  `total_hours` and refuses to tag content against a credit where they disagree.
+- `coverage` lists live missions per hour. An hour with none is a **hard gap**: a
+  student who reaches it gets nothing new from it.
+- `coverage` also reports **hour × difficulty**: an hour carrying fewer than
   `MIN_DIFFICULTY_VARIANTS` (3) distinct difficulties is listed as thin. Difficulty
-  survives as the within-session ranking, so a session with one difficulty serves
-  every student the same question regardless of level.
+  survives as the within-hour ranking, so an hour with one difficulty serves every
+  student the same question regardless of level.
 
 ### Generation must target the bands the templates require
 
 Selection filters on `time_band` hard, and only widens it as the last step before
-repeating a mission (see the curriculum section of the app README). A session whose
+repeating a mission (see the curriculum section of the app README). An hour whose
 missions are all one band therefore drives students straight into repeats whenever a
 week template asks for another band.
 
-So generation is responsible for band spread, not selection: for every session,
+So generation is responsible for band spread, not selection: for every hour,
 generate missions across the bands the live week templates actually request
 (`week_templates`/`week_template_slots` in mission-demo), not whatever band the
 source text happens to suggest. Check the template slots before a large generation

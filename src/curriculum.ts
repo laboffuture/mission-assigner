@@ -5,17 +5,22 @@ import type { PoolConnection } from 'mysql2/promise';
 import { z } from 'zod';
 import { pool } from './db.js';
 import { logger } from './logger.js';
-import { poolLookbackSessions, percentScope as configuredPercentScope, type PercentScope } from './config.js';
+import { poolLookbackHours, percentScope as configuredPercentScope, type PercentScope } from './config.js';
 
 /**
- * Curriculum: Subject → Track → Credit → Project → Session.
+ * Curriculum: Subject → Track → Credit → Hour.
  *
- * A student's position is one session per track. Selection draws only from the
- * sessions at or before that position (see getSessionPool and selection.ts), so
- * a student is never served content they have not been taught.
+ * A student's position is one HOUR per track. Selection draws only from the
+ * hours at or before that position (see getHourPool and selection.ts), so a
+ * student is never served content they have not been taught.
  *
- * credit_sequence is a session's running position within its credit across the
- * credit's projects in order (C1: P1 = 1..9, P2 = 10..17, P3 = 18..25).
+ * Hours are flat: 1..total_hours within a credit, and the hour number IS the
+ * position. Hours per credit vary and are stored per credit (credits.total_hours)
+ * rather than assumed, so a new figure is data, not a code change.
+ *
+ * Projects are not part of this chain. Where the SME groups hours under a project
+ * heading, that grouping is carried as hours.project_label for display only —
+ * never read by selection, ordering or the pool.
  */
 
 // ---------------------------------------------------------------------------
@@ -30,23 +35,36 @@ const DefinitionSchema = z
     active: z.boolean().default(true),
     credits: z
       .array(
-        z.object({
-          code: z.string().min(1).max(20),
-          name: z.string().max(160).nullable().optional(),
-          projects: z
-            .array(
-              z
-                .object({
-                  name: z.string().min(1).max(200),
-                  session_count: z.number().int().min(1),
-                  sessions: z.array(z.object({ title: z.string().max(200).nullable().optional() })).optional(),
+        z
+          .object({
+            code: z.string().min(1).max(20),
+            name: z.string().max(160).nullable().optional(),
+            total_hours: z.number().int().min(1).max(1000),
+            // Optional per-hour detail, in hour order. Titles and project labels
+            // are display only; the hour NUMBER is its position.
+            hours: z
+              .array(
+                z.object({
+                  title: z.string().max(200).nullable().optional(),
+                  project_label: z.string().max(120).nullable().optional(),
                 })
-                .refine((p) => !p.sessions || p.sessions.length === p.session_count, {
-                  message: 'sessions[] length must equal session_count',
-                })
-            )
-            .min(1),
-        })
+              )
+              .optional(),
+          })
+          .superRefine((c, ctx) => {
+            // The count is the contract between the SME's material and the
+            // schedule. A list that disagrees with it is a mistake in one of the
+            // two, and guessing which would put students on the wrong hour.
+            if (c.hours && c.hours.length !== c.total_hours) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['hours'],
+                message:
+                  `credit ${c.code} declares total_hours ${c.total_hours} but lists ${c.hours.length} hour(s); ` +
+                  `the list must have exactly total_hours entries`,
+              });
+            }
+          })
       )
       .min(1),
   })
@@ -58,8 +76,9 @@ export type CurriculumDefinition = z.input<typeof DefinitionSchema>;
 
 export interface LoadReport {
   trackId: number;
-  created: { tracks: number; credits: number; projects: number; sessions: number };
+  created: { tracks: number; credits: number; hours: number };
   updated: number;
+  removed: number;
   noop: boolean;
 }
 
@@ -75,18 +94,23 @@ export async function loadCurriculum(definitionFile: string): Promise<LoadReport
 }
 
 /**
- * Create or update a track's credits, projects and sessions from a definition,
- * computing credit_sequence. Idempotent: an identical definition writes nothing.
+ * Create or update a track's credits and hours from a definition. Idempotent: an
+ * identical definition writes nothing.
  *
- * Additive only. A definition that removes a credit or project, or shrinks a
- * project's session_count, is refused: missions and student positions reference
- * sessions, and restructuring a live curriculum is a deliberate migration, not a
- * side effect of re-running a loader.
+ * Refuses to remove a credit, and refuses to shrink a credit whose disappearing
+ * hours carry missions or student positions — restructuring live curriculum is a
+ * deliberate migration, not a side effect of re-running a loader. Shrinking a
+ * credit whose extra hours are empty is allowed and reported.
+ *
+ * Before committing, every credit's hour rows are counted against its
+ * total_hours. A mismatch is an error: a credit that claims 24 hours and holds 23
+ * would silently cap every student at 23 and skew every derived position.
  */
 export async function loadCurriculumDefinition(input: unknown): Promise<LoadReport> {
   const def = DefinitionSchema.parse(input);
-  const created = { tracks: 0, credits: 0, projects: 0, sessions: 0 };
+  const created = { tracks: 0, credits: 0, hours: 0 };
   let updated = 0;
+  let removed = 0;
 
   const conn = await pool.getConnection();
   try {
@@ -119,7 +143,7 @@ export async function loadCurriculumDefinition(input: unknown): Promise<LoadRepo
 
     // Credits.
     const [creditRows] = await conn.query<any[]>(
-      `SELECT id, code, name, sequence FROM credits WHERE track_id = ? ORDER BY sequence`,
+      `SELECT id, code, name, sequence, total_hours FROM credits WHERE track_id = ? ORDER BY sequence`,
       [trackId]
     );
     const creditBySeq = new Map<number, any>(creditRows.map((r) => [Number(r.sequence), r]));
@@ -139,105 +163,86 @@ export async function loadCurriculumDefinition(input: unknown): Promise<LoadRepo
       const existing = creditBySeq.get(creditSeq);
       if (!existing) {
         const [ins] = await conn.query<any>(
-          `INSERT INTO credits (track_id, code, name, sequence) VALUES (?, ?, ?, ?)`,
-          [trackId, c.code, name, creditSeq]
+          `INSERT INTO credits (track_id, code, name, sequence, total_hours) VALUES (?, ?, ?, ?, ?)`,
+          [trackId, c.code, name, creditSeq, c.total_hours]
         );
         creditId = Number(ins.insertId);
         created.credits++;
       } else {
         creditId = Number(existing.id);
-        if (existing.code !== c.code || (existing.name ?? null) !== name) {
-          await conn.query(`UPDATE credits SET code = ?, name = ? WHERE id = ?`, [c.code, name, creditId]);
+        if (
+          existing.code !== c.code ||
+          (existing.name ?? null) !== name ||
+          Number(existing.total_hours) !== c.total_hours
+        ) {
+          await conn.query(`UPDATE credits SET code = ?, name = ?, total_hours = ? WHERE id = ?`, [
+            c.code,
+            name,
+            c.total_hours,
+            creditId,
+          ]);
           updated++;
         }
       }
 
-      warnIfUnusualShape(
-        def.track,
-        c.code,
-        c.projects.map((p) => p.session_count)
-      );
-
-      // Projects.
-      const [projectRows] = await conn.query<any[]>(
-        `SELECT id, name, sequence, session_count FROM projects WHERE credit_id = ? ORDER BY sequence`,
+      // Hours: 1..total_hours, flat.
+      const [hourRows] = await conn.query<any[]>(
+        `SELECT id, hour_number, title, project_label FROM hours WHERE credit_id = ? ORDER BY hour_number`,
         [creditId]
       );
-      const projectBySeq = new Map<number, any>(projectRows.map((r) => [Number(r.sequence), r]));
-      const extraProject = projectRows.find((r) => Number(r.sequence) > c.projects.length);
-      if (extraProject) {
-        throw new Error(
-          `definition for ${c.code} has ${c.projects.length} projects but the database has project ` +
-            `${extraProject.sequence}; removing curriculum is not supported by the loader`
+      const hourByNumber = new Map<number, any>(hourRows.map((r) => [Number(r.hour_number), r]));
+
+      // Shrinking: only when the hours going away carry nothing.
+      const doomed = hourRows.filter((r) => Number(r.hour_number) > c.total_hours);
+      if (doomed.length > 0) {
+        const ids = doomed.map((r) => Number(r.id));
+        const [[refs]] = await conn.query<any[]>(
+          `SELECT (SELECT COUNT(*) FROM missions WHERE hour_id IN (?)) AS missions,
+                  (SELECT COUNT(*) FROM student_positions WHERE hour_id IN (?)) AS positions`,
+          [ids, ids]
         );
+        if (Number(refs.missions) > 0 || Number(refs.positions) > 0) {
+          throw new Error(
+            `${c.code} would shrink from ${hourRows.length} to ${c.total_hours} hours, but hour(s) ` +
+              `${doomed.map((r) => r.hour_number).join(', ')} carry ${refs.missions} mission(s) and ` +
+              `${refs.positions} student position(s); removing taught hours is not supported by the loader`
+          );
+        }
+        await conn.query(`DELETE FROM hours WHERE id IN (?)`, [ids]);
+        removed += doomed.length;
       }
 
-      let creditSequence = 0;
-      for (let pi = 0; pi < c.projects.length; pi++) {
-        const p = c.projects[pi];
-        const projectSeq = pi + 1;
-        let projectId: number;
-        const existingP = projectBySeq.get(projectSeq);
-        if (!existingP) {
-          const [ins] = await conn.query<any>(
-            `INSERT INTO projects (credit_id, name, sequence, session_count) VALUES (?, ?, ?, ?)`,
-            [creditId, p.name, projectSeq, p.session_count]
-          );
-          projectId = Number(ins.insertId);
-          created.projects++;
-        } else {
-          projectId = Number(existingP.id);
-          if (p.session_count < Number(existingP.session_count)) {
-            throw new Error(
-              `${c.code} project ${projectSeq} would shrink from ${existingP.session_count} to ${p.session_count} ` +
-                `sessions; removing sessions is not supported by the loader`
-            );
-          }
-          if (existingP.name !== p.name || Number(existingP.session_count) !== p.session_count) {
-            await conn.query(`UPDATE projects SET name = ?, session_count = ? WHERE id = ?`, [
-              p.name,
-              p.session_count,
-              projectId,
-            ]);
-            updated++;
-          }
-        }
-
-        // Sessions.
-        const [sessionRows] = await conn.query<any[]>(
-          `SELECT id, sequence, credit_sequence, title FROM sessions WHERE project_id = ?`,
-          [projectId]
-        );
-        const sessionBySeq = new Map<number, any>(sessionRows.map((r) => [Number(r.sequence), r]));
-        for (let si = 1; si <= p.session_count; si++) {
-          creditSequence++;
-          const title = p.sessions?.[si - 1]?.title ?? null;
-          const existingS = sessionBySeq.get(si);
-          if (!existingS) {
-            await conn.query(
-              `INSERT INTO sessions (project_id, sequence, credit_sequence, title) VALUES (?, ?, ?, ?)`,
-              [projectId, si, creditSequence, title]
-            );
-            created.sessions++;
-          } else if (
-            Number(existingS.credit_sequence) !== creditSequence ||
-            (p.sessions && (existingS.title ?? null) !== title)
-          ) {
-            await conn.query(`UPDATE sessions SET credit_sequence = ?, title = ? WHERE id = ?`, [
-              creditSequence,
-              p.sessions ? title : (existingS.title ?? null),
-              existingS.id,
-            ]);
-            updated++;
-          }
+      for (let n = 1; n <= c.total_hours; n++) {
+        const detail = c.hours?.[n - 1];
+        const title = detail?.title ?? null;
+        const label = detail?.project_label ?? null;
+        const existingH = hourByNumber.get(n);
+        if (!existingH) {
+          await conn.query(`INSERT INTO hours (credit_id, hour_number, title, project_label) VALUES (?, ?, ?, ?)`, [
+            creditId,
+            n,
+            title,
+            label,
+          ]);
+          created.hours++;
+        } else if (detail && ((existingH.title ?? null) !== title || (existingH.project_label ?? null) !== label)) {
+          await conn.query(`UPDATE hours SET title = ?, project_label = ? WHERE id = ?`, [title, label, existingH.id]);
+          updated++;
         }
       }
     }
 
+    // The count check, on the committed-to state and inside the transaction: a
+    // credit whose rows disagree with its total never reaches the database.
+    await assertHourCounts(trackId, conn);
+
     await conn.commit();
-    const noop = updated === 0 && Object.values(created).every((n) => n === 0);
-    logger.info({ subject: def.subject, track: def.track, trackId, created, updated, noop }, 'curriculum loaded');
-    return { trackId, created, updated, noop };
+    const noop = updated === 0 && removed === 0 && Object.values(created).every((n) => n === 0);
+    logger.info(
+      { subject: def.subject, track: def.track, trackId, created, updated, removed, noop },
+      'curriculum loaded'
+    );
+    return { trackId, created, updated, removed, noop };
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -246,14 +251,33 @@ export async function loadCurriculumDefinition(input: unknown): Promise<LoadRepo
   }
 }
 
-/** Current shape rule: first project of a credit has 9 sessions, the rest 8. Warn, don't enforce. */
-function warnIfUnusualShape(track: string, creditCode: string, counts: number[]): void {
-  const expected = counts.map((_, i) => (i === 0 ? 9 : 8));
-  if (counts.some((n, i) => n !== expected[i])) {
-    logger.warn(
-      { track, credit: creditCode, sessionCounts: counts, expected },
-      'curriculum shape differs from the usual 9-then-8 sessions per project'
-    );
+type Runner = Pick<PoolConnection, 'query'>;
+
+/**
+ * Every credit on the track must hold exactly total_hours hour rows, numbered
+ * 1..total_hours with no gaps. Throws naming both numbers. Called by the loader
+ * before it commits, and available to anything that wants to check a database it
+ * did not load itself.
+ */
+export async function assertHourCounts(trackId: number, conn: Runner = pool): Promise<void> {
+  const [rows] = await conn.query<any[]>(
+    `SELECT c.code, c.total_hours,
+            (SELECT COUNT(*) FROM hours h WHERE h.credit_id = c.id) AS hour_rows,
+            (SELECT COUNT(*) FROM hours h WHERE h.credit_id = c.id AND h.hour_number BETWEEN 1 AND c.total_hours)
+              AS in_range
+       FROM credits c
+      WHERE c.track_id = ?
+      ORDER BY c.sequence`,
+    [trackId]
+  );
+  for (const r of rows) {
+    const total = Number(r.total_hours);
+    if (Number(r.hour_rows) !== total || Number(r.in_range) !== total) {
+      throw new Error(
+        `credit ${r.code} declares total_hours ${total} but has ${r.hour_rows} hour row(s) ` +
+          `(${r.in_range} of them numbered 1..${total}); the hour rows and total_hours must agree exactly`
+      );
+    }
   }
 }
 
@@ -261,28 +285,24 @@ function warnIfUnusualShape(track: string, creditCode: string, counts: number[])
 // Lookups
 // ---------------------------------------------------------------------------
 
-type Runner = Pick<PoolConnection, 'query'>;
-
 export async function findTrack(subject: string, name: string, conn: Runner = pool): Promise<number | null> {
   const [[row]] = await conn.query<any[]>(`SELECT id FROM tracks WHERE subject = ? AND name = ?`, [subject, name]);
   return row ? Number(row.id) : null;
 }
 
-/** Session id for (track, credit code, project sequence, session sequence), or null. */
-export async function findSession(
+/** Hour id for (track, credit code, hour number), or null. */
+export async function findHour(
   trackId: number,
   creditCode: string,
-  projectSeq: number,
-  sessionSeq: number,
+  hourNumber: number,
   conn: Runner = pool
 ): Promise<number | null> {
   const [[row]] = await conn.query<any[]>(
-    `SELECT s.id
-       FROM sessions s
-       JOIN projects p ON p.id = s.project_id
-       JOIN credits c ON c.id = p.credit_id
-      WHERE c.track_id = ? AND c.code = ? AND p.sequence = ? AND s.sequence = ?`,
-    [trackId, creditCode, projectSeq, sessionSeq]
+    `SELECT h.id
+       FROM hours h
+       JOIN credits c ON c.id = h.credit_id
+      WHERE c.track_id = ? AND c.code = ? AND h.hour_number = ?`,
+    [trackId, creditCode, hourNumber]
   );
   return row ? Number(row.id) : null;
 }
@@ -299,11 +319,11 @@ export interface StudentPosition {
   creditId: number;
   creditCode: string;
   creditSeq: number;
-  projectId: number;
-  projectSeq: number;
-  sessionId: number;
-  sessionSeq: number;
-  creditSequence: number;
+  creditTotalHours: number;
+  hourId: number;
+  hourNumber: number;
+  hourTitle: string | null;
+  projectLabel: string | null;
   source: PositionSource;
   sourceDetail: any;
 }
@@ -327,12 +347,11 @@ export async function getPosition(
 ): Promise<StudentPosition | null> {
   const [[r]] = await conn.query<any[]>(
     `SELECT sp.student_id, sp.track_id, sp.credit_id, c.code AS credit_code, c.sequence AS credit_seq,
-            p.id AS project_id, p.sequence AS project_seq, s.id AS session_id, s.sequence AS session_seq,
-            s.credit_sequence, sp.source, sp.source_detail
+            c.total_hours, h.id AS hour_id, h.hour_number, h.title AS hour_title, h.project_label,
+            sp.source, sp.source_detail
        FROM student_positions sp
-       JOIN sessions s ON s.id = sp.session_id
-       JOIN projects p ON p.id = s.project_id
-       JOIN credits c ON c.id = p.credit_id
+       JOIN hours h ON h.id = sp.hour_id
+       JOIN credits c ON c.id = h.credit_id
       WHERE sp.student_id = ? AND sp.track_id = ?`,
     [studentId, trackId]
   );
@@ -343,101 +362,101 @@ export async function getPosition(
     creditId: Number(r.credit_id),
     creditCode: r.credit_code,
     creditSeq: Number(r.credit_seq),
-    projectId: Number(r.project_id),
-    projectSeq: Number(r.project_seq),
-    sessionId: Number(r.session_id),
-    sessionSeq: Number(r.session_seq),
-    creditSequence: Number(r.credit_sequence),
+    creditTotalHours: Number(r.total_hours),
+    hourId: Number(r.hour_id),
+    hourNumber: Number(r.hour_number),
+    hourTitle: r.hour_title ?? null,
+    projectLabel: r.project_label ?? null,
     source: r.source,
     sourceDetail: parseJson(r.source_detail),
   };
 }
 
 /**
- * Store a student's position directly. credit_id is derived from the session so
- * the row can never disagree with itself, and the session must belong to the track.
+ * Store a student's position directly. credit_id is derived from the hour so the
+ * row can never disagree with itself, and the hour must belong to the track.
  */
 export async function setPosition(
   studentId: number,
   trackId: number,
-  sessionId: number,
+  hourId: number,
   source: PositionSource = 'explicit',
   sourceDetail: unknown = null,
   conn: Runner = pool
 ): Promise<StudentPosition> {
-  const [[s]] = await conn.query<any[]>(
-    `SELECT c.id AS credit_id, c.track_id
-       FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
-      WHERE s.id = ?`,
-    [sessionId]
+  const [[h]] = await conn.query<any[]>(
+    `SELECT c.id AS credit_id, c.track_id FROM hours h JOIN credits c ON c.id = h.credit_id WHERE h.id = ?`,
+    [hourId]
   );
-  if (!s) throw new Error(`session ${sessionId} not found`);
-  if (Number(s.track_id) !== trackId) {
-    throw new Error(`session ${sessionId} belongs to track ${s.track_id}, not track ${trackId}`);
+  if (!h) throw new Error(`hour ${hourId} not found`);
+  if (Number(h.track_id) !== trackId) {
+    throw new Error(`hour ${hourId} belongs to track ${h.track_id}, not track ${trackId}`);
   }
   await conn.query(
-    `INSERT INTO student_positions (student_id, track_id, credit_id, session_id, source, source_detail)
+    `INSERT INTO student_positions (student_id, track_id, credit_id, hour_id, source, source_detail)
      VALUES (?, ?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE credit_id = VALUES(credit_id), session_id = VALUES(session_id),
+     ON DUPLICATE KEY UPDATE credit_id = VALUES(credit_id), hour_id = VALUES(hour_id),
                              source = VALUES(source), source_detail = VALUES(source_detail)`,
     [
       studentId,
       trackId,
-      Number(s.credit_id),
-      sessionId,
+      Number(h.credit_id),
+      hourId,
       source,
       sourceDetail == null ? null : JSON.stringify(sourceDetail),
     ]
   );
-  logger.info({ studentId, trackId, sessionId, source }, 'student position set');
+  logger.info({ studentId, trackId, hourId, source }, 'student position set');
   return (await getPosition(studentId, trackId, conn))!;
 }
 
 /**
- * Session index for a completion percentage over `total` ordered sessions.
- * Rounds DOWN — a student at 39% of 25 sessions is on session 9, never 10 — and
- * clamps to [1, total] (0% is the first session, not "no session").
+ * Hour number for a completion percentage over `total` hours.
  *
- * Integer arithmetic on basis points, so a value such as 29% of 100 sessions is
- * exactly 29 rather than 28.999… floored to 28. Precision: 0.01%.
+ * Rounds DOWN — a student at 39% of a 24-hour credit is on hour 9, never 10 — and
+ * clamps to [1, total], so 0% is hour 1 rather than "no hour". Never give a
+ * student content they have not reached.
+ *
+ * Integer arithmetic on basis points, so 29% of 100 hours is exactly 29 rather
+ * than 28.999… floored to 28. Precision: 0.01%.
  */
-export function sessionIndexFromPercent(percent: number, total: number): { raw: number; index: number } {
+export function hourNumberFromPercent(percent: number, total: number): { raw: number; hour: number } {
   if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
     throw new Error(`completion percentage must be between 0 and 100 (got ${percent})`);
   }
-  if (!Number.isInteger(total) || total < 1) throw new Error(`session total must be a positive integer (got ${total})`);
+  if (!Number.isInteger(total) || total < 1) throw new Error(`total hours must be a positive integer (got ${total})`);
   const basisPoints = Math.round(percent * 100);
   const raw = Math.floor((basisPoints * total) / 10000);
-  return { raw, index: Math.min(Math.max(raw, 1), total) };
+  return { raw, hour: Math.min(Math.max(raw, 1), total) };
 }
 
 export interface DerivedPosition {
-  sessionId: number;
+  hourId: number;
+  hourNumber: number;
   creditId: number;
   percent: number;
   scope: PercentScope;
   total: number;
   rawIndex: number;
   index: number;
-  basis: { creditId?: number; projectId?: number; defaulted: boolean };
+  basis: { creditId?: number; defaulted: boolean };
 }
 
 /**
- * Map an LMS completion percentage to a session under the given scope:
- *   credit  — percent of the sessions in one credit (context.creditId, else the first credit)
- *   project — percent of the sessions in one project (context.projectId, else the first project)
- *   track   — percent of every session in the track, in curriculum order
- * The scope's basis is part of the result and the log line, so a wrong scope or a
+ * Map an LMS completion percentage to an hour under the given scope:
+ *   credit — percent of that credit's total_hours (context.creditId, else the
+ *            first credit). This is the default and what the LMS profile means.
+ *   track  — percent of every hour in the track, in curriculum order.
+ * The basis is part of the result and of the log line, so a wrong scope or a
  * defaulted credit is visible rather than silent.
  */
 export async function derivePositionFromPercent(
   percent: number,
   scope: PercentScope,
   trackId: number,
-  context: { creditId?: number; projectId?: number } = {},
+  context: { creditId?: number } = {},
   conn: Runner = pool
 ): Promise<DerivedPosition> {
-  let rows: any[];
   const basis: DerivedPosition['basis'] = { defaulted: false };
 
   if (scope === 'credit') {
@@ -451,58 +470,78 @@ export async function derivePositionFromPercent(
       basis.defaulted = true;
     }
     basis.creditId = creditId;
-    [rows] = await conn.query<any[]>(
-      `SELECT s.id, c.id AS credit_id
-         FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
-        WHERE c.id = ? AND c.track_id = ?
-        ORDER BY s.credit_sequence`,
-      [creditId, trackId]
-    );
-  } else if (scope === 'project') {
-    let projectId = context.projectId;
-    if (projectId == null) {
-      const [[first]] = await conn.query<any[]>(
-        `SELECT p.id FROM projects p JOIN credits c ON c.id = p.credit_id
-          WHERE c.track_id = ? ORDER BY c.sequence, p.sequence LIMIT 1`,
-        [trackId]
-      );
-      if (!first) throw new Error(`track ${trackId} has no projects`);
-      projectId = Number(first.id);
-      basis.defaulted = true;
-    }
-    basis.projectId = projectId;
-    [rows] = await conn.query<any[]>(
-      `SELECT s.id, c.id AS credit_id
-         FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
-        WHERE p.id = ? AND c.track_id = ?
-        ORDER BY s.sequence`,
-      [projectId, trackId]
-    );
-  } else {
-    [rows] = await conn.query<any[]>(
-      `SELECT s.id, c.id AS credit_id
-         FROM sessions s JOIN projects p ON p.id = s.project_id JOIN credits c ON c.id = p.credit_id
-        WHERE c.track_id = ?
-        ORDER BY c.sequence, s.credit_sequence`,
-      [trackId]
-    );
+    const [[credit]] = await conn.query<any[]>(`SELECT id, total_hours FROM credits WHERE id = ? AND track_id = ?`, [
+      creditId,
+      trackId,
+    ]);
+    if (!credit) throw new Error(`credit ${creditId} is not in track ${trackId}`);
+    const total = Number(credit.total_hours);
+    // The total comes from the CREDIT, not from a row count: two credits with
+    // different totals must derive different hours from the same percentage.
+    const { raw, hour } = hourNumberFromPercent(percent, total);
+    const hourId = await requireHour(Number(credit.id), hour, conn);
+    const result: DerivedPosition = {
+      hourId,
+      hourNumber: hour,
+      creditId: Number(credit.id),
+      percent,
+      scope,
+      total,
+      rawIndex: raw,
+      index: hour,
+      basis,
+    };
+    logger.info({ trackId, ...result }, 'position derived from LMS percent');
+    return result;
   }
 
-  if (rows.length === 0) throw new Error(`no sessions found for scope ${scope} in track ${trackId}`);
-  const { raw, index } = sessionIndexFromPercent(percent, rows.length);
-  const chosen = rows[index - 1];
-  const result: DerivedPosition = {
-    sessionId: Number(chosen.id),
-    creditId: Number(chosen.credit_id),
-    percent,
-    scope,
-    total: rows.length,
-    rawIndex: raw,
-    index,
-    basis,
-  };
-  logger.info({ trackId, ...result }, 'position derived from LMS percent');
-  return result;
+  // track: walk the credits in order, spending the derived index across each
+  // credit's total_hours.
+  const [credits] = await conn.query<any[]>(
+    `SELECT id, total_hours FROM credits WHERE track_id = ? ORDER BY sequence`,
+    [trackId]
+  );
+  if (credits.length === 0) throw new Error(`track ${trackId} has no credits`);
+  const total = credits.reduce((sum, c) => sum + Number(c.total_hours), 0);
+  if (total < 1) throw new Error(`track ${trackId} has no hours`);
+  const { raw, hour: index } = hourNumberFromPercent(percent, total);
+  let remaining = index;
+  for (const c of credits) {
+    const hours = Number(c.total_hours);
+    if (remaining <= hours) {
+      const hourId = await requireHour(Number(c.id), remaining, conn);
+      const result: DerivedPosition = {
+        hourId,
+        hourNumber: remaining,
+        creditId: Number(c.id),
+        percent,
+        scope,
+        total,
+        rawIndex: raw,
+        index,
+        basis,
+      };
+      logger.info({ trackId, ...result }, 'position derived from LMS percent');
+      return result;
+    }
+    remaining -= hours;
+  }
+  /* c8 ignore next */
+  throw new Error(`could not place index ${index} of ${total} hours in track ${trackId}`);
+}
+
+/** The hour row for (credit, number). Missing means the credit's rows disagree with its total. */
+async function requireHour(creditId: number, hourNumber: number, conn: Runner): Promise<number> {
+  const [[row]] = await conn.query<any[]>(`SELECT id FROM hours WHERE credit_id = ? AND hour_number = ?`, [
+    creditId,
+    hourNumber,
+  ]);
+  if (!row) {
+    throw new Error(
+      `credit ${creditId} has no hour ${hourNumber}; its hour rows and total_hours disagree — reload the definition`
+    );
+  }
+  return Number(row.id);
 }
 
 /**
@@ -517,7 +556,7 @@ export async function derivePositionFromPercent(
 export async function resolvePosition(
   studentId: number,
   trackId: number,
-  opts: { percent?: number; context?: { creditId?: number; projectId?: number } } = {}
+  opts: { percent?: number; context?: { creditId?: number } } = {}
 ): Promise<StudentPosition | null> {
   const current = await getPosition(studentId, trackId);
   if (current && current.source !== 'derived_percent') return current;
@@ -527,18 +566,19 @@ export async function resolvePosition(
   const detail = current?.sourceDetail;
   if (current && detail && Number(detail.percent) === opts.percent && detail.scope === scope) return current;
 
-  const context = opts.context ?? (current ? { creditId: current.creditId, projectId: current.projectId } : {});
+  const context = opts.context ?? (current ? { creditId: current.creditId } : {});
   const derived = await derivePositionFromPercent(opts.percent, scope, trackId, context);
   logger.info(
-    { studentId, trackId, previousSessionId: current?.sessionId ?? null, sessionId: derived.sessionId, scope },
+    { studentId, trackId, previousHourId: current?.hourId ?? null, hourId: derived.hourId, scope },
     current ? 'derived position refreshed (stale)' : 'derived position created'
   );
-  return setPosition(studentId, trackId, derived.sessionId, 'derived_percent', {
+  return setPosition(studentId, trackId, derived.hourId, 'derived_percent', {
     percent: derived.percent,
     scope: derived.scope,
     total: derived.total,
     raw_index: derived.rawIndex,
     index: derived.index,
+    hour_number: derived.hourNumber,
     basis: derived.basis,
   });
 }
@@ -548,19 +588,19 @@ export async function resolvePosition(
 // ---------------------------------------------------------------------------
 
 /**
- * current — the base pool (D1): the current session plus POOL_LOOKBACK_SESSIONS
- *           earlier sessions in the current credit (0 = all earlier in the credit)
- * credit  — every session up to the position in the current credit (D3a)
+ * current — the base pool (D1): the current hour plus POOL_LOOKBACK_HOURS earlier
+ *           hours in the current credit (0 = all earlier hours in the credit)
+ * credit  — every hour up to the position in the current credit (D3a)
  * track   — the whole completed curriculum: earlier credits plus the above (D3b)
  */
 export type PoolTier = 'current' | 'credit' | 'track';
 
 /**
- * Session ids the student may draw from, ordered current first, then later
- * sessions before earlier ones. Never includes a session ahead of the position or
- * in a later credit — that ceiling is part of the SQL, for every tier.
+ * Hour ids the student may draw from, ordered current first, then later hours
+ * before earlier ones. Never includes an hour ahead of the position or in a later
+ * credit — that ceiling is part of the SQL, for every tier.
  */
-export async function getSessionPool(
+export async function getHourPool(
   studentId: number,
   trackId: number,
   opts: { tier?: PoolTier; conn?: Runner } = {}
@@ -570,9 +610,9 @@ export async function getSessionPool(
   const params: any[] = [studentId, trackId];
   let tierClause: string;
   if (tier === 'current') {
-    const lookback = poolLookbackSessions();
+    const lookback = poolLookbackHours();
     if (lookback > 0) {
-      tierClause = 'AND c.id = pc.id AND s.credit_sequence + ? >= ps.credit_sequence';
+      tierClause = 'AND c.id = pc.id AND h.hour_number + ? >= ph.hour_number';
       params.push(lookback);
     } else {
       tierClause = 'AND c.id = pc.id';
@@ -584,19 +624,17 @@ export async function getSessionPool(
   }
 
   const [rows] = await conn.query<any[]>(
-    `SELECT s.id
+    `SELECT h.id
        FROM student_positions sp
        JOIN tracks t ON t.id = sp.track_id AND t.active = TRUE
-       JOIN sessions ps ON ps.id = sp.session_id
-       JOIN projects pp ON pp.id = ps.project_id
-       JOIN credits pc ON pc.id = pp.credit_id
+       JOIN hours ph ON ph.id = sp.hour_id
+       JOIN credits pc ON pc.id = ph.credit_id
        JOIN credits c ON c.track_id = sp.track_id
-       JOIN projects p ON p.credit_id = c.id
-       JOIN sessions s ON s.project_id = p.id
+       JOIN hours h ON h.credit_id = c.id
       WHERE sp.student_id = ? AND sp.track_id = ?
-        AND (c.sequence < pc.sequence OR (c.id = pc.id AND s.credit_sequence <= ps.credit_sequence))
+        AND (c.sequence < pc.sequence OR (c.id = pc.id AND h.hour_number <= ph.hour_number))
         ${tierClause}
-      ORDER BY (s.id = sp.session_id) DESC, c.sequence DESC, s.credit_sequence DESC`,
+      ORDER BY (h.id = sp.hour_id) DESC, c.sequence DESC, h.hour_number DESC`,
     params
   );
   return rows.map((r) => Number(r.id));

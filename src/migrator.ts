@@ -16,6 +16,7 @@ import * as m008 from './migrations/008_assistance_workflow.js';
 import * as m009 from './migrations/009_curriculum.js';
 import * as m010 from './migrations/010_adopt_pipeline_schema.js';
 import * as m011 from './migrations/011_idempotency_request_hash.js';
+import * as m012 from './migrations/012_hours.js';
 
 /**
  * Versioned migrations (Item 4).
@@ -48,6 +49,7 @@ const MIGRATIONS: Migration[] = [
   { name: '009_curriculum', up: m009.up, down: m009.down },
   { name: '010_adopt_pipeline_schema', up: m010.up, down: m010.down },
   { name: '011_idempotency_request_hash', up: m011.up, down: m011.down },
+  { name: '012_hours', up: m012.up, down: m012.down },
 ];
 
 export const MIGRATION_NAMES = MIGRATIONS.map((m) => m.name);

@@ -72,8 +72,8 @@ const EnvSchema = z
     // container running changes this value.
     INSTANCE_COUNT: z.coerce.number().int().positive().default(1),
     SELECTION_MODE: z.enum(['legacy', 'curriculum']).default('legacy'),
-    POOL_LOOKBACK_SESSIONS: z.coerce.number().int().min(0).default(0),
-    PERCENT_SCOPE: z.enum(['credit', 'project', 'track']).default('credit'),
+    POOL_LOOKBACK_HOURS: z.coerce.number().int().min(0).default(0),
+    PERCENT_SCOPE: z.enum(['credit', 'track']).default('credit'),
     REVISION_MIX_PERCENT: z.coerce.number().int().min(0).max(100).default(20),
     // Local MySQL install (no Docker): mysqldump path used by verify:migrations.
     MYSQLDUMP: z.string().optional(),

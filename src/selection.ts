@@ -1,8 +1,8 @@
 import type { PoolConnection } from 'mysql2/promise';
 import { pool } from './db.js';
 import { logger } from './logger.js';
-import { selectionMode, poolLookbackSessions, revisionMixPercent } from './config.js';
-import { getSessionPool, type PoolTier } from './curriculum.js';
+import { selectionMode, poolLookbackHours, revisionMixPercent } from './config.js';
+import { getHourPool, type PoolTier } from './curriculum.js';
 
 export interface SelectionResult {
   assignmentId: number;
@@ -28,10 +28,10 @@ export interface CurriculumCandidate {
   mission_id: number;
   mission_version: number;
   difficulty: number;
-  session_id: number;
+  hour_id: number;
   credit_code: string;
-  credit_sequence: number;
-  is_current_session: boolean;
+  hour_number: number;
+  is_current_hour: boolean;
   overlap: number;
   revision_seq: number;
 }
@@ -51,11 +51,11 @@ export function widenTimeBands(bands: string[]): string[] {
 export interface CurriculumChoice {
   chosen: CurriculumCandidate | null;
   revision: boolean;
-  /** true when REVISION_MIX_PERCENT diverted this pick to an earlier session. */
+  /** true when REVISION_MIX_PERCENT diverted this pick to an earlier hour. */
   revisionMix: boolean;
   tier: CurriculumTier | null;
   trackId: number | null;
-  positionSessionId: number | null;
+  positionHourId: number | null;
   /** Ordered log of each relaxation step applied (D3). */
   relaxations: string[];
   poolSizes: Partial<Record<CurriculumTier, number>>;
@@ -63,24 +63,22 @@ export interface CurriculumChoice {
   candidates: CurriculumCandidate[];
 }
 
-/** Joins every candidate query shares: mission → its session/credit, and the student's position. */
+/** Joins every candidate query shares: mission → its hour/credit, and the student's position. */
 const CURRICULUM_JOINS = `
   FROM missions m
-  JOIN sessions s ON s.id = m.session_id
-  JOIN projects p ON p.id = s.project_id
-  JOIN credits c ON c.id = p.credit_id
+  JOIN hours h ON h.id = m.hour_id
+  JOIN credits c ON c.id = h.credit_id
   JOIN student_positions sp ON sp.student_id = ? AND sp.track_id = c.track_id
-  JOIN sessions ps ON ps.id = sp.session_id
-  JOIN projects pp ON pp.id = ps.project_id
-  JOIN credits pc ON pc.id = pp.credit_id`;
+  JOIN hours ph ON ph.id = sp.hour_id
+  JOIN credits pc ON pc.id = ph.credit_id`;
 
 /**
- * SAFETY — the curriculum ceiling, in SQL. A mission's session must be in an
+ * SAFETY — the curriculum ceiling, in SQL. A mission's hour must be in an
  * earlier credit of the track, or in the student's credit at or before their
- * session. It is applied to every tier independently of the pool id list, so a
+ * hour. It is applied to every tier independently of the pool id list, so a
  * wrong pool can never surface content the student has not reached.
  */
-const CEILING = `(c.sequence < pc.sequence OR (c.id = pc.id AND s.credit_sequence <= ps.credit_sequence))`;
+const CEILING = `(c.sequence < pc.sequence OR (c.id = pc.id AND h.hour_number <= ph.hour_number))`;
 
 function hardFilters(q: CurriculumQuery): { sql: string; params: any[] } {
   let sql = `AND m.status = 'live' AND m.subject = ? AND ? BETWEEN m.age_min AND m.age_max`;
@@ -101,10 +99,10 @@ function toCandidate(r: any, revisionSeq = 0): CurriculumCandidate {
     mission_id: Number(r.mission_id),
     mission_version: Number(r.mission_version),
     difficulty: Number(r.difficulty),
-    session_id: Number(r.session_id),
+    hour_id: Number(r.hour_id),
     credit_code: r.credit_code,
-    credit_sequence: Number(r.credit_sequence),
-    is_current_session: Boolean(Number(r.is_current_session)),
+    hour_number: Number(r.hour_number),
+    is_current_hour: Boolean(Number(r.is_current_hour)),
     overlap: Number(r.overlap),
     revision_seq: revisionSeq,
   };
@@ -115,19 +113,19 @@ function toCandidate(r: any, revisionSeq = 0): CurriculumCandidate {
  * caller creates the assignment and writes selection_log.
  *
  * Filters, in order:
- *   1. HARD session_id IN (pool)          + the SQL ceiling (never ahead)
+ *   1. HARD hour_id IN (pool)             + the SQL ceiling (never ahead)
  *   2. HARD status = 'live'
  *   3. HARD mission_type / time_band match the slot (when given)
  *   4. HARD not already assigned to this student
  *      (subject and age still apply; the track largely implies them)
  * Ranking:
- *   5. current session first, then later sessions before earlier ones
+ *   5. current hour first, then later hours before earlier ones
  *   6. difficulty closest to targetLevel
  *   7. interest-tag overlap
  *   8. random
  *
  * Exhaustion (D3), each step logged:
- *   a. widen to every earlier session in the credit (only if lookback limited it)
+ *   a. widen to every earlier hour in the credit (only if lookback limited it)
  *   b. widen to earlier credits in the track
  *   c. repeat the completed mission seen longest ago, as revision
  *   d. empty
@@ -146,7 +144,7 @@ export async function chooseCurriculumMission(
     revisionMix: false,
     tier: null,
     trackId: null,
-    positionSessionId: null,
+    positionHourId: null,
     relaxations: [],
     poolSizes: {},
     reason: null,
@@ -155,7 +153,7 @@ export async function chooseCurriculumMission(
 
   // Track: the student's position on an active track for their subject.
   const [[pos]] = await conn.query<any[]>(
-    `SELECT sp.track_id, sp.session_id
+    `SELECT sp.track_id, sp.hour_id
        FROM student_positions sp
        JOIN tracks t ON t.id = sp.track_id AND t.active = TRUE
       WHERE sp.student_id = ? AND t.subject = ?
@@ -178,28 +176,28 @@ export async function chooseCurriculumMission(
     return choice;
   }
   choice.trackId = Number(pos.track_id);
-  choice.positionSessionId = Number(pos.session_id);
+  choice.positionHourId = Number(pos.hour_id);
 
   const trackId = choice.trackId;
   const filters = hardFilters(q);
 
-  /** Unseen candidates from a pool, ranked. `excludeCurrentSession` drives the revision mix. */
-  async function unseen(poolIds: number[], f: { sql: string; params: any[] }, excludeCurrentSession = false) {
+  /** Unseen candidates from a pool, ranked. `excludeCurrentHour` drives the revision mix. */
+  async function unseen(poolIds: number[], f: { sql: string; params: any[] }, excludeCurrentHour = false) {
     const [rows] = await conn.query<any[]>(
-      `SELECT m.id AS mission_id, m.version AS mission_version, m.difficulty, m.session_id,
-              c.code AS credit_code, s.credit_sequence,
-              (m.session_id = sp.session_id) AS is_current_session,
+      `SELECT m.id AS mission_id, m.version AS mission_version, m.difficulty, m.hour_id,
+              c.code AS credit_code, h.hour_number,
+              (m.hour_id = sp.hour_id) AS is_current_hour,
               (SELECT COUNT(*) FROM mission_tags mt
                  JOIN student_interests si ON si.tag = mt.tag AND si.student_id = ?
                 WHERE mt.mission_id = m.id) AS overlap
        ${CURRICULUM_JOINS}
-       WHERE m.session_id IN (?)
+       WHERE m.hour_id IN (?)
          AND sp.track_id = ?
          AND ${CEILING}
-         ${excludeCurrentSession ? 'AND m.session_id <> sp.session_id' : ''}
+         ${excludeCurrentHour ? 'AND m.hour_id <> sp.hour_id' : ''}
          ${f.sql}
          AND NOT EXISTS (SELECT 1 FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id)
-       ORDER BY is_current_session DESC, c.sequence DESC, s.credit_sequence DESC,
+       ORDER BY is_current_hour DESC, c.sequence DESC, h.hour_number DESC,
                 ABS(CAST(m.difficulty AS SIGNED) - ?) ASC, overlap DESC, RAND()
        LIMIT 10`,
       [q.studentId, q.studentId, poolIds, trackId, ...f.params, q.studentId, q.targetLevel]
@@ -207,24 +205,24 @@ export async function chooseCurriculumMission(
     return rows;
   }
 
-  // REVISION_MIX_PERCENT: sometimes revise an earlier session even though the
+  // REVISION_MIX_PERCENT: sometimes revise an earlier hour even though the
   // current one still has unseen missions (spaced repetition). Rolled once per
   // selection; falls through to the normal ranking when nothing earlier qualifies.
   const mix = revisionMixPercent();
   const mixRoll = mix > 0 && Math.random() * 100 < mix;
 
-  const tiers: PoolTier[] = poolLookbackSessions() > 0 ? ['current', 'credit', 'track'] : ['current', 'track'];
+  const tiers: PoolTier[] = poolLookbackHours() > 0 ? ['current', 'credit', 'track'] : ['current', 'track'];
 
   for (const tier of tiers) {
     if (tier === 'credit') {
       choice.relaxations.push('curriculum:widen_credit');
-      logger.info({ studentId: q.studentId, relax: 'a' }, 'curriculum selection: widen to all sessions in the credit');
+      logger.info({ studentId: q.studentId, relax: 'a' }, 'curriculum selection: widen to all hours in the credit');
     } else if (tier === 'track') {
       choice.relaxations.push('curriculum:previous_credits');
       logger.info({ studentId: q.studentId, relax: 'b' }, 'curriculum selection: widen to previous credits');
     }
 
-    const poolIds = opts.poolOverride ?? (await getSessionPool(q.studentId, trackId, { tier, conn }));
+    const poolIds = opts.poolOverride ?? (await getHourPool(q.studentId, trackId, { tier, conn }));
     choice.poolSizes[tier] = poolIds.length;
     if (poolIds.length === 0) continue;
 
@@ -236,8 +234,8 @@ export async function chooseCurriculumMission(
         choice.tier = tier;
         choice.revisionMix = true;
         logger.info(
-          { studentId: q.studentId, mixPercent: mix, sessionId: choice.chosen.session_id },
-          'curriculum selection: revision mix — drawing from an earlier session'
+          { studentId: q.studentId, mixPercent: mix, hourId: choice.chosen.hour_id },
+          'curriculum selection: revision mix — drawing from an earlier hour'
         );
         return choice;
       }
@@ -262,7 +260,7 @@ export async function chooseCurriculumMission(
         { studentId: q.studentId, relax: 'b2', from: q.timeBands, to: widened },
         'curriculum selection: widen time band'
       );
-      const bandPool = opts.poolOverride ?? (await getSessionPool(q.studentId, trackId, { tier: 'track', conn }));
+      const bandPool = opts.poolOverride ?? (await getHourPool(q.studentId, trackId, { tier: 'track', conn }));
       choice.poolSizes.widen_band = bandPool.length;
       if (bandPool.length > 0) {
         const rows = await unseen(bandPool, hardFilters({ ...q, timeBands: widened }));
@@ -285,13 +283,13 @@ export async function chooseCurriculumMission(
     choice.relaxations.includes('curriculum:widen_time_band') && q.timeBands
       ? hardFilters({ ...q, timeBands: widenTimeBands(q.timeBands) })
       : filters;
-  const trackPool = opts.poolOverride ?? (await getSessionPool(q.studentId, choice.trackId, { tier: 'track', conn }));
+  const trackPool = opts.poolOverride ?? (await getHourPool(q.studentId, choice.trackId, { tier: 'track', conn }));
   choice.poolSizes.repeat_oldest = trackPool.length;
   if (trackPool.length > 0) {
     const [rows] = await conn.query<any[]>(
-      `SELECT m.id AS mission_id, m.version AS mission_version, m.difficulty, m.session_id,
-              c.code AS credit_code, s.credit_sequence,
-              (m.session_id = sp.session_id) AS is_current_session,
+      `SELECT m.id AS mission_id, m.version AS mission_version, m.difficulty, m.hour_id,
+              c.code AS credit_code, h.hour_number,
+              (m.hour_id = sp.hour_id) AS is_current_hour,
               0 AS overlap,
               (SELECT MAX(a.assigned_at) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS last_seen,
               -- assigned_at has ONE-SECOND resolution, so several assignments can
@@ -302,7 +300,7 @@ export async function chooseCurriculumMission(
               (SELECT MAX(a.id) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS last_seen_seq,
               (SELECT MAX(a.revision_seq) FROM assignments a WHERE a.student_id = ? AND a.mission_id = m.id) AS max_rev
        ${CURRICULUM_JOINS}
-       WHERE m.session_id IN (?)
+       WHERE m.hour_id IN (?)
          AND sp.track_id = ?
          AND ${CEILING}
          ${repeatFilters.sql}
@@ -352,7 +350,7 @@ export async function logCurriculumSelection(
   const tierSize = choice.tier ? choice.poolSizes[choice.tier] : undefined;
   const poolSize = tierSize ?? choice.poolSizes.current ?? null;
   await conn.query(
-    `INSERT INTO selection_log (student_id, chosen_mission, candidates, filters_applied, pool_size, chosen_session_id)
+    `INSERT INTO selection_log (student_id, chosen_mission, candidates, filters_applied, pool_size, chosen_hour_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [
       studentId,
@@ -361,18 +359,18 @@ export async function logCurriculumSelection(
       JSON.stringify({
         mode: 'curriculum',
         track_id: choice.trackId,
-        position_session_id: choice.positionSessionId,
+        position_hour_id: choice.positionHourId,
         tier: choice.tier,
         revision: choice.revision,
         revision_mix: choice.revisionMix,
         relaxations: choice.relaxations,
         pool_sizes: choice.poolSizes,
         reason: choice.reason,
-        lookback_sessions: poolLookbackSessions(),
+        lookback_hours: poolLookbackHours(),
         ...extraFilters,
       }),
       poolSize,
-      choice.chosen?.session_id ?? null,
+      choice.chosen?.hour_id ?? null,
     ]
   );
 }

@@ -9,16 +9,16 @@
  */
 
 export type SelectionMode = 'legacy' | 'curriculum';
-export type PercentScope = 'credit' | 'project' | 'track';
+export type PercentScope = 'credit' | 'track';
 
 const SELECTION_MODES: readonly SelectionMode[] = ['legacy', 'curriculum'];
-const PERCENT_SCOPES: readonly PercentScope[] = ['credit', 'project', 'track'];
+const PERCENT_SCOPES: readonly PercentScope[] = ['credit', 'track'];
 
 interface Settings {
   /** null = no override; fall back to the env var / default. */
   feedbackGatesUnlock: boolean | null;
   selectionMode: SelectionMode | null;
-  poolLookbackSessions: number | null;
+  poolLookbackHours: number | null;
   percentScope: PercentScope | null;
   revisionMixPercent: number | null;
 }
@@ -26,7 +26,7 @@ interface Settings {
 const settings: Settings = {
   feedbackGatesUnlock: null,
   selectionMode: null,
-  poolLookbackSessions: null,
+  poolLookbackHours: null,
   percentScope: null,
   revisionMixPercent: null,
 };
@@ -75,7 +75,7 @@ export function setFeedbackGatesUnlock(value: boolean | null): void {
  *
  * Default stays 'legacy' until Robotics positions are backfilled: in curriculum
  * mode a student with no position is served NOTHING (by design — a legacy
- * fallback would quietly hand out content from sessions they have not reached).
+ * fallback would quietly hand out content from hours they have not reached).
  */
 export function selectionMode(): SelectionMode {
   if (settings.selectionMode) return settings.selectionMode;
@@ -92,22 +92,22 @@ export function setSelectionMode(value: SelectionMode | null): void {
 }
 
 /**
- * POOL_LOOKBACK_SESSIONS (default 0). How many sessions before the current one
- * are in a student's base pool. 0 = every previous session in the current credit.
+ * POOL_LOOKBACK_HOURS (default 0). How many hours before the current one are in a
+ * student's base pool. 0 = every previous hour in the current credit.
  */
-export function poolLookbackSessions(): number {
-  if (settings.poolLookbackSessions !== null) return settings.poolLookbackSessions;
-  const raw = (process.env.POOL_LOOKBACK_SESSIONS ?? '0').trim() || '0';
+export function poolLookbackHours(): number {
+  if (settings.poolLookbackHours !== null) return settings.poolLookbackHours;
+  const raw = (process.env.POOL_LOOKBACK_HOURS ?? '0').trim() || '0';
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) {
-    throw new Error(`POOL_LOOKBACK_SESSIONS must be a non-negative integer (got "${raw}")`);
+    throw new Error(`POOL_LOOKBACK_HOURS must be a non-negative integer (got "${raw}")`);
   }
   return n;
 }
 
-export function setPoolLookbackSessions(value: number | null): void {
+export function setPoolLookbackHours(value: number | null): void {
   if (value !== null && (!Number.isInteger(value) || value < 0)) throw new Error(`invalid lookback ${value}`);
-  settings.poolLookbackSessions = value;
+  settings.poolLookbackHours = value;
 }
 
 /**
@@ -131,9 +131,9 @@ export function setPercentScope(value: PercentScope | null): void {
 
 /**
  * REVISION_MIX_PERCENT (default 20). The chance that a selection is drawn from an
- * EARLIER session even though the current session still has unseen missions —
+ * EARLIER hour even though the current hour still has unseen missions —
  * spaced repetition, rather than all-new-content-then-nothing. 0 disables the mix
- * (strict current-session-first); 100 always revises when earlier content exists.
+ * (strict current-hour-first); 100 always revises when earlier content exists.
  */
 export function revisionMixPercent(): number {
   if (settings.revisionMixPercent !== null) return settings.revisionMixPercent;

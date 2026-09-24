@@ -252,15 +252,17 @@ export interface Progress {
 // Segment — GET /api/segment/:studentId
 // ---------------------------------------------------------------------------
 /**
- * Where a student is in the curriculum: track -> credit -> project -> session.
- * Null when curriculum mode has not placed them (legacy selection, or a brand
- * new student) — the screens then show the segment placement instead.
+ * Where a student is in the curriculum: track -> credit -> hour. Null when
+ * curriculum mode has not placed them (legacy selection, or a brand new student)
+ * — the screens then show the segment placement instead.
+ *
+ * project_label is a grouping the SME may use when authoring ("Project 2"). It is
+ * shown beside the hour and means nothing to selection.
  */
 export interface CurriculumPosition {
   track: string;
-  credit: { code: string; name: string; sequence: number };
-  project: { name: string; sequence: number; session_count: number };
-  session: { title: string; sequence: number; credit_sequence: number };
+  credit: { code: string; name: string; sequence: number; total_hours: number };
+  hour: { number: number; title: string | null; project_label: string | null };
   source: 'explicit' | 'derived_percent' | 'manual';
 }
 

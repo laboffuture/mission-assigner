@@ -512,7 +512,7 @@ def generate(chunks_to_generate, dry_run: bool = False):
             "source_file": chunk["source_file"],
             "content_hash": chunk.get("content_hash"),
             "subject": chunk.get("subject"),
-            "session_id": chunk.get("session_id"),
+            "hour_id": chunk.get("hour_id"),
             "missions": parsed["missions"],
         }, indent=2), encoding="utf-8")
         drafted.append(ref)

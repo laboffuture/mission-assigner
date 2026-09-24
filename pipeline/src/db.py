@@ -65,7 +65,7 @@ def load_active_template() -> dict:
 
 def load_curriculum_config() -> dict:
     """config/curriculum.json (or PIPELINE_CURRICULUM_FILE): which track, credit and
-    project each SME file represents, plus the session heading pattern. Missing
+    credit and hours each SME file covers, plus the hour heading pattern. Missing
     file = no mappings, so every input file must be listed as legacy."""
     path = Path(os.getenv("PIPELINE_CURRICULUM_FILE") or CONFIG_DIR / "curriculum.json")
     if not path.exists():
@@ -89,27 +89,28 @@ def get_connection():
     )
 
 
-# What migration 010_adopt_pipeline_schema (and 009_curriculum) must have put in
+# What migrations 010_adopt_pipeline_schema, 009_curriculum and 012_hours must
+# have put in
 # place before the pipeline can run. Checked, never created — see the module
 # docstring. Keep in step with src/migrations/ in the Node tree.
 REQUIRED_TABLES = ("content_chunks",)
 
 REQUIRED_COLUMNS = (
-    ("content_chunks", "session_id"),
+    ("content_chunks", "hour_id"),
     ("missions", "source_chunk_id"),
     ("missions", "generated_at"),
     ("missions", "review_notes"),
     ("missions", "source_chunk_hash"),
-    # Owned by 009_curriculum: without it, generated missions cannot be
-    # curriculum-scoped and would be unservable in curriculum mode.
-    ("missions", "session_id"),
+    # Owned by 012_hours (009 created it as session_id): without it, generated
+    # missions cannot be curriculum-scoped and would be unservable.
+    ("missions", "hour_id"),
 )
 
 REQUIRED_INDEXES = (("missions", "idx_missions_source_chunk"),)
 
 MIGRATE_HINT = (
-    "Run `npm run db:migrate` in mission-demo (migrations 009_curriculum and "
-    "010_adopt_pipeline_schema) before running the pipeline."
+    "Run `npm run db:migrate` in mission-demo (migrations 009_curriculum, "
+    "010_adopt_pipeline_schema and 012_hours) before running the pipeline."
 )
 
 

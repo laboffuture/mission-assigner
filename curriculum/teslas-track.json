@@ -6,43 +6,27 @@
     {
       "code": "C1",
       "name": "Foundations of Robotics",
-      "projects": [
-        { "name": "Project 1", "session_count": 9 },
-        { "name": "Project 2", "session_count": 8 },
-        { "name": "Project 3", "session_count": 8 }
-      ]
+      "total_hours": 24
     },
     {
       "code": "C2",
       "name": "Sensors and Feedback",
-      "projects": [
-        { "name": "Project 1", "session_count": 9 },
-        { "name": "Project 2", "session_count": 8 }
-      ]
+      "total_hours": 24
     },
     {
       "code": "C3",
       "name": "Motion and Control",
-      "projects": [
-        { "name": "Project 1", "session_count": 9 },
-        { "name": "Project 2", "session_count": 8 }
-      ]
+      "total_hours": 30
     },
     {
       "code": "C4",
       "name": "Autonomy",
-      "projects": [
-        { "name": "Project 1", "session_count": 9 },
-        { "name": "Project 2", "session_count": 8 }
-      ]
+      "total_hours": 30
     },
     {
       "code": "C5",
       "name": "Capstone",
-      "projects": [
-        { "name": "Project 1", "session_count": 9 },
-        { "name": "Project 2", "session_count": 8 }
-      ]
+      "total_hours": 24
     }
   ]
 }

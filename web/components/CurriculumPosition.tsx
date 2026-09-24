@@ -2,10 +2,13 @@ import type { CurriculumPosition, Segment } from '@/lib/api/types';
 
 /**
  * Where the student is in the curriculum, in their own terms: the track, the
- * credit, the project and the session they are working through. Curriculum mode
- * places students on this path; when there is no position — legacy selection,
- * or a student not yet placed — the segment placement is shown instead, so the
- * line is never empty.
+ * credit and the hour they are working through. Curriculum mode places students
+ * on this path; when there is no position — legacy selection, or a student not
+ * yet placed — the segment placement is shown instead, so the line is never
+ * empty.
+ *
+ * The hour's project_label, when the SME set one, is shown beside it as a label.
+ * It is not part of the position: "Hour 7 of 24" is what the student is told.
  */
 export function PositionLine({ segment, className = '' }: { segment: Segment; className?: string }) {
   const p = segment.position;
@@ -28,23 +31,25 @@ export function PositionLine({ segment, className = '' }: { segment: Segment; cl
       {' · '}
       {p.credit.code} {p.credit.name}
       {' · '}
-      Project {p.project.sequence}
-      {' · '}
-      Session {p.session.sequence} of {p.project.session_count}
+      Hour {p.hour.number} of {p.credit.total_hours}
+      {p.hour.project_label ? ` · ${p.hour.project_label}` : ''}
     </p>
   );
 }
 
 /** The same position as a labelled block, for the progress panel. */
 export function PositionDetail({ position }: { position: CurriculumPosition }) {
+  const hourValue = [
+    position.hour.title,
+    `hour ${position.hour.number} of ${position.credit.total_hours}`,
+    position.hour.project_label,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   const rows: Array<[string, string]> = [
     ['Track', position.track],
     ['Credit', `${position.credit.code} — ${position.credit.name}`],
-    ['Project', `${position.project.name} (project ${position.project.sequence})`],
-    [
-      'Session',
-      `${position.session.title} (session ${position.session.sequence} of ${position.project.session_count})`,
-    ],
+    ['Hour', hourValue],
   ];
   return (
     <dl className="mt-4 grid grid-cols-[auto,1fr] gap-x-4 gap-y-1 text-sm">

@@ -34,8 +34,8 @@ import {
   setFeedbackGatesUnlock,
   selectionMode,
   setSelectionMode,
-  poolLookbackSessions,
-  setPoolLookbackSessions,
+  poolLookbackHours,
+  setPoolLookbackHours,
   percentScope,
   setPercentScope,
   revisionMixPercent,
@@ -705,19 +705,17 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
     }
 
     // Where the student is in the curriculum, when curriculum mode has placed
-    // them: track -> credit -> project -> session. Null for a student who has
-    // no position (legacy selection, or not yet placed), and the screens then
-    // fall back to the segment wording below.
+    // them: track -> credit -> hour. Null for a student who has no position
+    // (legacy selection, or not yet placed), and the screens then fall back to
+    // the segment wording below.
     const [[pos]] = await pool.query<any[]>(
       `SELECT t.name AS track_name, c.code AS credit_code, c.name AS credit_name, c.sequence AS credit_sequence,
-              p.name AS project_name, p.sequence AS project_sequence, p.session_count,
-              s2.title AS session_title, s2.sequence AS session_sequence, s2.credit_sequence AS session_credit_sequence,
+              c.total_hours, h.hour_number, h.title AS hour_title, h.project_label,
               sp.source
          FROM student_positions sp
          JOIN tracks t ON t.id = sp.track_id AND t.active = TRUE
-         JOIN sessions s2 ON s2.id = sp.session_id
-         JOIN projects p ON p.id = s2.project_id
-         JOIN credits c ON c.id = p.credit_id
+         JOIN hours h ON h.id = sp.hour_id
+         JOIN credits c ON c.id = h.credit_id
         WHERE sp.student_id = ?
         ORDER BY (t.subject = ?) DESC, sp.updated_at DESC
         LIMIT 1`,
@@ -733,16 +731,16 @@ app.get('/api/segment/:studentId', requireAuth, validate({ params: studentIdPara
       position: pos
         ? {
             track: pos.track_name,
-            credit: { code: pos.credit_code, name: pos.credit_name, sequence: Number(pos.credit_sequence) },
-            project: {
-              name: pos.project_name,
-              sequence: Number(pos.project_sequence),
-              session_count: Number(pos.session_count),
+            credit: {
+              code: pos.credit_code,
+              name: pos.credit_name,
+              sequence: Number(pos.credit_sequence),
+              total_hours: Number(pos.total_hours),
             },
-            session: {
-              title: pos.session_title,
-              sequence: Number(pos.session_sequence),
-              credit_sequence: Number(pos.session_credit_sequence),
+            hour: {
+              number: Number(pos.hour_number),
+              title: pos.hour_title,
+              project_label: pos.project_label,
             },
             source: pos.source,
           }
@@ -1144,7 +1142,7 @@ if (!isProduction()) {
   });
 
   /**
-   * POST /api/test/curriculum-config  body { poolLookbackSessions?: number|null, percentScope?: string|null }
+   * POST /api/test/curriculum-config  body { poolLookbackHours?: number|null, percentScope?: string|null }
    * Test hook (ENABLE_TEST_HOOKS only).
    */
   app.post('/api/test/curriculum-config', (req, res) => {
@@ -1152,14 +1150,14 @@ if (!isProduction()) {
       return sendError(req, res, 403, 'forbidden', 'test hooks disabled');
     }
     try {
-      if (req.body && 'poolLookbackSessions' in req.body) setPoolLookbackSessions(req.body.poolLookbackSessions);
+      if (req.body && 'poolLookbackHours' in req.body) setPoolLookbackHours(req.body.poolLookbackHours);
       if (req.body && 'percentScope' in req.body) setPercentScope(req.body.percentScope);
       if (req.body && 'revisionMixPercent' in req.body) setRevisionMixPercent(req.body.revisionMixPercent);
     } catch (err: any) {
       return sendError(req, res, 400, 'validation_error', err?.message ?? 'invalid curriculum config');
     }
     res.json({
-      poolLookbackSessions: poolLookbackSessions(),
+      poolLookbackHours: poolLookbackHours(),
       percentScope: percentScope(),
       revisionMixPercent: revisionMixPercent(),
     });

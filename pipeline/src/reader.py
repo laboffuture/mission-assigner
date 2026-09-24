@@ -9,7 +9,7 @@ sections.
 structured is True when heading_path reflects a real heading hierarchy (markdown
 headings, Word heading styles) and False for the blank-line fallback (PDFs and
 unstyled documents), where each block's first line stands in for a heading. The
-chunker needs the difference to decide which session a block belongs to.
+chunker needs the difference to decide which hour a block belongs to.
 """
 from __future__ import annotations
 

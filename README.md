@@ -101,6 +101,7 @@ recorded in a `schema_migrations` table:
 | `007_staff_credentials` | staff username/password login |
 | `008_assistance_workflow` | `assistance_events` |
 | `009_curriculum` | tracks/credits/projects/sessions, `student_positions`, `missions.session_id`, `assignments.revision_seq` |
+| `012_hours` | the curriculum unit becomes the **hour**: `credits.total_hours`, `hours` (replaces `sessions`), `missions.hour_id`, `student_positions.hour_id`; `projects` is dropped |
 | `010_adopt_pipeline_schema` | `content_chunks`, and the Stage 2 pipeline's four columns + index on `missions` |
 
 **Why umzug (not db-migrate):** umzug is a thin, framework-agnostic migration
@@ -395,7 +396,7 @@ production refuses to boot if the variable is set (`src/env.ts`, proved by
 |---|---|
 | `POST /api/test/feedback-gating` | turn slot-unlock gating on or off at runtime (`{ enabled }`) |
 | `POST /api/test/selection-mode` | switch `legacy` / `curriculum` selection without a restart |
-| `POST /api/test/curriculum-config` | set `poolLookbackSessions` / `percentScope` for one test |
+| `POST /api/test/curriculum-config` | set `poolLookbackHours` / `percentScope` for one test |
 | `POST /api/test/fail-next-submit` | arm the next grading attempt(s) to fail as a busy database does (`{ times, code }`), so the retry in `src/retry.ts` can be tested without racing two real transactions for the same row. **Inert unless armed** — one integer comparison per submit — and `times: 0` disarms |
 | `POST /api/test/reset-rate-limit` | clear the login buckets and the per-student write caps |
 | `POST /api/test/clear-feedback-cache` | drop the in-process feedback-question cache |
@@ -439,26 +440,37 @@ Missions are scoped to where a student is in the curriculum, so nobody is served
 content they have not been taught yet.
 
 ```
-Subject → Track ("Tesla's Track") → Credit (C1..C5) → Project (ordered) → Session (ordered)
+Subject → Track ("Tesla's Track") → Credit (C1..C5) → Hour (1..N, flat)
 ```
 
-A project usually has 8 sessions and the first project of a credit 9, so a credit
-with 3 projects has 25. Each session has a `credit_sequence`, its running position
-across the credit's projects (C1/P2/S1 is 10). A student's position is one session
-per track (`student_positions`); a mission belongs to one session (`missions.session_id`).
+**Hours are flat and the hour number IS the position.** Hours per credit vary and
+are stored per credit (`credits.total_hours` — C1 24, C2 24, C3 30, C4 30, C5 24,
+the last to be confirmed), so a new figure is data, not a code change. A student's
+position is one hour per track (`student_positions.hour_id`); a mission belongs to
+one hour (`missions.hour_id`).
+
+**Projects are not part of this chain.** Where the SME groups hours under a project
+heading, that grouping is carried as `hours.project_label` — shown beside the hour
+in the UI, and never read by selection, ordering or the pool.
 
 - **Load a curriculum** — `npm run curriculum:load -- curriculum/teslas-track.json`.
-  Idempotent; additive only (it refuses to remove credits, projects or sessions).
-- **Pool** (`src/curriculum.ts::getSessionPool`) — the current session plus earlier
-  sessions of the current credit (`POOL_LOOKBACK_SESSIONS`, 0 = all of them).
+  Idempotent. It creates exactly `total_hours` hours numbered 1..N, refuses a
+  definition whose hour list disagrees with `total_hours` (naming both numbers),
+  refuses to remove a credit, and refuses to shrink a credit whose disappearing
+  hours carry missions or student positions. Removing hours that carry nothing is
+  allowed and reported.
+- **Pool** (`src/curriculum.ts::getHourPool`) — the current hour plus earlier hours
+  of the current credit (`POOL_LOOKBACK_HOURS`, 0 = all of them).
 - **Selection** (`src/selection.ts::chooseCurriculumMission`, used by `slotFiller`
-  and free-play) — hard filters: session in pool, live, slot type/band, not seen.
-  Ranking: current session, then later sessions before earlier ones, then difficulty
+  and free-play) — hard filters: hour in pool, live, slot type/band, not seen.
+  Ranking: current hour, then later hours before earlier ones, then difficulty
   closest to the student's level, then interest overlap, then random. Difficulty only
-  chooses *within* the session scope: a struggling student gets an easier question on
-  the same content, not an older session.
+  chooses *within* the hour: a struggling student gets an easier question on the
+  same content, not an earlier hour.
 - **Never ahead, enforced in SQL** — every candidate query also joins the student's
-  position and excludes sessions after it and later credits, independent of the pool.
+  position and excludes hours after it and later credits, independent of the pool.
+  A deliberately corrupted pool containing every hour in the track still serves
+  nothing past the student's hour (`verify:curriculum` [8]).
 - **Exhaustion** (each step logged, and recorded in `selection_log`): widen to the
   whole credit (if lookback limited it) → earlier credits → widen the time band
   upward → repeat the completed mission seen longest ago as revision
@@ -466,18 +478,19 @@ per track (`student_positions`); a mission belongs to one session (`missions.ses
   normal selection; it only widens here, one step before repeating, so a student
   is never handed a repeat while unseen content of a different length exists.
 - **Deliberate revision** — `REVISION_MIX_PERCENT` (default 20) of selections are
-  drawn from an earlier session even when the current session still has unseen
-  missions, so earlier content keeps coming back. The roll happens once per
-  selection and falls through to the current session when nothing earlier
-  qualifies; the pick is logged and recorded as `revision_mix`, distinct from an
-  exhaustion `repeat_oldest`.
+  drawn from an earlier hour even when the current hour still has unseen missions,
+  so earlier content keeps coming back. The roll happens once per selection and
+  falls through to the current hour when nothing earlier qualifies; the pick is
+  logged and recorded as `revision_mix`, distinct from an exhaustion
+  `repeat_oldest`.
 - **Revision XP** — a revision repeat of a mission awards `attempt` and `submit`
   XP but never `correct`: the student was already paid for getting it right the
   first time (`assignments.is_revision`, guarded in `src/server.ts`).
 - **Position from the LMS** — explicit positions win. When only a completion
   percentage exists, `resolvePosition` derives one under `PERCENT_SCOPE`
-  (credit | project | track), rounding **down** (39% of 25 sessions is session 9),
-  and stores the inputs in `source_detail`.
+  (`credit`, the default, or `track`), rounding **DOWN** against that credit's
+  `total_hours`: 39% of a 24-hour credit is hour 9, 39% of a 30-hour credit is
+  hour 11, 0% clamps to hour 1. The inputs are stored in `source_detail`.
 - **Modes** — `SELECTION_MODE=legacy` (default) or `curriculum`. Legacy is the
   default until every live student has a backfilled position; flip it once the
   Robotics positions are in. In curriculum mode a student with no position is
@@ -489,11 +502,12 @@ per track (`student_positions`); a mission belongs to one session (`missions.ses
   `curriculum`.
 - **Segments are demoted** — they now seed the cold-start level only. In
   curriculum mode the target level clamps to the global 0–4 ladder, not a
-  segment's min/max, and the session pool (not the segment) decides what content
+  segment's min/max, and the hour pool (not the segment) decides what content
   is eligible. New subjects need a curriculum, not segments.
 
-Seed data adds Tesla's Track (Robotics) with missions on C1 sessions 1–24 and C2/S1,
-and two students: *Ananya Rao* at C1/P1/S4 and *Kabir Mehta* at C1/P3/S2. Tests:
+Seed data adds Tesla's Track (Robotics) with missions on every C1 hour except hour
+23 (left empty on purpose, so the coverage report has a real gap) and on C2 hour 1,
+and two students: *Ananya Rao* at C1 hour 7 and *Kabir Mehta* at C1 hour 24. Tests:
 `npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
 
 ## Deployment
