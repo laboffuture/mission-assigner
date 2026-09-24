@@ -346,6 +346,12 @@ jobs:
       - name: Image tags resolve
         run: node scripts/check-image-tags.mjs
 
+      # The database's init script is sourced by the MySQL entrypoint, so its
+      # shell options are the entrypoint's. Cheap to check here; as a bring-up
+      # failure it only ever looked like a timeout.
+      - name: The MySQL init script does not break its own entrypoint
+        run: bash .github/scripts/tz-init-sourcing-test.sh
+
       # The compose file cannot rot unnoticed.
       - name: docker compose config
         working-directory: infra
