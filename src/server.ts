@@ -64,6 +64,7 @@ import type { SubmitResponse } from './dto.js';
 import { assertProductionSecurity } from './securityChecks.js';
 import { claimSingleInstance } from './singleInstance.js';
 import { startIdempotencyPruner } from './idempotencyPrune.js';
+import { armTransientFault, faultsPending } from './testFaults.js';
 import { resetRateLimiter } from './rateLimit.js';
 import {
   studentIdParams,
@@ -1192,6 +1193,18 @@ if (testHooksEnabled()) {
   app.get('/api/test/logs', (req, res) => {
     const requestId = typeof req.query.requestId === 'string' ? req.query.requestId : undefined;
     res.json(getTestLogs(requestId));
+  });
+  /**
+   * POST /api/test/fail-next-submit  body { times?: number, code?: string }
+   * Arms the next `times` grading attempts to fail as a busy database does, so
+   * the retry in src/retry.ts can be tested without racing two real
+   * transactions for the same row. times: 0 disarms.
+   */
+  app.post('/api/test/fail-next-submit', (req, res) => {
+    const times = Number.isFinite(Number(req.body?.times)) ? Number(req.body.times) : 1;
+    const code = typeof req.body?.code === 'string' ? req.body.code : 'ER_LOCK_DEADLOCK';
+    armTransientFault(times, code);
+    res.json({ ok: true, pending: faultsPending() });
   });
   app.post('/api/test/reset-rate-limit', (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username : undefined;

@@ -1,6 +1,8 @@
 import { pool } from './db.js';
 import { applyProgression } from './progression.js';
 import { logAttempt } from './tracking.js';
+import { withDbRetry } from './retry.js';
+import { takeTransientFault } from './testFaults.js';
 
 export const MIN_LEVEL = 0;
 export const MAX_LEVEL = 4;
@@ -72,8 +74,25 @@ function parseAnswerKey(raw: unknown): { correct: string; explanation: string } 
  * Grades an open assignment and applies progression (the no-demotion ladder,
  * from progression.ts) in ONE transaction. Level logic lives in progression.ts;
  * this function owns grading and the transaction boundary.
+ *
+ * A deadlock or a lock-wait timeout here rolled the whole transaction back and
+ * reached the student as a failed submit they had to repeat by hand. Because the
+ * transaction boundary is this function, running it again is exactly as safe as
+ * the student pressing submit again — so withDbRetry does it for them. Only
+ * transient failures are retried; a rejection (not open, not an option) is the
+ * answer, not a blip. See src/retry.ts.
  */
 export async function submitAndGrade(assignmentId: number, selected: string): Promise<GradeResult> {
+  return withDbRetry('submitAndGrade', () => submitAndGradeOnce(assignmentId, selected));
+}
+
+async function submitAndGradeOnce(assignmentId: number, selected: string): Promise<GradeResult> {
+  // Test-only, and only when something armed it: fail this attempt the way a
+  // busy database fails, so the retry can be tested without racing two real
+  // transactions. See src/testFaults.ts.
+  const injected = takeTransientFault();
+  if (injected) throw injected;
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

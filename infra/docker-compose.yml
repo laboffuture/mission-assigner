@@ -92,6 +92,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SENTRY_DSN: ${SENTRY_DSN:-}
       INSTANCE_COUNT: ${INSTANCE_COUNT:-1}
+      IDEMPOTENCY_TTL_DAYS: ${IDEMPOTENCY_TTL_DAYS:-7}
+      DB_LOCK_WAIT_TIMEOUT: ${DB_LOCK_WAIT_TIMEOUT:-10}
     depends_on:
       mysql:
         condition: service_healthy

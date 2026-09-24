@@ -23,6 +23,7 @@ import { assignSegment } from './src/segmentation.js';
 import { applyColdStart } from './src/coldstart.js';
 import { publishWeek } from './src/weekPublisher.js';
 import { pruneIdempotencyKeys } from './src/idempotencyPrune.js';
+import { withDbRetry } from './src/retry.js';
 
 const db = await mysql.createConnection({
   host: process.env.DB_HOST,
@@ -454,6 +455,146 @@ console.log('\n[7] Idempotency keys are kept for a window, not forever');
     );
     killTree(api.child.pid);
     await q('DELETE FROM idempotency_keys WHERE idempotency_key = ?', [booted]);
+  }
+}
+
+// ------------------------------------------------------------------------ [8]
+// A deadlock or a lock-wait timeout is not an outage — it is the normal cost of
+// concurrent writes, and it used to reach the student as a failed submit.
+console.log('\n[8] A submit that loses a lock race is retried, not failed');
+{
+  // First the rule itself, with no database in the way.
+  let calls = 0;
+  const deadlock = Object.assign(new Error('Deadlock found when trying to get lock'), {
+    code: 'ER_LOCK_DEADLOCK',
+    errno: 1213,
+  });
+  const recovered = await withDbRetry('test', async () => {
+    calls++;
+    if (calls < 3) throw deadlock;
+    return 'graded';
+  });
+  check(
+    'a deadlocked transaction is retried until it succeeds',
+    recovered === 'graded' && calls === 3,
+    `(calls=${calls})`
+  );
+
+  let refusals = 0;
+  let thrown = null;
+  try {
+    await withDbRetry('test', async () => {
+      refusals++;
+      throw Object.assign(new Error('not open'), { code: 'SUBMIT_REJECTED' });
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  check('a rejection is the answer, not a blip — tried once', refusals === 1, `(calls=${refusals})`);
+  check('and the original error comes back unchanged', thrown?.message === 'not open', `(${thrown?.message})`);
+
+  let always = 0;
+  let gaveUp = null;
+  try {
+    await withDbRetry('test', async () => {
+      always++;
+      throw deadlock;
+    });
+  } catch (err) {
+    gaveUp = err;
+  }
+  check('it gives up eventually rather than retrying forever', always === 3, `(calls=${always})`);
+  check('and reports the database error it actually hit', gaveUp?.code === 'ER_LOCK_DEADLOCK', `(${gaveUp?.code})`);
+
+  // Now the real path. A genuine deadlock needs two transactions to meet at the
+  // same row at the same instant, which a test can lose under load, so the api
+  // is told to fail the next grading attempt the way a busy database fails
+  // (/api/test/fail-next-submit). The failure travels the same code path a real
+  // ER_LOCK_DEADLOCK does — thrown out of the transaction, caught by withDbRetry.
+  const api = await startApi(3050);
+  let sid = null;
+  try {
+    if (!check('instance started', !api.failed, api.log().slice(-300))) throw 0;
+    const r = await q(
+      `INSERT INTO students (display_name, age, subject, current_level, placement_status)
+       VALUES (?, 15, 'Computer Science', 0, 'pending')`,
+      [`OPS-retry-${Date.now()}`]
+    );
+    sid = Number(r.insertId);
+    await q(`INSERT INTO student_courses (student_id, course_ref, completed_at) VALUES (?, 'CS-101', NOW())`, [sid]);
+    await assignSegment(sid);
+    await applyColdStart(sid);
+    await publishWeek(sid, '2026-12-14');
+    const openSlot = async () => {
+      const week = await (await fetch(`${api.base}/api/week/${sid}`, { headers: { 'X-User-Id': String(sid) } })).json();
+      const slot = week.slots.find((s) => s.status === 'open');
+      const open = await (
+        await fetch(`${api.base}/api/slot/${slot.slot_id}/open`, {
+          method: 'POST',
+          headers: { 'X-User-Id': String(sid) },
+        })
+      ).json();
+      const [[m]] = await db.query(
+        `SELECT m.answer_key ak FROM assignments a JOIN missions m ON m.id = a.mission_id WHERE a.id = ?`,
+        [open.assignment_id]
+      );
+      const ak = typeof m.ak === 'string' ? JSON.parse(m.ak) : m.ak;
+      return { aid: open.assignment_id, correct: ak.correct };
+    };
+    const arm = (times) =>
+      fetch(`${api.base}/api/test/fail-next-submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ times, code: 'ER_LOCK_DEADLOCK' }),
+      });
+    const doSubmit = async (aid, selected) => {
+      const res = await fetch(`${api.base}/api/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-User-Id': String(sid) },
+        body: JSON.stringify({ assignmentId: aid, selected }),
+      });
+      return { status: res.status, body: await res.json().catch(() => null) };
+    };
+
+    // One transient failure: the student never sees it.
+    const first = await openSlot();
+    await arm(1);
+    const submitted = await doSubmit(first.aid, first.correct);
+    check(
+      'a submit that hits one deadlock still returns the grade',
+      submitted.status === 200 && typeof submitted.body?.correct === 'boolean',
+      `(status=${submitted.status} ${JSON.stringify(submitted.body)?.slice(0, 100)})`
+    );
+    const graded = Number(
+      (await q(`SELECT COUNT(*) n FROM attempt_logs WHERE assignment_id = ? AND event = 'graded'`, [first.aid]))[0].n
+    );
+    check('graded exactly once, not once per attempt', graded === 1, `(graded events=${graded})`);
+    check(
+      'the retry was logged, not swallowed',
+      /transient database failure/.test(api.log()),
+      `(${api.log().replace(/\s+/g, ' ').slice(-160)})`
+    );
+
+    // More failures than attempts: it gives up, and gives up cleanly — the
+    // assignment is untouched, so the student can submit again for real.
+    const second = await openSlot();
+    await arm(9);
+    const gaveUp = await doSubmit(second.aid, second.correct);
+    check('a database that keeps failing is reported, not hidden', gaveUp.status >= 500, `(status=${gaveUp.status})`);
+    const [[row]] = await db.query(`SELECT status FROM assignments WHERE id = ?`, [second.aid]);
+    check('and the assignment is left open, not half-graded', row?.status === 'open', `(status=${row?.status})`);
+    await arm(0);
+    const retryAfter = await doSubmit(second.aid, second.correct);
+    check(
+      'the student can simply submit again once it recovers',
+      retryAfter.status === 200,
+      `(status=${retryAfter.status})`
+    );
+  } catch {
+    /* recorded above */
+  } finally {
+    killTree(listenerPid(3050) ?? api.child.pid);
+    if (sid) await q(`DELETE FROM students WHERE id = ?`, [sid]).catch(() => {});
   }
 }
 

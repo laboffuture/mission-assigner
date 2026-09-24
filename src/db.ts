@@ -31,8 +31,22 @@ export const pool = mysql.createPool({
   // others; grading.ts handles both defensively.
   multipleStatements: false,
 });
+/**
+ * Seconds a statement waits for a row lock before giving up. MySQL's default is
+ * 50, which means a student's submit can sit there for most of a minute behind a
+ * stuck transaction and then fail anyway. A short wait turns that into a
+ * transient error the submit path RETRIES (src/retry.ts) — faster and more
+ * likely to succeed. Unset leaves the server's own default alone.
+ */
+function lockWaitTimeout(): number | null {
+  const raw = Number(process.env.DB_LOCK_WAIT_TIMEOUT);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null;
+}
+
 pool.on('connection', (conn) => {
   conn.query("SET time_zone = '+00:00'");
+  const wait = lockWaitTimeout();
+  if (wait != null) conn.query(`SET SESSION innodb_lock_wait_timeout = ${wait}`);
 });
 
 /**
