@@ -384,6 +384,32 @@ you want them run inside a container instead.
 > when the server is started with `ENABLE_TEST_HOOKS=1`, so it is never exposed in
 > production.
 
+### Test hooks (`ENABLE_TEST_HOOKS=1`)
+
+Nine routes exist only when the server is started with `ENABLE_TEST_HOOKS=1`. They are
+registered inside a single `if` — in production they are **not routes at all**, and
+production refuses to boot if the variable is set (`src/env.ts`, proved by
+`verify-fail-closed` [3]). Adding a tenth belongs in this list.
+
+| Hook | What it does |
+|---|---|
+| `POST /api/test/feedback-gating` | turn slot-unlock gating on or off at runtime (`{ enabled }`) |
+| `POST /api/test/selection-mode` | switch `legacy` / `curriculum` selection without a restart |
+| `POST /api/test/curriculum-config` | set `poolLookbackSessions` / `percentScope` for one test |
+| `POST /api/test/fail-next-submit` | arm the next grading attempt(s) to fail as a busy database does (`{ times, code }`), so the retry in `src/retry.ts` can be tested without racing two real transactions for the same row. **Inert unless armed** — one integer comparison per submit — and `times: 0` disarms |
+| `POST /api/test/reset-rate-limit` | clear the login buckets and the per-student write caps |
+| `POST /api/test/clear-feedback-cache` | drop the in-process feedback-question cache |
+| `POST /api/test/shutdown` | run the SIGTERM path (Windows cannot deliver a signal to another process) |
+| `GET /api/test/logs` | read back captured log lines, optionally by `requestId` |
+| `GET /api/test/boom` | throw, to exercise the error handler |
+
+Two guarantees hold for every one of them, and for anything added later:
+
+- **Inert unless used.** A hook that changes behaviour stays off until something turns it on,
+  so a server with hooks enabled still behaves normally until a test asks otherwise.
+- **Unreachable in production.** `NODE_ENV=production` with `ENABLE_TEST_HOOKS` set is a
+  refusal to boot that names the variable — not a warning, and not a 404 at request time.
+
 ### Known warnings
 
 **`[DEP0060] The util._extend API is deprecated`, once, on the first request that hits the
