@@ -7,6 +7,7 @@
   "scripts": {
     "db:migrate": "tsx src/migrator.ts up",
     "db:timezones": "node scripts/load-timezones.mjs",
+    "db:explain": "node scripts/explain-review.mjs",
     "db:migrate:down": "tsx src/migrator.ts down",
     "db:migrate:status": "tsx src/migrator.ts status",
     "db:seed": "tsx src/seed.ts",

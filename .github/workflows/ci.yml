@@ -497,6 +497,19 @@ jobs:
         run: node .github/scripts/stack-journey.mjs http://localhost
 
       # ---- 3. Backups: take one, push it offsite, restore FROM the remote copy.
+      # The plans that matter are the ones from the deployed shape: the
+      # containerised MySQL 8.4, after a real student journey has run against it.
+      - name: Index review (EXPLAIN against the running stack)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: '3306'
+          DB_USER: root
+          DB_NAME: mission_demo
+          EXPLAIN_REQUIRE_ALL: '1'
+        run: |
+          export DB_PASS=$(grep '^DB_PASS=' infra/.env.production | cut -d= -f2)
+          npm run db:explain
+
       - name: Backup round-trip via MinIO
         working-directory: .
         env:
