@@ -24,6 +24,7 @@ import { applyColdStart } from './src/coldstart.js';
 import { publishWeek } from './src/weekPublisher.js';
 import { pruneIdempotencyKeys } from './src/idempotencyPrune.js';
 import { withDbRetry } from './src/retry.js';
+import { LIMITS } from './src/requestLimit.js';
 
 const db = await mysql.createConnection({
   host: process.env.DB_HOST,
@@ -595,6 +596,82 @@ console.log('\n[8] A submit that loses a lock race is retried, not failed');
   } finally {
     killTree(listenerPid(3050) ?? api.child.pid);
     if (sid) await q(`DELETE FROM students WHERE id = ?`, [sid]).catch(() => {});
+  }
+}
+
+// ------------------------------------------------------------------------ [9]
+// Only failed sign-ins were capped. Everything a signed-in student can write was
+// unbounded, so one stuck retry loop in a browser tab could hold the database
+// against the whole pilot.
+console.log('\n[9] A runaway client is capped, one student at a time');
+{
+  const api = await startApi(3054);
+  const made = [];
+  try {
+    if (!check('instance started', !api.failed, api.log().slice(-300))) throw 0;
+    const student = async (tag) => {
+      const r = await q(
+        `INSERT INTO students (display_name, age, subject, current_level, placement_status)
+         VALUES (?, 15, 'Computer Science', 0, 'complete')`,
+        [`OPS-limit-${tag}-${Date.now()}`]
+      );
+      const id = Number(r.insertId);
+      made.push(id);
+      return id;
+    };
+    const a = await student('a');
+    const b = await student('b');
+    // The cap counts REQUESTS, so it does not matter that this slot is not
+    // theirs — which is the point: a runaway sending nonsense is still a
+    // runaway. The limiter sits after the role check and before the handler.
+    const knock = (sid) =>
+      fetch(`${api.base}/api/slot/999999999/open`, {
+        method: 'POST',
+        headers: { 'X-User-Id': String(sid) },
+      });
+
+    const statuses = [];
+    for (let i = 0; i < LIMITS.open; i++) statuses.push((await knock(a)).status);
+    check(
+      `the first ${LIMITS.open} requests are all answered normally`,
+      statuses.every((s) => s !== 429),
+      `(429s=${statuses.filter((s) => s === 429).length})`
+    );
+
+    const over = await knock(a);
+    const body = await over.json().catch(() => null);
+    check('one request past the cap is refused with 429', over.status === 429, `(status=${over.status})`);
+    check(
+      'the refusal names itself',
+      body?.error?.code === 'too_many_requests',
+      `(${JSON.stringify(body)?.slice(0, 120)})`
+    );
+    check(
+      'and says when to come back (Retry-After)',
+      Number(over.headers.get('retry-after')) > 0,
+      `(Retry-After=${over.headers.get('retry-after')})`
+    );
+
+    // The cap is per student. A shared proxy address must never throttle a class.
+    const other = await knock(b);
+    check('a different student is unaffected', other.status !== 429, `(status=${other.status})`);
+
+    await fetch(`${api.base}/api/test/reset-rate-limit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const afterReset = await knock(a);
+    check(
+      'the window can be cleared (so harnesses are not the runaway)',
+      afterReset.status !== 429,
+      `(status=${afterReset.status})`
+    );
+  } catch {
+    /* recorded above */
+  } finally {
+    killTree(listenerPid(3054) ?? api.child.pid);
+    for (const id of made) await q(`DELETE FROM students WHERE id = ?`, [id]).catch(() => {});
   }
 }
 
