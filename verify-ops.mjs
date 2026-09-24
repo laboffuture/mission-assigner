@@ -421,21 +421,35 @@ console.log('\n[7] Idempotency keys are kept for a window, not forever');
   // It makes its OWN: a migrated-but-unplayed database has no assignments at all
   // (CI's api job is exactly that), and a case that borrows whatever happens to
   // be lying around passes on a developer's machine and fails everywhere else.
-  const [[seedStudent]] = await db.query(
-    `SELECT id FROM students WHERE role IS NULL OR role = 'student' ORDER BY id LIMIT 1`
+  let [[anyMission]] = await db.query('SELECT id FROM missions ORDER BY id LIMIT 1');
+  if (!anyMission) {
+    // run-all reaches this suite before its first seed, so on a fresh CI
+    // database there is no mission to assign. Seed rather than skip: a case that
+    // quietly does nothing is worse than one that takes three seconds.
+    const seeded = spawnSync(process.execPath, ['--import', 'tsx', 'src/seed.ts'], { encoding: 'utf8' });
+    if (seeded.status !== 0) {
+      console.log(`    NOTE could not seed: ${`${seeded.stdout}${seeded.stderr}`.replace(/\s+/g, ' ').slice(-200)}`);
+    }
+    [[anyMission]] = await db.query('SELECT id FROM missions ORDER BY id LIMIT 1');
+  }
+  // Any row in students will satisfy the foreign key; the case makes its own so
+  // it never depends on which rows a previous suite happened to leave behind.
+  const madeStudent = await q(
+    `INSERT INTO students (display_name, age, subject, current_level, placement_status)
+     VALUES (?, 15, 'Computer Science', 0, 'complete')`,
+    [`OPS-idem-${Date.now()}`]
   );
-  const [[seedMission]] = await db.query('SELECT id FROM missions ORDER BY id LIMIT 1');
-  let ownAssignment = null;
-  if (seedStudent && seedMission) {
+  const studentId = Number(madeStudent.insertId);
+  let assignment = null;
+  if (anyMission) {
     const ins = await q(
       `INSERT INTO assignments (student_id, mission_id, mission_version, level_at_assign, status, assigned_at)
        VALUES (?, ?, 1, 1, 'open', UTC_TIMESTAMP())`,
-      [seedStudent.id, seedMission.id]
+      [studentId, anyMission.id]
     );
-    ownAssignment = { id: Number(ins.insertId) };
+    assignment = { id: Number(ins.insertId) };
   }
-  const assignment = ownAssignment;
-  if (check('an assignment to attach keys to', !!assignment, '(no student or mission in the database)')) {
+  if (check('an assignment to attach keys to', !!assignment, assignment ? '' : '(no mission even after seeding)')) {
     const aid = assignment.id;
     const old = `ops-old-${Date.now()}`;
     const fresh = `ops-fresh-${Date.now()}`;
@@ -473,9 +487,10 @@ console.log('\n[7] Idempotency keys are kept for a window, not forever');
     );
     killTree(api.child.pid);
     await q('DELETE FROM idempotency_keys WHERE idempotency_key = ?', [booted]);
-    // The assignment this case created goes with it (its keys cascade).
+    // The rows this case created go with it (keys and assignments cascade).
     await q('DELETE FROM assignments WHERE id = ?', [aid]).catch(() => {});
   }
+  await q('DELETE FROM students WHERE id = ?', [studentId]).catch(() => {});
 }
 
 // ------------------------------------------------------------------------ [8]

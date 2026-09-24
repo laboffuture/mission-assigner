@@ -506,6 +506,10 @@ jobs:
           DB_USER: root
           DB_NAME: mission_demo
         run: |
+          # This job has installed nothing so far — the compose build carries its
+          # own dependencies. Without this, node exits 1 before any of the
+          # script's own error handling exists, and the step says only "exit 1".
+          npm ci
           export DB_PASS=$(grep '^DB_PASS=' infra/.env.production | cut -d= -f2)
           npm run db:explain
 
