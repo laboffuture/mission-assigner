@@ -48,12 +48,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Discover MySQL container and load timezone tables
+      - name: Discover MySQL container
         run: |
           CID=$(docker ps -q --filter ancestor=mysql:8 | head -1)
           echo "MYSQL_CID=$CID" >> "$GITHUB_ENV"  # for docker stop/start only; the tooling itself uses the host mysql clients
-          # Named-zone support (Asia/Kolkata) for the streak/timezone suite.
-          docker exec "$CID" sh -c "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
+
+      # The documented setup step, run the documented way — so the command the
+      # README and the boot failure both name is the one CI proves.
+      - name: Load timezone tables (npm run db:timezones)
+        run: npm run db:timezones
 
       - name: Typecheck
         run: npm run typecheck

@@ -70,9 +70,16 @@ npm install
 ### 4. Migrate and seed
 
 ```bash
-npm run db:migrate   # bring the database to current (runs all pending migrations)
-npm run db:seed      # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students + 4 staff
+npm run db:migrate    # bring the database to current (runs all pending migrations)
+npm run db:timezones  # load MySQL's named-timezone tables (once per SERVER, not per database)
+npm run db:seed       # 75 missions, 3 segments, week template, xp rules, 5 feedback questions, 3 students + 4 staff
 ```
+
+`db:timezones` is not optional. A fresh MySQL ships `mysql.time_zone*` empty and
+`CONVERT_TZ` with a named zone then returns NULL, so every streak silently
+computes as nothing. The api refuses to start in that state and names this
+command; the command is safe to re-run and says when there is nothing to do. The
+compose stack in `infra/` does it when the database is created.
 
 `db:migrate` runs the versioned migrations in `src/migrations/` and is a no-op
 when the database is already current. `db:migrate:status` shows applied/pending;
@@ -119,9 +126,16 @@ converts UTC timestamps to that zone with `CONVERT_TZ` before taking the date.
 This needs MySQL's named-timezone tables loaded once per server:
 
 ```bash
-docker exec mission-mysql sh -c \
-  "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql -uroot -pdevpass mysql"
+npm run db:timezones
 ```
+
+It loads them from the host's zoneinfo where that exists, falls back to the
+fixed-offset zones this project uses where it does not (a Windows development
+machine), and verifies the zones resolve before reporting success. Empty tables
+are not a failure anyone notices on their own — `CONVERT_TZ` simply returns NULL
+— so the api checks the zones actually in use at boot and refuses to serve a
+database where one does not resolve (`src/timezoneCheck.ts`). An unreachable
+database is a different thing and does not stop the api starting.
 
 ### 5. Run
 
@@ -320,6 +334,7 @@ The **weekly slot is never gated** either way, and never gates anything itself.
 | command | purpose |
 |---------|---------|
 | `npm run db:migrate` | run all pending migrations (no-op if current) |
+| `npm run db:timezones` | load MySQL's named-timezone tables (idempotent; once per server) |
 | `npm run db:migrate:status` | show applied / pending migrations |
 | `npm run db:migrate:down` | revert the last migration |
 | `npm run db:seed` | seed missions, segments, week template, xp rules, feedback questions, students |

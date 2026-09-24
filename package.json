@@ -6,6 +6,7 @@
   "description": "Mission Hub \u2014 adaptive student-mission platform (Moodle SSO for students, staff login for SME/QC/admin)",
   "scripts": {
     "db:migrate": "tsx src/migrator.ts up",
+    "db:timezones": "node scripts/load-timezones.mjs",
     "db:migrate:down": "tsx src/migrator.ts down",
     "db:migrate:status": "tsx src/migrator.ts status",
     "db:seed": "tsx src/seed.ts",

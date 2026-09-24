@@ -14,7 +14,7 @@
 // Run: npm run verify:ops
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { killTree, listenerPid, TREE_OPTS } from './test-support/proc.mjs';
 import { createProdDbUser } from './test-support/prod-db-user.mjs';
@@ -25,6 +25,7 @@ import { publishWeek } from './src/weekPublisher.js';
 import { pruneIdempotencyKeys } from './src/idempotencyPrune.js';
 import { withDbRetry } from './src/retry.js';
 import { LIMITS } from './src/requestLimit.js';
+import { assertNamedTimezones, unresolvableZones } from './src/timezoneCheck.js';
 
 const db = await mysql.createConnection({
   host: process.env.DB_HOST,
@@ -673,6 +674,82 @@ console.log('\n[9] A runaway client is capped, one student at a time');
     killTree(listenerPid(3054) ?? api.child.pid);
     for (const id of made) await q(`DELETE FROM students WHERE id = ?`, [id]).catch(() => {});
   }
+}
+
+// ----------------------------------------------------------------------- [10]
+// A fresh MySQL ships mysql.time_zone* empty, and CONVERT_TZ with a NAMED zone
+// then returns NULL: every streak silently computes as nothing, for everybody,
+// with nothing in any log. Loading the tables is part of creating a database,
+// and a database where a zone does not resolve must not be served.
+console.log('\n[10] A database whose named timezones do not resolve is refused');
+{
+  let sid = null;
+  try {
+    // The zones actually in use are the ones checked, so a student whose zone
+    // does not exist is the honest way to produce the failure — no need to
+    // damage the server's shared timezone tables to test this.
+    const r = await q(
+      `INSERT INTO students (display_name, age, subject, current_level, placement_status, timezone)
+       VALUES (?, 15, 'Computer Science', 0, 'complete', 'Mars/Phobos')`,
+      [`OPS-tz-${Date.now()}`]
+    );
+    sid = Number(r.insertId);
+
+    const bad = await unresolvableZones();
+    check(
+      'a zone that cannot resolve is found',
+      bad.includes('Mars/Phobos'),
+      `(unresolvable=${bad.join(',') || 'none'})`
+    );
+
+    let thrown = null;
+    try {
+      await assertNamedTimezones();
+    } catch (err) {
+      thrown = err;
+    }
+    check('the check refuses rather than returning', thrown != null, '');
+    check(
+      'and names both the zone and the command that fixes it',
+      /Mars\/Phobos/.test(String(thrown?.message)) && /db:timezones/.test(String(thrown?.message)),
+      `(${String(thrown?.message).slice(0, 140)})`
+    );
+
+    // End to end: the api must not serve a database in that state.
+    const api = await startApi(3055, {}, { waitForReady: false });
+    let exited = null;
+    for (let i = 0; i < 40 && exited == null; i++) {
+      exited = api.exited();
+      if (exited == null) await sleep(250);
+    }
+    check('the api refuses to start on it', exited != null && exited !== 0, `(exit=${exited})`);
+    check(
+      'saying which zone and how to load the tables',
+      /Mars\/Phobos/.test(api.log()) && /db:timezones/.test(api.log()),
+      `(${api.log().replace(/\s+/g, ' ').slice(-200)})`
+    );
+    killTree(listenerPid(3055) ?? api.child.pid);
+
+    // With the bad zone gone the same server starts normally.
+    await q(`DELETE FROM students WHERE id = ?`, [sid]);
+    sid = null;
+    const good = await startApi(3055);
+    check('and starts once every zone in use resolves', !good.failed, good.log().replace(/\s+/g, ' ').slice(-200));
+    killTree(listenerPid(3055) ?? good.child.pid);
+  } catch {
+    /* recorded above */
+  } finally {
+    if (sid) await q(`DELETE FROM students WHERE id = ?`, [sid]).catch(() => {});
+  }
+
+  // The loader is safe to run again — setup steps get re-run.
+  const again = spawnSync(process.execPath, ['scripts/load-timezones.mjs'], { encoding: 'utf8' });
+  check('npm run db:timezones is idempotent', again.status === 0, `(exit=${again.status})`);
+  check(
+    'and says so rather than reloading',
+    /already loaded|OK — named zones resolve/.test(`${again.stdout}${again.stderr}`),
+    `(${`${again.stdout}${again.stderr}`.replace(/\s+/g, ' ').slice(0, 140)})`
+  );
 }
 
 await prodDb.drop();
