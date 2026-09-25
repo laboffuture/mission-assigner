@@ -298,7 +298,9 @@ jobs:
           AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
           MYSQL_CLIENT: mysql
         run: |
-          SEED=$RANDOM$RANDOM
+          # A random seed each run, unless AUDIT_SHUFFLE_SEED pins one — which is
+          # how a reported failure gets reproduced instead of waited for.
+          SEED="${AUDIT_SHUFFLE_SEED:-$RANDOM$RANDOM}"
           echo "shuffle seed: $SEED  (reproduce with: npm run verify:audit -- --shuffle=$SEED)"
           if ! npm run verify:audit -- --shuffle=$SEED; then
             echo "::error title=Audit (shuffled)::the audit failed in shuffled order with seed $SEED"

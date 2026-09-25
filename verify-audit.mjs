@@ -1212,7 +1212,18 @@ async function revisionRun() {
       const k = await answerKey(aid);
       const row = await one(`SELECT is_revision r, revision_seq n FROM assignments WHERE id = ?`, [aid]);
       const sub = await submit(sid, aid, k.correct);
-      served.push({ i, aid, missionId: k.missionId, revision: !!Number(row.r), seq: Number(row.n), sub });
+      served.push({
+        i,
+        aid,
+        missionId: k.missionId,
+        revision: !!Number(row.r),
+        seq: Number(row.n),
+        sub,
+        // The status matters when a later check finds nothing graded: without it
+        // the failure says "passes=0" and nothing about WHY the submit did not land.
+        status: sub.status,
+        body: typeof sub.text === 'string' ? sub.text.slice(0, 160) : '',
+      });
     }
   } finally {
     await hook('selection-mode', { mode: 'legacy' });
@@ -1277,8 +1288,15 @@ await runCase(
       `SELECT COUNT(*) n FROM assignments WHERE student_id = ? AND mission_id = ? AND status = 'graded'`,
       [sid, rev.missionId]
     );
-    c.check('mission graded on two passes', Number(passes.n) === 2, `(passes=${passes.n})`);
-    c.check('exactly one correct xp_event across both', Number(r.n) === 1, `(correct events=${r.n})`);
+    const trail = served
+      .map((s) => `${s.i}:${s.empty ? 'empty' : `${s.revision ? 'REV' : 'new'}/${s.status ?? '?'}`}`)
+      .join(' ');
+    c.check('mission graded on two passes', Number(passes.n) === 2, `(passes=${passes.n}; slots ${trail})`);
+    c.check(
+      'exactly one correct xp_event across both',
+      Number(r.n) === 1,
+      `(correct events=${r.n}; revision submit ${rev.status ?? '?'} ${rev.body ?? ''})`
+    );
   },
   CURRICULUM
 );
