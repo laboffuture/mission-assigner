@@ -48,9 +48,9 @@ services:
   # file is CI only.
   s3:
     image: adobe/s3mock:5.2.3
-    environment:
-      # The one setting it needs: the bucket exists the moment it starts.
-      initialBuckets: mission-hub-backups
+    # No environment: this version ignored initialBuckets and the backup sidecar
+    # failed with NoSuchBucket. The CI step creates the bucket with one aws call
+    # instead, which depends on nothing about the image.
     # 9090 is its plain-HTTP port (9191 is HTTPS and needs a certificate nobody
     # here has). No port override: "server.port" is not a valid OS environment
     # variable name, and passing it as one stopped the container dead.

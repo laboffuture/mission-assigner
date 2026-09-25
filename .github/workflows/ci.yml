@@ -507,6 +507,14 @@ jobs:
             echo "::error title=CI overrides::object storage never answered on :9000 — $(tail -c 500 /tmp/s3.log | paste -sd' ' -)"
             exit 1
           fi
+          # Create the bucket HERE rather than through the image's own
+          # initialBuckets setting, which this version ignored — the backup
+          # sidecar then failed with NoSuchBucket. One CLI call, no dependence on
+          # any image's configuration conventions. s3mock ignores credentials,
+          # but the CLI refuses to run without some.
+          export AWS_ACCESS_KEY_ID=ci-access-key AWS_SECRET_ACCESS_KEY=ci-secret-key                  AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true
+          aws --endpoint-url http://localhost:9000 s3 mb s3://mission-hub-backups 2>/tmp/mb.log             || grep -qi 'BucketAlreadyOwnedByYou\|BucketAlreadyExists' /tmp/mb.log             || { echo "::error title=CI overrides::could not create the backup bucket — $(tail -c 300 /tmp/mb.log | paste -sd' ' -)"; exit 1; }
+          aws --endpoint-url http://localhost:9000 s3 ls | sed 's/^/  bucket: /'
           if ! compose up -d 2>&1 | tee /tmp/ci-up.log; then
             echo "::error title=CI overrides::up failed — $(tail -c 700 /tmp/ci-up.log | paste -sd' ' -)"
             compose ps -a > /tmp/ci-ps.log 2>&1 || true
