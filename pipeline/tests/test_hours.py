@@ -9,7 +9,7 @@ and that declaration is the contract these tests enforce.
 """
 import pytest
 
-from src.chunker import HourBoundaryError, assign_hours, sections_to_chunks
+from src.chunker import DEFAULT_HOUR_PATTERN, HourBoundaryError, assign_hours, sections_to_chunks
 from src.curriculum import (
     CurriculumError,
     LEGACY,
@@ -199,3 +199,41 @@ def test_hour_with_too_few_difficulty_variants_is_thin():
     assert [r["hour"] for r in ev["thin_hours"]] == [3, 4]
     # Exactly three variants is enough to rank a low, mid and high level.
     assert 2 not in [r["hour"] for r in ev["thin_hours"]]
+
+
+# --- the pattern is resolved PER FILE (a document that numbers hours as
+# --- intervals must not change how every other file is read) -----------------
+def test_a_files_own_pattern_wins_over_the_config_wide_one():
+    from src.curriculum import hour_pattern
+
+    interval = r"^\s*\d+\s*[–—-]\s*(\d+)\s*hr\b"
+    config = {"hour_heading_pattern": r"^Hour\s+(\d+)"}
+    odd = {"subject": "S", "track": "T", "credit": "C1", "hours": [1, 25], "hour_heading_pattern": interval}
+    normal = {"subject": "S", "track": "T", "credit": "C2", "hours": [1, 9]}
+
+    assert hour_pattern(config, odd) == interval
+    # Every other file keeps the config-wide pattern, which is the whole point.
+    assert hour_pattern(config, normal) == config["hour_heading_pattern"]
+    assert hour_pattern({}, normal) == DEFAULT_HOUR_PATTERN
+    assert hour_pattern({}, None) == DEFAULT_HOUR_PATTERN
+
+
+def test_the_interval_pattern_reads_intervals_and_the_default_still_reads_hours():
+    """The two documents must not be read by the same pattern."""
+    interval = r"^\s*\d+\s*[–—-]\s*(\d+)\s*hr\b"
+    intervals_doc = "\n\n".join(
+        f"## {n}–{n + 1} hr: Topic {n + 1}\n\nBody for the hour that runs from {n} to {n + 1} hours, in enough words."
+        for n in range(0, 3)
+    )
+    tagged, _ = assign_hours(_split_markdown(intervals_doc, "sme.docx"), 1, 3, interval, "sme.docx")
+    assert [s["hour_number"] for s in tagged] == [1, 2, 3]
+
+    # The same interval pattern against a well-formed file finds nothing, which
+    # is why it must never be the default.
+    with pytest.raises(HourBoundaryError):
+        assign_hours(_split_markdown(credit_md([1, 2, 3]), "good.md"), 1, 3, interval, "good.md")
+
+    # ...and the default still reads the well-formed file. (Each hour yields two
+    # sections there — the hour heading and its sub-heading, which inherits.)
+    tagged2, _ = assign_hours(_split_markdown(credit_md([1, 2, 3]), "good.md"), 1, 3, None, "good.md")
+    assert sorted(set(s["hour_number"] for s in tagged2)) == [1, 2, 3]

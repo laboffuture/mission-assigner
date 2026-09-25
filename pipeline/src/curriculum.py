@@ -11,6 +11,10 @@ config/curriculum.json maps a file name to its track, credit and hour range:
       "legacy_files": ["sample-cs.md"]
     }
 
+A file whose headings do not follow the usual form may carry its own
+"hour_heading_pattern" beside its mapping; that overrides the config-wide one for
+that file alone.
+
 One file per credit is the expected shape — "hours": [1, total_hours]. A credit
 split into project-sized files is supported too: each file declares the hours it
 covers. The range is the contract: a file whose detected hour headings do not
@@ -36,7 +40,20 @@ class CurriculumError(Exception):
 LEGACY = "legacy"
 
 
-def hour_pattern(config: dict) -> str:
+def hour_pattern(config: dict, mapping=None) -> str:
+    """The hour-heading pattern for ONE file.
+
+    Most specific wins: a pattern on the file's own mapping, then the
+    HOUR_HEADING_PATTERN environment override, then the config-wide setting, then
+    the default.
+
+    Per-file matters. A document that numbers hours as intervals ("0-1 hr:")
+    needs a pattern that would MIS-READ a properly formatted "Hour 1:" file, so
+    that pattern must belong to the one file that needs it and never become the
+    setting every other file quietly inherits.
+    """
+    if isinstance(mapping, dict) and mapping.get("hour_heading_pattern"):
+        return mapping["hour_heading_pattern"]
     return os.getenv("HOUR_HEADING_PATTERN") or config.get("hour_heading_pattern") or DEFAULT_HOUR_PATTERN
 
 

@@ -66,7 +66,11 @@ def chunks_for_file(file_name: str, sections: list[dict], config: dict, conn, le
 
     credit = curriculum.resolve_credit(conn, mapping, file_name)
     tagged, untagged = chunker.assign_hours(
-        sections, credit["first_hour"], credit["last_hour"], curriculum.hour_pattern(config), file_name
+        sections,
+        credit["first_hour"],
+        credit["last_hour"],
+        curriculum.hour_pattern(config, mapping),
+        file_name,
     )
     for s in tagged:
         s["hour_id"] = credit["hours"][s["hour_number"]]
