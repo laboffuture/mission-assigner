@@ -310,7 +310,7 @@ jobs:
         run: cat /tmp/server.log /tmp/web.log || true
   # ---------------------------------------------------------------- stack --
   # The deployment itself: both images, the whole compose stack, a student
-  # journey through Caddy, and the backup round-trip via MinIO. This is the
+  # journey through Caddy, and the backup round-trip via a local S3. This is the
   # evidence that infra/ works, since it cannot be run on a Windows laptop
   # without Docker.
   stack:
@@ -489,7 +489,7 @@ jobs:
           [ "$fails" = "0" ] || exit 1
 
       # ---- 2. A real student journey, end to end, through Caddy.
-      - name: Layer the CI overrides (dev login, seed data, MinIO)
+      - name: Layer the CI overrides (dev login, seed data, object storage)
         working-directory: infra
         run: |
           set -o pipefail
@@ -529,7 +529,7 @@ jobs:
           export DB_PASS=$(grep '^DB_PASS=' infra/.env.production | cut -d= -f2)
           npm run db:explain
 
-      - name: Backup round-trip via MinIO
+      - name: Backup round-trip via object storage
         working-directory: .
         env:
           DB_HOST: 127.0.0.1

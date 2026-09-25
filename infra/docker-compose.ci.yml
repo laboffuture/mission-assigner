@@ -4,7 +4,7 @@
 # that shape (LTI auth, no dev login, nothing but Caddy exposed). Only then is
 # this layered on, to do the things a production configuration correctly
 # refuses: sign in without an LMS, seed demo data, reach MySQL from the runner,
-# and talk to a local S3 (MinIO) instead of real object storage.
+# and talk to a local S3 endpoint instead of real object storage.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
 
@@ -39,41 +39,31 @@ services:
       # rewrite disabled, so the journey really does go through Caddy.
       NODE_ENV: production
 
-  # Object storage for the backup round-trip. Same API as the real thing.
-  #
-  # From quay.io, not Docker Hub: MinIO publishes there, and the Docker Hub
-  # repository has no tags at all (a tag pinned there fails to pull).
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772
-    command: server /data --console-address ":9001"
+  # The object store the backup round-trip runs against. This was MinIO until
+  # September 2026, when MinIO put its images behind authentication on both
+  # quay.io and Docker Hub - every anonymous pull now answers 401, so CI cannot
+  # fetch them at all. s3mock speaks the same S3 API, creates its bucket from an
+  # environment variable (so the mc sidecar is gone), and is pullable.
+  # PRODUCTION IS UNAFFECTED: it points BACKUP_S3_ENDPOINT at real storage; this
+  # file is CI only.
+  s3:
+    image: adobe/s3mock:5.2.3
     environment:
-      MINIO_ROOT_USER: ci-access-key
-      MINIO_ROOT_PASSWORD: ci-secret-key
+      initialBuckets: mission-hub-backups
+      # Plain HTTP on 9090; the HTTPS port needs a certificate nobody here has.
+      server.port: '9090'
     ports:
-      - '9000:9000'
+      - '9000:9090'
     healthcheck:
-      # The server image has no mc; probe the live endpoint instead.
-      test: ['CMD-SHELL', 'curl -sf http://127.0.0.1:9000/minio/health/live || exit 1']
+      test: ['CMD-SHELL', 'curl -sf http://127.0.0.1:9090/ >/dev/null || exit 1']
       interval: 5s
       timeout: 3s
       retries: 20
 
-  minio-bucket:
-    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
-    restart: 'no'
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set ci http://minio:9000 ci-access-key ci-secret-key &&
-      mc mb --ignore-existing ci/mission-hub-backups &&
-      echo bucket ready"
-
   backup:
     environment:
       # A backup that fails to reach storage must fail the run, not warn.
-      BACKUP_S3_ENDPOINT: http://minio:9000
+      BACKUP_S3_ENDPOINT: http://s3:9090
       BACKUP_S3_REGION: us-east-1
       BACKUP_S3_BUCKET: mission-hub-backups
       BACKUP_S3_ACCESS_KEY: ci-access-key
@@ -84,5 +74,5 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      minio-bucket:
-        condition: service_completed_successfully
+      s3:
+        condition: service_healthy

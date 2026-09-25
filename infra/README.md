@@ -243,7 +243,8 @@ This directory is exercised on every push by the `stack` job in
 `/readyz` through Caddy, checks that the production shape refuses what it should (no dev login,
 anonymous `/quality` redirected, unauthenticated API 401), runs a **real student journey**
 through the proxy — sign in, open a mission, answer it, give feedback, view progress — and then
-does the backup round-trip against MinIO, including a restore **from the remote copy**. It also
+does the backup round-trip against a local S3 endpoint, including a restore **from the remote
+copy**. It also
 proves that an unreachable bucket fails the backup, and runs the **index review** (`EXPLAIN`
 on every query on a student's path) against that same containerised MySQL, so the plans that
 are checked are the plans this deployment will actually use.

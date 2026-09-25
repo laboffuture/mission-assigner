@@ -77,6 +77,22 @@ async function exists({ registry, repository, tag }) {
   return { ok: res.status === 200, status: res.status };
 }
 
+/**
+ * 401/403 means the registry would not TELL us, not that the tag is wrong — and
+ * an image we cannot read the manifest for is an image CI cannot pull either.
+ * Both are failures, but they are different failures and the message has to say
+ * which, or the next person spends an hour looking for a typo that is not there.
+ * (MinIO put its images behind authentication in September 2026; the tags were
+ * fine and every one of them reported "does not resolve".)
+ */
+function verdict(status) {
+  if (status === 401 || status === 403) {
+    return `needs authentication (registry said ${status}) — the tag may be fine, but nothing can pull it anonymously`;
+  }
+  if (status === 404) return 'does not exist (registry said 404)';
+  return `did not resolve (registry said ${status})`;
+}
+
 const refs = collect();
 if (refs.length === 0) {
   console.log('no image references found in infra/ — has the layout changed?');
@@ -98,15 +114,13 @@ if (refs.length === 0) {
       console.log(`  OK   ${ref}  (${where})`);
     } else {
       bad++;
-      console.log(`  BAD  ${ref}  (${where}) — registry returned ${result.status}`);
+      const why = verdict(result.status);
+      console.log(`  BAD  ${ref}  (${where}) — ${why}`);
       console.log(
-        `       ${parsed.registry}/${parsed.repository}:${parsed.tag} does not resolve. ` +
-          `Check the real tags before pinning one.`
+        `       ${parsed.registry}/${parsed.repository}:${parsed.tag}. Check the real tags before pinning one.`
       );
       if (process.env.GITHUB_ACTIONS) {
-        console.log(
-          `::error title=Unknown image tag::${ref} (${where}) does not resolve — registry said ${result.status}`
-        );
+        console.log(`::error title=Unusable image::${ref} (${where}) ${why}`);
       }
     }
   }
