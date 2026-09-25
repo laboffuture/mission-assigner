@@ -420,8 +420,15 @@ RULES:
 - Spread the missions across whatever levels the content genuinely supports.
 - Do NOT invent facts not present in the chunk. If the chunk cannot support a
   question at some level, produce fewer missions rather than padding.
+- Each question MUST STAND ALONE and test the SUBJECT, not recall of this
+  document. A learner who understands the concept must be able to answer it
+  without the document in front of them. Never write "According to the text",
+  "Based on the passage above", "As the description states", or any other phrase
+  that refers to the source. Ask about the robot, the circuit or the idea - not
+  about what the document says.
 - Every mission MUST include a source_quote: text copied verbatim from the chunk
-  that justifies the correct answer.
+  that justifies the correct answer. The quote grounds the ANSWER KEY; it is not
+  part of the question and the learner never sees it.
 - Output STRICT JSON matching exactly this schema (no markdown, no fences):
 {json.dumps(schema, indent=2)}
 

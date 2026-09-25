@@ -30,6 +30,13 @@ class IngestFailed(Exception):
     processed, so the command exits non-zero and `run` stops before generating."""
 
 
+class GenerateFailed(Exception):
+    """One or more chunks failed generation. Raised AFTER the successful drafts are
+    written, so nothing is lost - but the command exits non-zero, because a
+    partial failure that reports success is a partial failure nobody notices.
+    Same rule as ingest."""
+
+
 def _check_schema():
     """Verify the schema the migration chain owns, and stop clearly if it is
     missing. The pipeline no longer creates schema (see db.py) — a missing
@@ -143,6 +150,12 @@ def cmd_generate(args, queue: list[dict] | None = None):
         print(f"  {len(res['failures'])} chunk(s) FAILED generation:")
         for f in res["failures"]:
             print(f"    - {f['chunk_ref']}: {f['error']}")
+        # The drafts that succeeded are already on disk; this only changes the
+        # exit code, so a wrapping script cannot read a partial run as a whole one.
+        raise GenerateFailed(
+            f"{len(res['failures'])} of {len(queue)} chunk(s) failed generation: "
+            + ", ".join(f["chunk_ref"] for f in res["failures"])
+        )
     return res
 
 
