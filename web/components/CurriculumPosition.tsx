@@ -29,7 +29,7 @@ export function PositionLine({ segment, className = '' }: { segment: Segment; cl
     <p className={`text-sm text-text-secondary ${className}`}>
       <span className="font-semibold text-text">{p.track}</span>
       {' · '}
-      {p.credit.code} {p.credit.name}
+      {p.credit.name ? `${p.credit.code} ${p.credit.name}` : p.credit.code}
       {' · '}
       Hour {p.hour.number} of {p.credit.total_hours}
       {p.hour.project_label ? ` · ${p.hour.project_label}` : ''}
@@ -48,7 +48,7 @@ export function PositionDetail({ position }: { position: CurriculumPosition }) {
     .join(' · ');
   const rows: Array<[string, string]> = [
     ['Track', position.track],
-    ['Credit', `${position.credit.code} — ${position.credit.name}`],
+    ['Credit', position.credit.name ? `${position.credit.code} — ${position.credit.name}` : position.credit.code],
     ['Hour', hourValue],
   ];
   return (

@@ -261,7 +261,8 @@ export interface Progress {
  */
 export interface CurriculumPosition {
   track: string;
-  credit: { code: string; name: string; sequence: number; total_hours: number };
+  /** `name` is optional: most credits are identified by their code and sequence alone. */
+  credit: { code: string; name: string | null; sequence: number; total_hours: number };
   hour: { number: number; title: string | null; project_label: string | null };
   source: 'explicit' | 'derived_percent' | 'manual';
 }

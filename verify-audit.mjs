@@ -2673,6 +2673,19 @@ const missionsFor = (file) =>
     [file]
   );
 const fullRun = (p) => ['ingest', 'generate', 'validate', 'import'].map((s) => ({ s, ...p.run(s) }));
+/**
+ * Remove what a pipeline case wrote to the DATABASE. p.cleanup() only removes the
+ * temp input directory; the content_chunks rows (and any missions generated from
+ * them) outlived every run, so a developer's database accumulated a set per audit
+ * — 378 rows across 42 files before this was added — and the pipeline's coverage
+ * report counted them all.
+ */
+const forgetPipelineFile = async (file) => {
+  await q(`DELETE m FROM missions m JOIN content_chunks cc ON cc.id = m.source_chunk_id WHERE cc.source_file = ?`, [
+    file,
+  ]);
+  await q(`DELETE FROM content_chunks WHERE source_file = ?`, [file]);
+};
 
 await runCase(
   '4.10',
@@ -2705,6 +2718,7 @@ await runCase(
         `(${[...new Set(ms.map((m) => m.status))]})`
       );
     } finally {
+      await forgetPipelineFile(f);
       p.cleanup();
     }
   }
@@ -2730,6 +2744,7 @@ await runCase(
       );
       c.check('nothing stored', (await chunksFor(f)).length === 0);
     } finally {
+      await forgetPipelineFile(f);
       p.cleanup();
     }
   }
@@ -2758,6 +2773,7 @@ await runCase(
       c.check('message names the file', r.out.includes(f));
       c.check('nothing stored', (await chunksFor(f)).length === 0);
     } finally {
+      await forgetPipelineFile(f);
       p.cleanup();
     }
   }
@@ -2791,6 +2807,7 @@ await runCase(
           `(chunks=${(await chunksFor(f)).length})`
         );
       } finally {
+        await forgetPipelineFile(f);
         p.cleanup();
       }
     }
@@ -2825,6 +2842,7 @@ await runCase(
       );
       c.check('no new missions', m2.length === m1.length, `(${m1.length} -> ${m2.length})`);
     } finally {
+      await forgetPipelineFile(f);
       p.cleanup();
     }
   }
@@ -2876,6 +2894,7 @@ await runCase(
         `(changed=${others.filter((m) => all.find((x) => x.id === m.id)?.status !== m.status).length})`
       );
     } finally {
+      await forgetPipelineFile(f);
       p.cleanup();
     }
   }
