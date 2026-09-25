@@ -31,6 +31,80 @@ DRAFTS_DIR = db.LOGS_DIR / "drafts"
 MAX_TOKENS = 8192
 MAX_TRANSIENT_RETRIES = 3
 
+# A provider that refuses us tells us how long to wait. Waiting less is a wasted
+# call: the free Gemini tier allows 5 requests a minute and answers a 429 with
+# "retryDelay: 53s", so a 1s/2s backoff spends every retry inside the same closed
+# window and recovers from nothing. Cap it so a pathological value cannot hang a
+# batch for ever.
+MAX_SERVER_RETRY_DELAY = 120.0
+
+# Requests per minute we allow ourselves. Default 5 = the Gemini free tier.
+# Raising it when the plan changes is a config change, not a code change.
+def requests_per_minute() -> float:
+    raw = (os.getenv("LLM_REQUESTS_PER_MINUTE") or "5").strip()
+    try:
+        rpm = float(raw)
+    except ValueError:
+        raise ValueError(f"LLM_REQUESTS_PER_MINUTE must be a number (got {raw!r})") from None
+    if rpm <= 0:
+        raise ValueError(f"LLM_REQUESTS_PER_MINUTE must be greater than 0 (got {rpm})")
+    return rpm
+
+
+_last_call_at = 0.0
+
+
+# Local fakes have no quota to exceed, and pacing them would add minutes to every
+# harness run for nothing (it added 12 seconds to a single unit test before this).
+UNPACED_PROVIDERS = ("mock", "hostile")
+
+
+def pacing_applies() -> bool:
+    # The same default get_client() uses: an unset provider IS the mock, so it
+    # must not be paced either.
+    return (os.getenv("LLM_PROVIDER") or "mock").strip().lower() not in UNPACED_PROVIDERS
+
+
+def _throttle() -> None:
+    """Hold the batch to LLM_REQUESTS_PER_MINUTE. This is an offline batch job:
+    waiting is always cheaper than being refused."""
+    global _last_call_at
+    if not pacing_applies():
+        return
+    gap = 60.0 / requests_per_minute()
+    wait = gap - (time.monotonic() - _last_call_at)
+    if _last_call_at and wait > 0:
+        print(f"    pacing: waiting {wait:.0f}s (LLM_REQUESTS_PER_MINUTE={requests_per_minute():g})")
+        time.sleep(wait)
+    _last_call_at = time.monotonic()
+
+
+_RETRY_DELAY_PATTERNS = (
+    # google-genai puts the structured RetryInfo in the stringified error.
+    re.compile(r"['\"]retryDelay['\"]\s*:\s*['\"]([0-9.]+)s['\"]"),
+    # ...and the human-readable message repeats it.
+    re.compile(r"retry in ([0-9.]+)\s*s", re.I),
+    # Anthropic/OpenAI style header echoed into the message.
+    re.compile(r"retry-after[\"':\s]+([0-9.]+)", re.I),
+)
+
+
+def server_retry_delay(e: Exception):
+    """The delay the PROVIDER asked for, in seconds, or None if it did not say."""
+    for attr in ("retry_after", "retry_delay"):
+        v = getattr(e, attr, None)
+        if isinstance(v, (int, float)) and v > 0:
+            return min(float(v), MAX_SERVER_RETRY_DELAY)
+    text = str(e)
+    for rx in _RETRY_DELAY_PATTERNS:
+        m = rx.search(text)
+        if m:
+            try:
+                return min(float(m.group(1)), MAX_SERVER_RETRY_DELAY)
+            except ValueError:  # pragma: no cover - the pattern guarantees a number
+                continue
+    return None
+
 
 # --- helpers -----------------------------------------------------------------
 def safe_ref(chunk_ref: str) -> str:
@@ -78,19 +152,31 @@ class TransientError(Exception):
 
 
 def _call_with_retries(client, system, turns, chunk):
-    """Call the client, retrying transient failures with exponential backoff.
+    """Call the client, retrying transient failures.
+
+    The wait is the provider's own if it gave one (429s carry a retryDelay),
+    otherwise exponential backoff. Every call — including a repair turn — goes
+    through the pacer, because every call spends quota.
+
     Returns (raw_text, usage). Raises on non-transient or exhausted retries."""
     delay = 1.0
     last = None
     for attempt in range(1, MAX_TRANSIENT_RETRIES + 1):
         try:
+            _throttle()
             return client.draft(system, turns, chunk)
         except Exception as e:  # noqa: BLE001 - we re-raise below
             last = e
             if not _is_transient(e) or attempt == MAX_TRANSIENT_RETRIES:
                 raise
-            print(f"    transient error ({type(e).__name__}); retry {attempt}/{MAX_TRANSIENT_RETRIES} after {delay:.0f}s")
-            time.sleep(delay)
+            asked = server_retry_delay(e)
+            wait = asked if asked is not None else delay
+            source = "server asked for" if asked is not None else "backoff"
+            print(
+                f"    transient error ({type(e).__name__}); retry {attempt}/{MAX_TRANSIENT_RETRIES} "
+                f"after {wait:.0f}s ({source})"
+            )
+            time.sleep(wait)
             delay *= 2
     raise last  # pragma: no cover
 
@@ -459,10 +545,12 @@ def generate(chunks_to_generate, dry_run: bool = False):
     client = get_client()
     db.LOGS_DIR.mkdir(parents=True, exist_ok=True)
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
-    # Each generate batch is self-contained: clear stale drafts so the following
-    # validate/import stages act only on the chunks generated in THIS run.
-    for old in DRAFTS_DIR.glob("*.json"):
-        old.unlink()
+    # NOTHING is deleted up front. This used to clear the whole directory so the
+    # following stages saw only this run's work — until a run that failed 24 of 25
+    # chunks destroyed the one good draft we had before producing anything. A run
+    # must never leave us with less than we started with, so each chunk replaces
+    # only its OWN draft, on success, and a failed chunk keeps whatever it had.
+    pre_existing = {f.name for f in DRAFTS_DIR.glob("*.json")}
 
     drafted, failures = [], []
     total_in = total_out = 0
@@ -524,6 +612,12 @@ def generate(chunks_to_generate, dry_run: bool = False):
         }, indent=2), encoding="utf-8")
         drafted.append(ref)
         print(f"  chunk '{ref}': drafted {len(parsed['missions'])} missions.")
+
+    # Say plainly what the next stage will act on: this run's drafts plus any
+    # kept from earlier runs.
+    now_present = {f.name for f in DRAFTS_DIR.glob("*.json")}
+    kept = len(now_present & pre_existing - {safe_ref(r) + ".json" for r in drafted})
+    print(f"  Drafts staged: {len(now_present)} ({len(drafted)} from this run, {kept} kept from earlier runs).")
 
     usage = {"input_tokens": total_in, "output_tokens": total_out}
     if total_out:
