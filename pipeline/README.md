@@ -78,6 +78,27 @@ through 31 commits. The database now has exactly one owner.
 | `ANTHROPIC_API_KEY` | required when `LLM_PROVIDER=anthropic` |
 | `OPENAI_API_KEY` | required when `LLM_PROVIDER=openai` |
 | `GEMINI_API_KEY` | required when `LLM_PROVIDER=google` (falls back to `GOOGLE_API_KEY`) |
+| `LLM_REQUESTS_PER_MINUTE` | how fast generation may call the provider. Default **5** — the Gemini free tier's limit. See below |
+| `HOUR_HEADING_PATTERN` | overrides the hour-heading regex for every file (a single file's mapping can override it for itself) |
+
+### Pacing, and why generation waits
+
+Generation is an offline batch job, so being slow is cheap and being refused is
+not. Two rules keep a run alive:
+
+- **`LLM_REQUESTS_PER_MINUTE` (default 5)** paces the calls. 5 is the Gemini
+  free tier's per-minute limit; the free tier *also* allows only **20 requests a
+  day**, which no pacing can work around — a 25-hour credit does not fit in one
+  free day. On a paid tier the real ceiling is per-account and is shown on the
+  [AI Studio rate-limit page](https://aistudio.google.com/rate-limit), not in the
+  public docs, so pick a value you have checked rather than assuming one.
+  Local fakes (`mock`, `hostile`) are never paced: they have no quota, and pacing
+  them adds minutes to every test run.
+- **The provider's own retry delay is honoured.** A 429 carries
+  `RetryInfo.retryDelay` ("53s"); waiting 1s and 2s instead spends every retry
+  inside the same closed window and recovers from nothing. Capped at 120s.
+
+Keep both even on a paid plan: 503s happen at any tier.
 
 ### Sampling parameters are model-conditional
 
