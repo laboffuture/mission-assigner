@@ -494,6 +494,19 @@ jobs:
         run: |
           set -o pipefail
           compose() { docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.ci.yml "$@"; }
+          # Object storage first, and waited for from HERE: the s3mock image is
+          # built with buildpacks and has no shell tools to health-check itself
+          # with, and the backup sidecar takes a backup the moment it starts.
+          compose up -d s3
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:9000/ && break
+            sleep 2
+          done
+          if ! curl -sf -o /dev/null http://localhost:9000/; then
+            compose logs s3 > /tmp/s3.log 2>&1 || true
+            echo "::error title=CI overrides::object storage never answered on :9000 — $(tail -c 500 /tmp/s3.log | paste -sd' ' -)"
+            exit 1
+          fi
           if ! compose up -d 2>&1 | tee /tmp/ci-up.log; then
             echo "::error title=CI overrides::up failed — $(tail -c 700 /tmp/ci-up.log | paste -sd' ' -)"
             compose ps -a > /tmp/ci-ps.log 2>&1 || true
