@@ -440,7 +440,7 @@ Missions are scoped to where a student is in the curriculum, so nobody is served
 content they have not been taught yet.
 
 ```
-Subject → Track ("Tesla's Track") → Credit (C1..C5) → Hour (1..N, flat)
+Subject → Track (e.g. "Tesla's Track") → Credit (C1, C2, …) → Hour (1..N, flat)
 ```
 
 **Hours are flat and the hour number IS the position.** Hours per credit vary and
@@ -453,7 +453,7 @@ one hour (`missions.hour_id`).
 heading, that grouping is carried as `hours.project_label` — shown beside the hour
 in the UI, and never read by selection, ordering or the pool.
 
-- **Load a curriculum** — `npm run curriculum:load -- curriculum/teslas-track.json`.
+- **Load a curriculum** — `npm run curriculum:load -- curriculum/<track>.json`.
   Idempotent. It creates exactly `total_hours` hours numbered 1..N, refuses a
   definition whose hour list disagrees with `total_hours` (naming both numbers),
   refuses to remove a credit, and refuses to shrink a credit whose disappearing
@@ -505,10 +505,22 @@ in the UI, and never read by selection, ordering or the pool.
   segment's min/max, and the hour pool (not the segment) decides what content
   is eligible. New subjects need a curriculum, not segments.
 
-Seed data adds Tesla's Track (Robotics) with missions on every C1 hour except hour
-23 (left empty on purpose, so the coverage report has a real gap) and on C2 hour 1,
+**Fixtures and real curriculum never share a name.** The seed loads
+`curriculum/test-track-alpha.json` — *Test Track Alpha* (Robotics), 24/24/30/30/24
+hours — and the suite pins that shape in several places. Real SME curriculum lives
+on its own track (the first is *Tesla's Track*, C1 = 25 hours) and is loaded with
+`npm run curriculum:load`, never by the seed. A real track that shared the
+fixture's name would move the test suite every time content arrived.
+
+Seed data adds Test Track Alpha with missions on every C1 hour except hour 23
+(left empty on purpose, so the coverage report has a real gap) and on C2 hour 1,
 and two students: *Ananya Rao* at C1 hour 7 and *Kabir Mehta* at C1 hour 24. Tests:
 `npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
+
+Note for the development machine: `npm run db:seed` truncates `tracks`, so it
+removes real curriculum too. Re-load it with `npm run curriculum:load` after
+seeding. The seed refuses to run under `NODE_ENV=production`, so a real deployment
+is never affected.
 
 ## Deployment
 

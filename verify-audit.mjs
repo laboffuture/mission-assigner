@@ -463,7 +463,7 @@ function shuffled(list, seed) {
 console.log('Mission Hub audit harness');
 if (!ONLY.length || !ONLY.every((s) => ['4.10'].includes(s))) await reseed();
 await loadXpRules();
-trackId = await cur.findTrack('Robotics', "Tesla's Track");
+trackId = await cur.findTrack('Robotics', 'Test Track Alpha');
 
 // ============================================== 4.1 Student journey ==
 /**
@@ -2641,7 +2641,7 @@ function pipelineFor(files, hours, extraEnv = {}) {
   mkdirSync(input, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(input, name), text);
   const map = Object.fromEntries(
-    Object.keys(files).map((n) => [n, { subject: 'Robotics', track: "Tesla's Track", credit: 'C1', hours }])
+    Object.keys(files).map((n) => [n, { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours }])
   );
   writeFileSync(join(work, 'curriculum.json'), JSON.stringify({ files: map, legacy_files: [] }));
   const env = {

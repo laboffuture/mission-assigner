@@ -10,7 +10,9 @@ import { dirname, join } from 'node:path';
 import type { PoolConnection } from 'mysql2/promise';
 import { refuseDestructiveInProduction } from './destructiveGuard.js';
 
-const CURRICULUM_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'curriculum', 'teslas-track.json');
+// FIXTURE curriculum, never real content: the suite asserts its exact shape
+// (24/24/30/30/24 hours), so real SME material must live on its own track.
+const CURRICULUM_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'curriculum', 'test-track-alpha.json');
 const ROBOTICS = 'Robotics';
 const ROBOTICS_TAGS = ['sensors', 'motors', 'circuits'] as const;
 
@@ -422,8 +424,10 @@ async function seedBoundaryStudents(conn: PoolConnection): Promise<number[]> {
 }
 
 /**
- * Robotics / Tesla's Track, for curriculum-scoped selection:
- *  - the track from curriculum/teslas-track.json — C1 24 hours, C2 24, C3 30,
+ * Robotics / Test Track Alpha — the FIXTURE track for curriculum-scoped
+ * selection. Deliberately not a real programme name: the suite pins its shape,
+ * so anything that shares a name with it would move the tests.
+ *  - the track from curriculum/test-track-alpha.json — C1 24 hours, C2 24, C3 30,
  *    C4 30, C5 24 (C5's figure is a PLACEHOLDER, to be confirmed by the SME;
  *    it is data, so a new figure needs no code change)
  *  - 5 missions (difficulty 0..4) on every C1 hour except hour 23, left empty

@@ -60,8 +60,8 @@ writeFileSync(
   curriculumFile,
   JSON.stringify({
     files: {
-      [GOOD]: { subject: 'Robotics', track: "Tesla's Track", credit: 'C1', hours: [1, 9] },
-      [BROKEN]: { subject: 'Robotics', track: "Tesla's Track", credit: 'C1', hours: [10, 17] },
+      [GOOD]: { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours: [1, 9] },
+      [BROKEN]: { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours: [10, 17] },
     },
     legacy_files: [],
   })

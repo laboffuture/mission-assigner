@@ -1,0 +1,32 @@
+{
+  "subject": "Robotics",
+  "track": "Test Track Alpha",
+  "display_order": 99,
+  "credits": [
+    {
+      "code": "C1",
+      "name": "Fixture Foundations of Robotics",
+      "total_hours": 24
+    },
+    {
+      "code": "C2",
+      "name": "Fixture Sensors and Feedback",
+      "total_hours": 24
+    },
+    {
+      "code": "C3",
+      "name": "Fixture Motion and Control",
+      "total_hours": 30
+    },
+    {
+      "code": "C4",
+      "name": "Fixture Autonomy",
+      "total_hours": 30
+    },
+    {
+      "code": "C5",
+      "name": "Fixture Capstone",
+      "total_hours": 24
+    }
+  ]
+}

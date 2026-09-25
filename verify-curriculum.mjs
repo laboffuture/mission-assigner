@@ -37,9 +37,9 @@ cfg.setPercentScope('credit');
 // has its own section below.
 cfg.setRevisionMixPercent(0);
 
-const trackId = await cur.findTrack('Robotics', "Tesla's Track");
+const trackId = await cur.findTrack('Robotics', 'Test Track Alpha');
 if (trackId == null) {
-  console.log("FATAL: Tesla's Track not found — run `npm run db:seed` first.");
+  console.log('FATAL: Test Track Alpha not found — run `npm run db:seed` first.');
   process.exit(2);
 }
 
@@ -215,8 +215,8 @@ console.log('\n[3] Re-running the load is a no-op');
     `(${JSON.stringify(again)})`
   );
   check('hour rows unchanged', (await countIn(scratchTrackId)) === before);
-  const seeded = await cur.loadCurriculum('curriculum/teslas-track.json');
-  check("re-loading the seeded Tesla's Track definition is a noop", seeded.noop);
+  const seeded = await cur.loadCurriculum('curriculum/test-track-alpha.json');
+  check('re-loading the seeded fixture definition is a noop', seeded.noop);
 
   // Shrinking a credit whose hours carry content is refused; shrinking empty
   // hours is allowed, because nothing has been taught from them.

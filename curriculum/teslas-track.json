@@ -5,28 +5,110 @@
   "credits": [
     {
       "code": "C1",
-      "name": "Foundations of Robotics",
-      "total_hours": 24
-    },
-    {
-      "code": "C2",
-      "name": "Sensors and Feedback",
-      "total_hours": 24
-    },
-    {
-      "code": "C3",
-      "name": "Motion and Control",
-      "total_hours": 30
-    },
-    {
-      "code": "C4",
-      "name": "Autonomy",
-      "total_hours": 30
-    },
-    {
-      "code": "C5",
-      "name": "Capstone",
-      "total_hours": 24
+      "name": "Cosmic Pulse Tracker, Star Spectrum Decoder and Automated Cooling System",
+      "total_hours": 25,
+      "hours": [
+        {
+          "title": "Intro & Context",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Preflight",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Assembly (Part 1)",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Assembly (Part 2), Output Check & Debug",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Conceptual Learning (Part 1)",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Conceptual Learning (Part 2)",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Bonus Challenge (Part 1)",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Bonus Challenge (Part 2)",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Project Closure",
+          "project_label": "Project 1: Cosmic Pulse Tracker"
+        },
+        {
+          "title": "Preflight",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Assembly (Part 1)",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Assembly (Part 2), Output Check & Debug",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Conceptual Learning (Part 1)",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Conceptual Learning (Part 2)",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Bonus Challenge (Part 1)",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Bonus Challenge (Part 2)",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Project Closure",
+          "project_label": "Project 2: Star Spectrum Decoder"
+        },
+        {
+          "title": "Preflight",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Assembly (Part 1)",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Assembly (Part 2), Output Check & Debug",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Conceptual Learning (Part 1)",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Conceptual Learning (Part 2)",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Bonus Challenge (Part 1)",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Bonus Challenge (Part 2)",
+          "project_label": "Project 3: Automated Cooling System"
+        },
+        {
+          "title": "Project Closure",
+          "project_label": "Project 3: Automated Cooling System"
+        }
+      ]
     }
   ]
 }

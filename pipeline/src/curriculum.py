@@ -5,8 +5,8 @@ config/curriculum.json maps a file name to its track, credit and hour range:
     {
       "hour_heading_pattern": "^Hour\\\\s+(\\\\d+)",
       "files": {
-        "tesla-c1.md":    {"subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "hours": [1, 24]},
-        "tesla-c2-p1.md": {"subject": "Robotics", "track": "Tesla's Track", "credit": "C2", "hours": [1, 9]}
+        "robotics-c1.docx": {"subject": "Robotics", "track": "Tesla's Track", "credit": "C1", "hours": [1, 25]},
+        "robotics-c2-a.md": {"subject": "Robotics", "track": "Tesla's Track", "credit": "C2", "hours": [1, 9]}
       },
       "legacy_files": ["sample-cs.md"]
     }
