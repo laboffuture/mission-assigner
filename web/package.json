@@ -11,6 +11,7 @@
     "lint": "next lint --max-warnings 0",
     "check:tokens": "node scripts/generate-lms-tokens.mjs --check && node scripts/check-no-raw-values.mjs",
     "check:fonts": "node scripts/check-fonts.mjs",
+    "check:e2e-projects": "node scripts/check-e2e-projects.mjs",
     "e2e": "playwright test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

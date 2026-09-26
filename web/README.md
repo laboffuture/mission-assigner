@@ -121,7 +121,10 @@ what surfaces it.
 ```
 npm run typecheck
 npm run check:tokens
-npm run e2e           # Playwright — expects the full stack up (API + MySQL + Next)
+npm run check:fonts   # nothing in web/ may fetch from Google
+npm run check:e2e-projects
+npm run e2e                          # all four browser projects (slow — see below)
+npm run e2e -- --project=chromium    # the quick loop
 ```
 
 `e2e/` covers the student flow (week → mission → result → feedback → progress),
@@ -129,6 +132,57 @@ empty states, submit resilience (network-drop retry with a reused
 Idempotency-Key; session-expiry redirect), keyboard-only completion, and the
 axe accessibility scans. Specs reseed the DB per file and are scoped to CommonJS
 (`e2e/package.json`) to avoid the Playwright ESM race.
+
+### Four browsers, and the two shapes a student actually holds
+
+Every spec runs on each of these (`playwright.config.ts`):
+
+| project    | engine   | viewport | why it is there                                      |
+| ---------- | -------- | -------- | ---------------------------------------------------- |
+| `chromium` | Chromium | 1280×720 | the reference. CI blocks on this one                 |
+| `webkit`   | WebKit   | 1280×720 | Safari, which no amount of Chromium testing covers   |
+| `ipad`     | WebKit   | 834×1194 | iPad Pro 11, with touch — a lab tablet               |
+| `phone`    | Chromium | 393×851  | Pixel 5, with touch — the narrowest thing we support |
+
+The device projects carry `isMobile` and `hasTouch` from their Playwright device
+descriptors, so clicks become taps and the layout is measured at the real width.
+iPad runs on WebKit because iPads do; the phone runs on Chromium because Android
+does.
+
+Cost on this machine, against the dev server: chromium 3.6 min, phone 3.4 min,
+webkit 5.8 min, iPad 8.4 min. Mobile emulation is the expensive part, not the
+engine. Use `--project=chromium` while working and let CI cover the rest.
+
+**CI runs them in two jobs, on purpose.** `e2e` is sharded Chromium and blocks the
+build. `e2e-crossbrowser` runs webkit, ipad and phone and only _reports_ — a
+difference between engines is a question about what the product should do on
+Safari, not a broken commit. Failures are not swallowed: each becomes an `::error`
+annotation on the run (readable without repository-admin rights) and the HTML
+report is uploaded. `npm run check:e2e-projects` keeps the two in step — it fails
+if the config declares a project no CI job runs, or if the blocking job stops
+naming the project it blocks on.
+
+#### Known difference: the theme cookie does not survive on WebKit over plain HTTP
+
+`navigation.spec.ts` "?theme=horizon renders horizon from the server" passes on
+Chromium and fails on WebKit and iPad. It is not a test bug and it is not
+(directly) a product bug:
+
+- `middleware.ts` sets `lof_theme` with `Secure; SameSite=None`, deliberately, so
+  it works in the LMS's cross-site iframe.
+- Chromium treats `http://localhost` as a secure context and sends `Secure`
+  cookies to it anyway. **WebKit does not** — it stores the cookie and never sends
+  it back. Verified directly: with `?theme=` in the URL WebKit renders the right
+  theme (the middleware is fine); on the next navigation, where the cookie is the
+  only source, it falls back to nebula and `document.cookie` is empty.
+- Production is HTTPS, so this exact failure cannot happen there.
+
+What _is_ worth deciding before the pilot: `SameSite=None; Secure` makes
+`lof_theme` a third-party cookie inside the LMS iframe, and Safari blocks those by
+default. On iPad the theme would then reset on every navigation. The fix is a
+decision about where the theme comes from (the LTI launch, a query parameter the
+LMS appends, or `localStorage` behind a Storage Access request) rather than a
+tweak to the cookie — so it is being asked, not guessed at.
 
 ### Every student journey runs across student ids of every length
 

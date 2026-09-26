@@ -23,5 +23,18 @@ export default defineConfig({
     trace: 'retain-on-failure',
     actionTimeout: 10_000,
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // One project per engine and per shape a pilot student might actually hold.
+  // Chromium is the reference; anything that passes there and fails elsewhere is
+  // a real difference in the product, not in the test.
+  //
+  // The two device projects carry isMobile and hasTouch from their descriptors,
+  // so clicks become taps and layout is measured at the real width — which is
+  // where responsive bugs live. iPad runs on WebKit because iPads do; the phone
+  // runs on Chromium because Android does.
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'ipad', use: { ...devices['iPad Pro 11'] } },
+    { name: 'phone', use: { ...devices['Pixel 5'] } },
+  ],
 });
