@@ -3526,37 +3526,73 @@ await runCase(
 await runCase(
   '4.11',
   69,
-  'The emailable document: attachment, self-contained, and the same report as the screen',
-  'GET /api/pilot-report?format=html is a text/html attachment named for the window end, contains no script, link, img or external URL, repeats every section heading, and carries the same "needs attention" lines as the JSON. A student gets 403 and an anonymous caller 401.',
+  'The emailable document: attachment, self-contained, escaped, and the same report as the screen',
+  'GET /api/pilot-report?format=html is a text/html attachment named for the window end, contains no script, link, img or external URL, repeats every section heading, and carries the same "needs attention" lines as the JSON — including a mission whose title is a quoted HTML tag, which appears escaped. A student gets 403 and an anonymous caller 401.',
   async (c) => {
-    const json = await api('GET', '/api/pilot-report', { as: 7 });
-    c.check('admin gets the report', json.status === 200, `(${json.status})`);
-    const doc = await api('GET', '/api/pilot-report?format=html', { as: 7 });
-    c.check('the document is 200', doc.status === 200, `(${doc.status})`);
-    c.check('served as HTML', /text\/html/.test(doc.headers.get('content-type') ?? ''), `(${doc.headers.get('content-type')})`);
-    const cd = doc.headers.get('content-disposition') ?? '';
-    c.check('sent as an attachment named for the window', /^attachment; filename="pilot-report-\d{4}-\d{2}-\d{2}\.html"$/.test(cd), `(${cd})`);
-    c.check('the filename ends at the window end date', cd.includes(json.json?.window?.to ?? 'x'), `(${cd} vs ${json.json?.window?.to})`);
-    c.check('no script, link or img tag', !/<(script|link|img)\b/i.test(doc.text));
-    c.check('no external URL at all', !/https?:\/\//.test(doc.text));
-    const headings = (json.json?.sections ?? []).map((x) => x.title);
-    c.check('every section heading is in the document', headings.length > 0 && headings.every((h) => doc.text.includes(h)), `(${headings.length} sections)`);
-    const lines = json.json?.headline ?? [];
-    c.check(
-      'the document and the JSON agree on what needs attention',
-      lines.every((l) => doc.text.includes(l.replace(/&/g, '&amp;'))),
-      `(${lines.length} lines)`
-    );
-    c.check('the document is generated from the report object, not re-queried', typeof repDoc.renderPilotReportHtml === 'function');
-    const asStudent = await api('GET', '/api/pilot-report', { as: 9 });
-    c.check('a student is refused', asStudent.status === 403, `(${asStudent.status})`);
-    c.check('and the refusal leaks nothing', !LEAK_RE.test(asStudent.text), `(${asStudent.text.slice(0, 120)})`);
-    const anon = await api('GET', '/api/pilot-report');
-    c.check('an anonymous caller is 401', anon.status === 401, `(${anon.status})`);
-    const bad = await api('GET', '/api/pilot-report?weeks=0', { as: 7 });
-    c.check('weeks=0 is rejected, not silently coerced', bad.status === 400, `(${bad.status})`);
-    const badFormat = await api('GET', '/api/pilot-report?format=pdf', { as: 7 });
-    c.check('an unknown format is rejected', badFormat.status === 400, `(${badFormat.status})`);
+    const f = await reportScratch('doc');
+    try {
+      // A title that is hostile on purpose. It reaches the document through the
+      // mis-tagged list, so the document has to escape it: this thing gets emailed
+      // and opened in a browser, and mission titles are author input.
+      const nasty = '<img src=x onerror=alert(1)> "quoted" & \'apostrophe\'';
+      const missionId = await f.mission({ difficulty: 0, title: nasty });
+      for (let i = 0; i < 6; i++) await f.grade(missionId, await f.student(), { pass: false, seconds: 120 });
+
+      const json = await api('GET', '/api/pilot-report', { as: 7 });
+      c.check('admin gets the report', json.status === 200, `(${json.status})`);
+      const doc = await api('GET', '/api/pilot-report?format=html', { as: 7 });
+      c.check('the document is 200', doc.status === 200, `(${doc.status})`);
+      c.check('served as HTML', /text\/html/.test(doc.headers.get('content-type') ?? ''), `(${doc.headers.get('content-type')})`);
+      const cd = doc.headers.get('content-disposition') ?? '';
+      c.check('sent as an attachment named for the window', /^attachment; filename="pilot-report-\d{4}-\d{2}-\d{2}\.html"$/.test(cd), `(${cd})`);
+      c.check('the filename ends at the window end date', cd.includes(json.json?.window?.to ?? 'x'), `(${cd} vs ${json.json?.window?.to})`);
+
+      // Escaping: the tag must arrive as text, and the only reason the "no img
+      // tag" check below can pass is that it did.
+      c.check('the hostile title is escaped', doc.text.includes('&lt;img src=x onerror=alert(1)&gt;'));
+      c.check('quotes and ampersands too', doc.text.includes('&quot;quoted&quot; &amp;'));
+      c.check('no script, link or img tag', !/<(script|link|img)\b/i.test(doc.text));
+      c.check('no external URL at all', !/https?:\/\//.test(doc.text));
+
+      const headings = (json.json?.sections ?? []).map((x) => x.title);
+      c.check('every section heading is in the document', headings.length > 0 && headings.every((h) => doc.text.includes(h)), `(${headings.length} sections)`);
+
+      // Compare by DECODING the document rather than re-encoding the JSON: using
+      // the renderer's own escaping here would only prove it agrees with itself.
+      // (The first version re-encoded '&' alone and failed the moment a headline
+      // quoted a band name — shuffled seed 237210634, which is how it was found.)
+      const decoded = doc.text
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&');
+      const lines = json.json?.headline ?? [];
+      const missing = lines.filter((l) => !decoded.includes(l));
+      c.check(
+        'the document and the JSON agree on what needs attention',
+        lines.length > 0 && missing.length === 0,
+        `(${lines.length} lines, ${missing.length} missing${missing.length ? `: ${missing[0].slice(0, 120)}` : ''})`
+      );
+      c.check(
+        'and the hostile mission is one of those lines',
+        lines.some((l) => l.includes(nasty)),
+        `(${lines.length} lines)`
+      );
+      c.check('the document is generated from the report object, not re-queried', typeof repDoc.renderPilotReportHtml === 'function');
+
+      const asStudent = await api('GET', '/api/pilot-report', { as: 9 });
+      c.check('a student is refused', asStudent.status === 403, `(${asStudent.status})`);
+      c.check('and the refusal leaks nothing', !LEAK_RE.test(asStudent.text), `(${asStudent.text.slice(0, 120)})`);
+      const anon = await api('GET', '/api/pilot-report');
+      c.check('an anonymous caller is 401', anon.status === 401, `(${anon.status})`);
+      const bad = await api('GET', '/api/pilot-report?weeks=0', { as: 7 });
+      c.check('weeks=0 is rejected, not silently coerced', bad.status === 400, `(${bad.status})`);
+      const badFormat = await api('GET', '/api/pilot-report?format=pdf', { as: 7 });
+      c.check('an unknown format is rejected', badFormat.status === 400, `(${badFormat.status})`);
+    } finally {
+      await f.cleanup();
+    }
   }
 );
 
