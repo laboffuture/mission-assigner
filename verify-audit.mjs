@@ -1186,12 +1186,31 @@ await runCase(
 );
 
 let revisionFixture = null;
+/**
+ * Is the memoised fixture still REAL? Case 45 reseeds the database, which
+ * truncates students and assignments. In file order it runs after the cases
+ * that use this fixture; in a shuffled order it can land between them, and the
+ * fixture then describes rows that no longer exist — which is how case 20 came
+ * to report "passes=0" while every submit in the trail had returned 200.
+ * Checked by NAME as well as id: a reseed can hand the same id to a new student.
+ */
+async function revisionFixtureIntact(f) {
+  const st = await one(`SELECT display_name n FROM students WHERE id = ?`, [f.sid]);
+  if (!st || st.n !== f.name) return false;
+  const rev = f.served.find((x) => x.revision);
+  if (!rev) return true;
+  const a = await one(`SELECT status FROM assignments WHERE id = ?`, [rev.aid]);
+  return !!a && a.status === 'graded';
+}
+
 async function revisionRun() {
-  if (revisionFixture) return revisionFixture;
+  if (revisionFixture && (await revisionFixtureIntact(revisionFixture))) return revisionFixture;
+  revisionFixture = null;
   await hook('selection-mode', { mode: 'curriculum' });
   await hook('curriculum-config', { revisionMixPercent: 0 });
   await hook('feedback-gating', { enabled: false });
   const sid = await newRoboticsStudent('revision', 2, ['C1', 1]);
+  const { n: name } = await one(`SELECT display_name n FROM students WHERE id = ?`, [sid]);
   await publishWeek(sid, await currentMonday());
   const served = [];
   try {
@@ -1230,7 +1249,7 @@ async function revisionRun() {
     await hook('curriculum-config', { revisionMixPercent: 20 });
     await hook('feedback-gating', { enabled: true });
   }
-  revisionFixture = { sid, served };
+  revisionFixture = { sid, name, served };
   return revisionFixture;
 }
 
@@ -1672,10 +1691,20 @@ await runCase(
       tamperedPayload.status === 401,
       `(got ${tamperedPayload.status} ${tamperedPayload.text.slice(0, 80)})`
     );
+    // Change the first character to one it is NOT. Prefixing a fixed 'x' left
+    // the signature untouched whenever it already began with 'x' — about one run
+    // in sixty-four, where the server rightly returned 200 for a valid cookie and
+    // the case failed for a fault of its own.
+    const realSig = parts['mh_session.sig'];
+    const forgedSig = (realSig[0] === 'x' ? 'y' : 'x') + realSig.slice(1);
     const badSig = await api('GET', '/api/me', {
-      headers: { Cookie: `mh_session=${parts.mh_session}; mh_session.sig=${'x' + parts['mh_session.sig'].slice(1)}` },
+      headers: { Cookie: `mh_session=${parts.mh_session}; mh_session.sig=${forgedSig}` },
     });
-    c.check('tampered signature -> 401', badSig.status === 401, `(got ${badSig.status})`);
+    c.check(
+      'tampered signature -> 401',
+      badSig.status === 401 && forgedSig !== realSig,
+      `(got ${badSig.status}; signature actually changed: ${forgedSig !== realSig})`
+    );
     const hasTime = /"(iat|exp|issued|expires|ts)"/i.test(payload);
     c.check('the session payload carries an issue time the server can check', hasTime, `(payload=${payload})`);
     // The expired case itself: a VALIDLY SIGNED session issued 13h ago, which is
