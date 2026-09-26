@@ -8,26 +8,14 @@
 //
 // Requires: MySQL up, and the dev server running on :3000 WITH ENABLE_TEST_HOOKS=1.
 // Run:  npm run verify:all
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const BASE = 'http://localhost:3000';
-
-function run(cmd, opts = {}) {
-  console.log(`\n\x1b[36m$ ${cmd}\x1b[0m`);
-  try {
-    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root });
-  } catch (err) {
-    // In CI the job log needs repository-admin rights to read, so a failure
-    // visible only there is invisible to everyone else. Name the suite in an
-    // annotation, which anyone can see on the run.
-    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
-    throw err;
-  }
-}
 
 // Preflight: server up + test hooks enabled.
 {
@@ -59,120 +47,152 @@ const venvPy = ['pipeline/.venv/Scripts/python.exe', 'pipeline/.venv/bin/python'
   .map((p) => join(root, p))
   .find(existsSync);
 
+// ---------------------------------------------------------------------------
+// The suites, as data.
+//
+// `db` says what a suite does to the SHARED development database:
+//   'shared'  — reads and writes it, and is preceded by a reseed. These cannot
+//               run beside anything else touching that database.
+//   'own'     — works only in a scratch database it creates and drops, or in a
+//               server it spawns against one.
+//   'none'    — no database at all.
+// Only 'own' and 'none' suites are safe to run concurrently; see runPool below.
+// ---------------------------------------------------------------------------
+const SUITES = [
+  // Own scratch database (mm_migr_scratch); never touches :3000.
+  { name: 'migrations', cmd: 'npm run verify:migrations', db: 'own' },
+  // Own scratch databases (mission_demo_bkp*) and its own temp server on :3999.
+  { name: 'backups', cmd: 'npm run verify:backups', db: 'own' },
+  // Writes students into the SHARED database and seeds it when empty.
+  { name: 'ops', cmd: 'npm run verify:ops', db: 'shared' },
+  { name: 'stage1', cmd: 'npm run verify', db: 'shared', seed: true },
+  { name: 'stage3', cmd: 'npm run verify:stage3', db: 'shared', seed: true },
+  { name: 'stage5', cmd: 'npm run verify:stage5', db: 'shared', seed: true },
+  { name: 'auth', cmd: 'npm run verify:auth', db: 'shared', seed: true },
+  { name: 'staff-auth', cmd: 'npm run verify:staff-auth', db: 'shared', seed: true },
+  { name: 'api-shape', cmd: 'npm run verify:api-shape', db: 'shared', seed: true },
+  { name: 'assistance', cmd: 'npm run verify:assistance', db: 'shared', seed: true },
+  { name: 'review', cmd: 'npm run verify:review', db: 'shared', seed: true },
+  { name: 'csrf', cmd: 'npm run verify:csrf', db: 'none' },
+  { name: 'login-ratelimit', cmd: 'npm run verify:login-ratelimit', db: 'shared' },
+  // Drives the live server on :3000.
+  { name: 'cookie-flags', cmd: 'npm run verify:cookie-flags', db: 'shared' },
+  { name: 'logging', cmd: 'npm run verify:logging', db: 'shared' },
+  { name: 'validation', cmd: 'npm run verify:validation', db: 'shared', seed: true },
+  { name: 'config', cmd: 'npm run verify:config', db: 'none' },
+  // Runs db:seed twice — it rewrites the shared database.
+  { name: 'prod-guard', cmd: 'npm run verify:prod-guard', db: 'shared' },
+  // Scratch database for the boot cases, but the session cases use the live
+  // server on :3000, and it reseeds.
+  { name: 'fail-closed', cmd: 'npm run verify:fail-closed', db: 'shared' },
+  { name: 'correctness', cmd: 'npm run verify:correctness', db: 'shared', seed: true },
+  { name: 'timezone', cmd: 'npm run verify:timezone', db: 'shared', seed: true },
+  { name: 'concurrency', cmd: 'npm run verify:concurrency', db: 'shared', seed: true },
+  { name: 'pagination', cmd: 'npm run verify:pagination', db: 'shared', seed: true },
+  { name: 'curriculum', cmd: 'npm run verify:curriculum', db: 'shared', seed: true },
+  ...(venvPy
+    ? [
+        { name: 'pytest', cmd: `"${venvPy}" -m pytest -q`, cwd: join(root, 'pipeline'), db: 'none' },
+        { name: 'curriculum-pipeline', cmd: 'npm run verify:curriculum-pipeline', db: 'shared', seed: true },
+      ]
+    : []),
+];
+
+// ---------------------------------------------------------------------------
+// Measurement. Wall time is easy; memory is the number that has actually hurt
+// (the suite has been killed for it), so it is sampled rather than guessed.
+//
+// On Linux (CI) the sampler reads /proc: the resident size of every node,
+// python and tsx process, which is what grows when a harness spawns servers.
+// Elsewhere it reports null rather than a number it cannot stand behind.
+// ---------------------------------------------------------------------------
+const MEASURE_MS = 250;
+
+function rssTotalKb() {
+  if (process.platform !== 'linux') return null;
+  let total = 0;
+  for (const pid of readdirSync('/proc')) {
+    if (!/^\d+$/.test(pid)) continue;
+    try {
+      const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim();
+      if (!/^(node|python3?|tsx)$/.test(comm)) continue;
+      const status = readFileSync(`/proc/${pid}/status`, 'utf8');
+      const m = /VmRSS:\s+(\d+) kB/.exec(status);
+      if (m) total += Number(m[1]);
+    } catch {
+      /* the process exited between readdir and read; ignore it */
+    }
+  }
+  return total;
+}
+
+const results = [];
+
+function run(cmd, opts = {}) {
+  console.log(`\n\x1b[36m$ ${cmd}\x1b[0m`);
+  try {
+    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root });
+  } catch (err) {
+    // In CI the job log needs repository-admin rights to read, so a failure
+    // visible only there is invisible to everyone else. Name the suite in an
+    // annotation, which anyone can see on the run.
+    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
+    throw err;
+  }
+}
+
+/** Run one suite, recording how long it took and how much memory it cost. */
+function runMeasured(suite) {
+  let peakKb = rssTotalKb();
+  const sampler =
+    peakKb == null
+      ? null
+      : setInterval(() => {
+          const now = rssTotalKb();
+          if (now != null && now > peakKb) peakKb = now;
+        }, MEASURE_MS);
+  const started = Date.now();
+  try {
+    run(suite.cmd, { cwd: suite.cwd });
+    return true;
+  } finally {
+    if (sampler) clearInterval(sampler);
+    results.push({ name: suite.name, db: suite.db, ms: Date.now() - started, peakKb });
+  }
+}
+
+function report() {
+  if (results.length === 0) return;
+  const total = results.reduce((n, r) => n + r.ms, 0);
+  const peak = results.reduce((n, r) => Math.max(n, r.peakKb ?? 0), 0);
+  const rows = [...results].sort((a, b) => b.ms - a.ms);
+  console.log('\n==== suite cost (slowest first) ====');
+  console.log(`${'suite'.padEnd(22)}${'db'.padEnd(8)}${'seconds'.padStart(8)}${'peak MB'.padStart(10)}`);
+  for (const r of rows) {
+    const mb = r.peakKb == null ? '     n/a' : (r.peakKb / 1024).toFixed(0).padStart(8);
+    console.log(`${r.name.padEnd(22)}${r.db.padEnd(8)}${(r.ms / 1000).toFixed(1).padStart(8)}${mb.padStart(10)}`);
+  }
+  console.log(
+    `\n${'TOTAL'.padEnd(22)}${''.padEnd(8)}${(total / 1000).toFixed(1).padStart(8)}` +
+      `${(peak ? (peak / 1024).toFixed(0) : 'n/a').padStart(10)}  (peak is the highest single sample, not a sum)`
+  );
+  if (peak === 0) console.log('  (memory not sampled: /proc is Linux-only)');
+}
+
 try {
-  // Migrations (Item 4) — fresh scratch DB matches current; idempotent; reversible,
-  // including every down step on a seeded database.
-  run('npm run verify:migrations');
-
-  // Backups — no Docker; a failed dump leaves no file; restore refuses an invalid
-  // backup before dropping; backup:verify passes end to end and cleans up.
-  run('npm run verify:backups');
-
-  // Operational readiness: liveness/readiness probes, draining on SIGTERM, and
-  // production refusing a placeholder secret.
-  run('npm run verify:ops');
-
-  // Stage 1 — free-play loop (gating irrelevant).
-  run('npm run db:seed');
-  run('npm run verify');
-
-  // Stage 3 — the harness sets gating OFF for itself.
-  run('npm run db:seed');
-  run('npm run verify:stage3');
-
-  // Stage 5 — the harness sets gating ON for itself.
-  run('npm run db:seed');
-  run('npm run verify:stage5');
-
-  // Auth (Item 1) — role/ownership enforcement.
-  run('npm run db:seed');
-  run('npm run verify:auth');
-
-  // Staff login — username/password → signed session cookie, /api/me, logout.
-  run('npm run db:seed');
-  run('npm run verify:staff-auth');
-
-  // API surface adjustments — dev/login-as sets the real session cookie, and
-  // list endpoints return a uniform { items } envelope.
-  run('npm run db:seed');
-  run('npm run verify:api-shape');
-
-  // Instructor assistance queue — list/detail/acknowledge/resolve, role-gated.
-  run('npm run db:seed');
-  run('npm run verify:assistance');
-
-  // Mission review — a student reviews their own completed assignment.
-  run('npm run db:seed');
-  run('npm run verify:review');
-
-  // CSRF — double-submit token issue + enforcement (in-process; no server/DB).
-  run('npm run verify:csrf');
-
-  // Login rate limit — 5 failures/username/15min → 429, no existence leak.
-  // (Resets the in-memory limiter at the end so later logins are unaffected.)
-  run('npm run verify:login-ratelimit');
-
-  // Session cookie flags — HttpOnly / SameSite / Secure policy across envs.
-  run('npm run verify:cookie-flags');
-
-  // Logging (Item 2) — request id, error shape, redaction. No reseed needed.
-  run('npm run verify:logging');
-
-  // Validation (Item 3) — zod at the boundary, unified error shape.
-  run('npm run db:seed');
-  run('npm run verify:validation');
-
-  // Config validation (Item 6) — refuses to start on bad env.
-  run('npm run verify:config');
-
-  // Production security guard — refuses to boot in production while any staff
-  // account still has the default password. (Reseeds itself at the end.)
-  run('npm run verify:prod-guard');
-
-  // Production fails closed: refused boots, refused destructive commands, server-side session expiry.
-  run('npm run verify:fail-closed');
-
-  // Correctness (Phase 5): outage is 503 not auth; LTI stub 401; idempotency key
-  // bound to its body; answer must be a real option; /quality gated; log levels.
-  run('npm run db:seed');
-  run('npm run verify:correctness');
-
-  // Timezone (Item 7) — UTC storage, SQL time math, per-student streak boundary.
-  run('npm run db:seed');
-  run('npm run verify:timezone');
-
-  // Concurrency (Item 8) — idempotency key + row-lock; no double grade/XP/unlock.
-  run('npm run db:seed');
-  run('npm run verify:concurrency');
-
-  // Pagination (Item 9) — cursor-based list endpoints.
-  run('npm run db:seed');
-  run('npm run verify:pagination');
-
-  // Curriculum selection — position-scoped pools, SQL ceiling, exhaustion ladder,
-  // percent derivation. Sets SELECTION_MODE=curriculum for its own run.
-  run('npm run db:seed');
-  run('npm run verify:curriculum');
-
-  // Stage 2 — offline Python pipeline (independent of the web DB state).
-  if (venvPy) {
-    run(`"${venvPy}" -m pytest -q`, { cwd: join(root, 'pipeline') });
-    // Session-aware ingest → import against the real DB, with the mock LLM.
-    run('npm run db:seed');
-    run('npm run verify:curriculum-pipeline');
-  } else {
-    console.warn(
-      '\n[warn] Stage 2 venv not found (pipeline/.venv). Skipping pytest and the curriculum pipeline suite.'
-    );
+  for (const suite of SUITES) {
+    if (suite.seed) run('npm run db:seed');
+    runMeasured(suite);
   }
 
   // Leave the demo DB pristine.
   run('npm run db:seed');
-
+  report();
   console.log(
     '\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation + Config + Curriculum) ====\x1b[0m'
   );
 } catch (err) {
+  report();
   console.error('\n\x1b[31m==== SUITE FAILED ====\x1b[0m');
   process.exit(1);
 }
