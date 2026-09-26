@@ -306,9 +306,6 @@ jobs:
           AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CID }}
           AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
           MYSQL_CLIENT: mysql
-          # TEMPORARY: the seed that failed case 8 in run 36221120580, pinned to
-          # prove the reseed-invalidation fix. Removed straight after.
-          AUDIT_SHUFFLE_SEED: '1737829159'
         run: |
           # A random seed each run, unless AUDIT_SHUFFLE_SEED pins one — which is
           # how a reported failure gets reproduced instead of waited for.

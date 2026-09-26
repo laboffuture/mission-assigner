@@ -208,6 +208,13 @@ function xpFor(event, difficulty) {
  * case 20 (revision fixture) and case 8 (completed-week fixture). Both passed in
  * file order, where case 45 happens to run later, and failed when a shuffle put
  * the reseed in between.
+ *
+ * This harness is the ONLY one that rebuilds the shared database mid-run while
+ * also caching ids from it, which is why it is the only one that needs this.
+ * Checked across every harness: verify-prod-guard and verify-fail-closed reseed
+ * too but cache nothing beyond pass/fail counters; verify-backups only drops its
+ * own scratch databases; the rest merely document that they expect a fresh seed.
+ * A new cache here must register its reset below.
  */
 const invalidateOnReseed = [];
 

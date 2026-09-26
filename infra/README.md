@@ -29,13 +29,24 @@ The whole stack is one `docker compose` file on one machine:
 | Ports open | 80, 443 | Caddy needs 80 to obtain certificates |
 | DNS | an A record for the site name | LTI requires HTTPS on a real hostname |
 
-**Why 4 GB and not 2.** Measured on the development machine: the full test suite peaks at
-**2.0 GB** across the Node and MySQL processes (MySQL alone 509 MB, the largest Node process
-328 MB). Steady-state serving is much smaller, but a backup with its restore-verification runs
-the database, a temporary server and a dump at the same time — and that is exactly when you do
-not want the kernel choosing what to kill. On 2 GB the margin disappears during backups; on
-4 GB it does not. For reference, the development machine has 16 GB and MySQL was still killed
-three times under memory pressure while other work ran.
+**Why 4 GB and not 2.** Not because of the test suite — that figure was wrong. Measured in CI,
+sampling every Node, Python and tsx process, **the whole suite peaks at 316 MB**. An earlier
+reading of 1.44–2.0 GB was taken on the development machine and counted MySQL, two dev servers
+and a browser alongside the harnesses, so it described that desktop rather than this workload.
+
+The sizing stands on what the SERVER does, which is a different thing:
+
+- **MySQL** is the largest resident process (509 MB measured), and it is resident permanently.
+- **A backup runs three things at once** — the database, a `mysqldump`, and (when verifying)
+  a restore into a second database plus a temporary server reading it. That is the peak, and
+  it is the worst moment for the kernel to start choosing what to kill.
+- **Restore-verification doubles the data** for as long as it runs: a copy of the database
+  exists beside the original.
+
+On 2 GB the margin disappears exactly during a backup; on 4 GB it does not. For reference, the
+development machine has 16 GB and MySQL was still killed several times under memory pressure —
+from everything else running there, which is the argument for the pilot's MySQL living in its
+own container with a named volume rather than beside a desktop's workload.
 
 **Why 40 GB.** Measured growth: **16 KB of database per student per completed week** (a week
 is 8 missions, and that figure includes indexes; the row counts behind it are 8 assignments,
