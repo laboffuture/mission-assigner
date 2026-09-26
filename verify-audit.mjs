@@ -3323,57 +3323,96 @@ await runCase(
   '4.11',
   66,
   'A time band verdict follows the configured minutes, not hardcoded ones',
-  'Six "short" missions each taking 30 minutes are reported as taking longer than the band allows; with TIME_BAND_MINUTES raising short to 45 the same data reads "About right".',
+  'In a band no other attempt in the window uses, six attempts finishing 10 minutes past the band ceiling read "take longer than this band allows"; raising ONLY that band in TIME_BAND_MINUTES makes the same data read "About right", and the other bands are untouched.',
   async (c) => {
     const f = await reportScratch('band');
     try {
-      const missionId = await f.mission({ timeBand: 'short' });
-      for (let i = 0; i < 6; i++) {
-        const sid = await f.student();
-        await f.grade(missionId, sid, { pass: true, seconds: 30 * 60 });
-      }
+      // Pick a band nothing else has used. The first version of this case hard-coded
+      // "short" and asserted the verdict for the whole cohort's short attempts: it
+      // passed in file order and failed under --shuffle (seed 1557339069), because
+      // by then other cases had filled the short band with two-second submissions
+      // and the median landed back inside the range. The band this case owns has to
+      // be one it is the only contributor to, and the report itself says which.
+      const bands = cfg.timeBandMinutes();
+      const order = ['short', 'medium', 'long', 'heavy'];
+      const opening = await rep.getPilotReport();
+      const used = new Set(
+        rowsOf(opening, 'time_bands')
+          .filter((r) => Number(r.attempts) > 0)
+          .map((r) => String(r.band))
+      );
+      const band = order.find((b) => !used.has(b));
+      if (!band) return c.notTested(`every time band already has attempts in the window (${[...used].join(', ')})`);
+      c.note(`using the "${band}" band, which has no other attempts in the window`);
 
+      const ceiling = bands[band];
+      const minutes = ceiling + 10;
+      const missionId = await f.mission({ timeBand: band });
+      for (let i = 0; i < 6; i++) await f.grade(missionId, await f.student(), { pass: true, seconds: minutes * 60 });
+
+      const rowFor = (r, b) => rowsOf(r, 'time_bands').find((x) => x.band === b);
       const before = await rep.getPilotReport();
-      const shortRow = (r) => rowsOf(r, 'time_bands').find((x) => x.band === 'short');
       c.check(
-        '30 minutes in a "short" band is flagged as too slow',
-        shortRow(before)?.verdict === 'Students take longer than this band allows',
-        `(${shortRow(before)?.verdict})`
+        `${minutes} min in a "${band}" band (ceiling ${ceiling}) is flagged as too slow`,
+        rowFor(before, band)?.verdict === 'Students take longer than this band allows',
+        `(${rowFor(before, band)?.verdict})`
       );
-      c.check('the expected range is stated', shortRow(before)?.expected === '0–10 min', `(${shortRow(before)?.expected})`);
+      c.check('the six attempts are the only ones counted', rowFor(before, band)?.attempts === 6, `(${rowFor(before, band)?.attempts})`);
       c.check(
-        'and it reaches "what needs attention"',
-        before.headline.some((h) => h.includes('"short" missions')),
-        `(${before.headline.join(' | ').slice(0, 160)})`
+        'and it reaches "what needs attention" naming the band',
+        before.headline.some((h) => h.includes(`"${band}" missions are expected to take`)),
+        `(${before.headline.join(' | ').slice(0, 200)})`
       );
 
-      cfg.setTimeBandMinutes({ short: 45, medium: 60, long: 90, heavy: 120 });
+      // Raise ONLY this band's ceiling past what students actually took; later
+      // bands move just enough to stay increasing, earlier ones not at all — so
+      // this band's lower bound is exactly what it was.
+      const widened = { ...bands };
+      widened[band] = minutes + 20;
+      for (let i = order.indexOf(band) + 1; i < order.length; i++) {
+        widened[order[i]] = Math.max(bands[order[i]], widened[order[i - 1]] + 15);
+      }
+      cfg.setTimeBandMinutes(widened);
       try {
         const after = await rep.getPilotReport();
         c.check(
           'the SAME data reads "About right" once the band is widened',
-          shortRow(after)?.verdict === 'About right',
-          `(${shortRow(after)?.verdict})`
+          rowFor(after, band)?.verdict === 'About right',
+          `(${rowFor(after, band)?.verdict})`
         );
-        c.check('the new range is shown', shortRow(after)?.expected === '0–45 min', `(${shortRow(after)?.expected})`);
         c.check(
-          'and the flag is gone',
-          !after.headline.some((h) => h.includes('"short" missions')),
-          `(${after.headline.join(' | ').slice(0, 160)})`
+          'the new ceiling is shown to the reader',
+          String(rowFor(after, band)?.expected).endsWith(`${widened[band]} min`),
+          `(${rowFor(after, band)?.expected})`
+        );
+        c.check(
+          'the flag is gone',
+          !after.headline.some((h) => h.includes(`"${band}" missions are expected to take`)),
+          `(${after.headline.join(' | ').slice(0, 200)})`
+        );
+        const earlier = order.slice(0, order.indexOf(band));
+        c.check(
+          'the bands below it are unchanged',
+          earlier.every((b) => rowFor(after, b)?.expected === rowFor(before, b)?.expected),
+          `(${earlier.map((b) => `${b}: ${rowFor(before, b)?.expected} -> ${rowFor(after, b)?.expected}`).join('; ')})`
         );
       } finally {
         cfg.setTimeBandMinutes(null);
       }
-      c.check('bands must increase', (() => {
-        try {
-          cfg.setTimeBandMinutes({ short: 30, medium: 10, long: 45, heavy: 90 });
-          return false;
-        } catch {
-          return true;
-        } finally {
-          cfg.setTimeBandMinutes(null);
-        }
-      })());
+
+      c.check(
+        'a set of bands that does not increase is refused',
+        (() => {
+          try {
+            cfg.setTimeBandMinutes({ short: 30, medium: 10, long: 45, heavy: 90 });
+            return false;
+          } catch {
+            return true;
+          } finally {
+            cfg.setTimeBandMinutes(null);
+          }
+        })()
+      );
     } finally {
       await f.cleanup();
     }
@@ -3463,8 +3502,20 @@ await runCase(
         `(${week?.graded} > ${week?.submitted})`
       );
       const fb = section(r, 'feedback');
-      c.check('the feedback answer is aggregated per mission', rowsOf(r, 'feedback').some((x) => x.mission_id === missionId) || Number(mine.graded) < 5,
-        `(the mission needs 5 attempts to appear; it has ${mine.graded})`);
+      // One student answered, on a mission with only two attempts. The table is
+      // driven by the ANSWERS, so it says so: the first version of this section
+      // was driven by getMissionQuality, which knows nothing below five attempts,
+      // and told the reader "No student has answered the difficulty question" while
+      // this row existed.
+      const fbRow = rowsOf(r, 'feedback').find((x) => x.mission_id === missionId);
+      c.check('the one answer is in the table', !!fbRow, `(rows ${rowsOf(r, 'feedback').length})`);
+      c.check('counted as one answer', fbRow?.answers === 1, `(${fbRow?.answers})`);
+      c.check('and it was "too hard"', fbRow?.too_hard === 1 && fbRow?.about_right === 0, `(${JSON.stringify(fbRow)})`);
+      c.check(
+        'but "students said" stays blank below five attempts',
+        fbRow?.students_said == null,
+        `(${fbRow?.students_said})`
+      );
       c.check('the feedback rate is stated as a fraction of what was asked', /gave it on \d+ of them/.test(fb?.explainer ?? ''), `(${(fb?.explainer ?? '').slice(0, 160)})`);
     } finally {
       await f.cleanup();

@@ -103,9 +103,14 @@ function duration(seconds: number | null): string | null {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-function median(nums: number[]): number | null {
-  if (nums.length === 0) return null;
-  const s = [...nums].sort((a, b) => a - b);
+/** Sorted ascending, so the median and both ends come from one pass. */
+function sortedCopy(nums: number[]): number[] {
+  return [...nums].sort((a, b) => a - b);
+}
+
+/** Median of an ALREADY SORTED list. */
+function medianOfSorted(s: number[]): number | null {
+  if (s.length === 0) return null;
   const mid = Math.floor(s.length / 2);
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
@@ -462,19 +467,20 @@ async function feedbackSection(from: string, quality: MissionQualityRow[]): Prom
     [from]
   );
   const [spread] = await pool.query<any[]>(
-    `SELECT a.mission_id, fr.answer_value AS answer, COUNT(*) AS n
+    `SELECT a.mission_id, m.title, fr.answer_value AS answer, COUNT(*) AS n
        FROM feedback_responses fr
        JOIN assignments a ON a.id = fr.assignment_id
+       JOIN missions m    ON m.id = a.mission_id
       WHERE fr.question_key = 'perceived_difficulty' AND fr.created_at >= ?
-      GROUP BY a.mission_id, fr.answer_value`,
+      GROUP BY a.mission_id, m.title, fr.answer_value`,
     [from]
   );
 
-  const counts = new Map<number, Record<string, number>>();
+  const counts = new Map<number, { title: string; answers: Record<string, number> }>();
   for (const r of spread) {
     const mid = asNumber(r.mission_id);
-    const row = counts.get(mid) ?? {};
-    row[String(r.answer)] = asNumber(r.n);
+    const row = counts.get(mid) ?? { title: String(r.title), answers: {} };
+    row.answers[String(r.answer)] = asNumber(r.n);
     counts.set(mid, row);
   }
 
@@ -488,28 +494,24 @@ async function feedbackSection(from: string, quality: MissionQualityRow[]): Prom
     );
   }
 
-  const out = quality
-    .map((r) => {
-      const c = counts.get(r.mission_id) ?? {};
-      const tooHard = c['Too hard'] ?? 0;
-      const tooEasy = c['Too easy'] ?? 0;
-      const aboutRight = c['About right'] ?? 0;
-      const total = tooHard + tooEasy + aboutRight;
+  // The median lives in getMissionQuality; this only looks it up.
+  const medianSaid = new Map(quality.map((r) => [r.mission_id, r.median_perceived_difficulty]));
+  const out = [...counts.entries()]
+    .map(([missionId, { title, answers }]) => {
+      const tooHard = answers['Too hard'] ?? 0;
+      const tooEasy = answers['Too easy'] ?? 0;
+      const aboutRight = answers['About right'] ?? 0;
       return {
-        mission: r.title,
-        mission_id: r.mission_id,
-        attempts: r.attempts,
-        answers: total,
-        students_said: r.median_perceived_difficulty ?? null,
+        mission: title,
+        mission_id: missionId,
+        answers: tooHard + tooEasy + aboutRight,
+        students_said: medianSaid.get(missionId) ?? null,
         too_easy: tooEasy,
         about_right: aboutRight,
         too_hard: tooHard,
-        _total: total,
       };
     })
-    .filter((r) => r._total > 0)
-    .sort((a, b) => b.too_hard - a.too_hard || a.mission_id - b.mission_id)
-    .map(({ _total, ...r }) => r);
+    .sort((a, b) => b.too_hard - a.too_hard || a.mission_id - b.mission_id);
 
   return {
     key: 'feedback',
@@ -519,7 +521,9 @@ async function feedbackSection(from: string, quality: MissionQualityRow[]): Prom
       `Students were asked for feedback on ${asked} graded mission${asked === 1 ? '' : 's'} and gave it on ` +
       `${complete} of them — ${pct(complete, asked) ?? 'no rate yet'}. The table is what they said about ` +
       'difficulty, mission by mission, hardest-feeling first. "Students said" is the middle answer of all ' +
-      'of them, which is steadier than an average when there are only a handful.',
+      `of them, which is steadier than an average when there are only a handful; it is left blank until a ` +
+      `mission has ${MIN_ATTEMPTS} attempts, because below that it says more about who answered than about ` +
+      'the mission.',
     columns: [
       { key: 'mission', label: 'Mission' },
       { key: 'answers', label: 'Answers', numeric: true },
@@ -557,10 +561,12 @@ async function timeBandSection(from: string): Promise<ReportSection> {
   const flags: string[] = [];
   const out: Record<string, ReportValue>[] = [];
   order.forEach((band, i) => {
-    const list = samples.get(band) ?? [];
+    // Sorted once: Math.min(...list) spreads every attempt onto the call stack
+    // and blows it somewhere around a hundred thousand of them.
+    const list = sortedCopy(samples.get(band) ?? []);
     const lowerMin = i === 0 ? 0 : bands[order[i - 1]];
     const upperMin = bands[band];
-    const med = median(list);
+    const med = medianOfSorted(list);
     let verdict: string;
     if (list.length < MIN_SAMPLES) verdict = 'Not enough attempts to say';
     else if (med! < lowerMin * 60) verdict = 'Students finish quicker than this band expects';
@@ -577,8 +583,8 @@ async function timeBandSection(from: string): Promise<ReportSection> {
       expected: `${lowerMin}–${upperMin} min`,
       attempts: list.length,
       typical_time: duration(med),
-      quickest: duration(list.length ? Math.min(...list) : null),
-      slowest: duration(list.length ? Math.max(...list) : null),
+      quickest: duration(list.length ? list[0] : null),
+      slowest: duration(list.length ? list[list.length - 1] : null),
       verdict,
     });
   });
