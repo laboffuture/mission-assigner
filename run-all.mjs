@@ -207,8 +207,13 @@ async function runMeasured(suite) {
  * server on :3000 are in here. Ports do not collide either — csrf binds an
  * ephemeral port, backups uses :3999, and migrations, config and pytest bind
  * nothing.
+ *
+ * Two at a time, not three. Three saved 28s of a 178s job and took the suite's
+ * peak memory from 316MB to 1265MB - four concurrent harnesses each spawning
+ * servers - and memory headroom is what has actually been killing processes
+ * here. Override with SUITE_POOL if a machine can afford more.
  */
-function startIsolatedPool(suites, concurrency = 3) {
+function startIsolatedPool(suites, concurrency = Number(process.env.SUITE_POOL) || 2) {
   const queue = [...suites];
   const failures = [];
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {

@@ -311,6 +311,10 @@ jobs:
           # how a reported failure gets reproduced instead of waited for.
           SEED="${AUDIT_SHUFFLE_SEED:-$RANDOM$RANDOM}"
           echo "shuffle seed: $SEED  (reproduce with: npm run verify:audit -- --shuffle=$SEED)"
+          # Also as an annotation: on a PASSING run the seed exists only in the
+          # job log, which needs repository-admin rights to read - so "the audit
+          # passed shuffled" could not be tied to which order it passed in.
+          echo "::notice title=Audit shuffle seed::$SEED (reproduce with AUDIT_SHUFFLE_SEED=$SEED)"
           if ! npm run verify:audit -- --shuffle=$SEED; then
             echo "::error title=Audit (shuffled)::the audit failed in shuffled order with seed $SEED"
             exit 1
