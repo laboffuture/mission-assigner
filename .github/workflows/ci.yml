@@ -9,7 +9,10 @@ on:
 #   api         - root tree: typecheck, lint, format, check:tokens, migrations and
 #                 the whole regression suite (verify:all, incl. pytest).
 #   web-static  - web tree: typecheck, lint, format, check:tokens, next build.
-#   e2e         - the full Playwright suite (journeys across every id length, a11y).
+#   e2e         - the full Playwright suite (journeys across every id length, a11y),
+#                 sharded, on chromium.
+#   e2e-crossbrowser
+#               - the same suite on webkit, an iPad and a phone. Also blocking.
 #   audit       - the audit harness (verify-audit.mjs), in file order and then shuffled.
 # Every job fails on any failure; nothing here is allowed to be advisory.
 
@@ -241,19 +244,21 @@ jobs:
         if: failure()
         run: cat /tmp/server.log /tmp/web.log || true
 
-  # WebKit, an iPad and a phone. Reporting only, ON PURPOSE: a difference here
-  # is a question about the product (which behaviour is right on Safari?), not a
-  # broken commit, and it is being answered separately. Failures are NOT hidden -
-  # every one becomes an ::error annotation, readable without repository-admin
-  # rights, and the report is uploaded. Delete the two continue-on-error lines to
-  # make it blocking once the open differences are settled.
+  # WebKit, an iPad and a phone. BLOCKING, like the chromium job.
+  #
+  # It was reporting-only while one difference was open - the theme cookie WebKit
+  # would not send, which was a question about what the product should do on
+  # Safari rather than a broken commit. The theme now travels in the session and
+  # all three projects match chromium, so a difference here is a regression and is
+  # treated as one. Failures also become ::error annotations, readable without
+  # repository-admin rights, and the report is uploaded.
   e2e-crossbrowser:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         project: [webkit, ipad, phone]
-    name: e2e (${{ matrix.project }}, reporting only)
+    name: e2e (${{ matrix.project }})
     services:
       mysql:
         image: mysql:8
@@ -313,23 +318,24 @@ jobs:
 
       - name: Playwright (${{ matrix.project }})
         id: cross
-        continue-on-error: true
         working-directory: web
         run: npx playwright test --project=${{ matrix.project }}
 
-      # The job stays green; the news does not go quiet. An ::error annotation is
-      # visible on the run summary to anyone, which a job log is not.
+      # Which engine broke, as an annotation: visible on the run summary to
+      # anyone, which a job log is not. `always()` is load-bearing on all three of
+      # these steps - without a status function in the expression, GitHub adds an
+      # implicit success() and skips the step on the failure it exists to explain.
       - name: Say so on the run
         if: always()
         run: |
           if [ "${{ steps.cross.outcome }}" = "success" ]; then
             echo "::notice title=Cross-browser::${{ matrix.project }} matches chromium"
           else
-            echo "::error title=Cross-browser difference::${{ matrix.project }} fails a test that passes on chromium — see the per-test annotations above and the uploaded report. Reporting only: this did not fail the build."
+            echo "::error title=Cross-browser difference::${{ matrix.project }} fails a test that passes on chromium — see the per-test annotations above and the uploaded report."
           fi
 
       - name: Playwright report
-        if: steps.cross.outcome != 'success'
+        if: always() && steps.cross.outcome != 'success'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ matrix.project }}
@@ -339,7 +345,7 @@ jobs:
           retention-days: 7
 
       - name: Logs
-        if: steps.cross.outcome != 'success'
+        if: always() && steps.cross.outcome != 'success'
         run: cat /tmp/server.log /tmp/web.log || true
 
   audit:
