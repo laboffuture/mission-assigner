@@ -51,7 +51,7 @@ function Table({ section }: { section: ReportSection }) {
                       c.numeric ? 'whitespace-nowrap text-right' : 'text-left'
                     }`}
                   >
-                    {v == null || v === '' ? '–' : v}
+                    {v == null || v === '' ? '—' : v}
                   </td>
                 );
               })}
