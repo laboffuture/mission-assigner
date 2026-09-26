@@ -8,7 +8,7 @@
 //
 // Requires: MySQL up, and the dev server running on :3000 WITH ENABLE_TEST_HOOKS=1.
 // Run:  npm run verify:all
-import { execSync, spawnSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -128,10 +128,19 @@ function rssTotalKb() {
 
 const results = [];
 
+// A harness that leaks does not get to take the machine with it. 640MB is
+// generous: the whole suite peaks around 320MB across every process, so this
+// only ever bites a runaway. Override with SUITE_HEAP_MB.
+const HEAP_MB = Number(process.env.SUITE_HEAP_MB) || 640;
+const childEnv = {
+  ...process.env,
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=${HEAP_MB}`.trim(),
+};
+
 function run(cmd, opts = {}) {
   console.log(`\n\x1b[36m$ ${cmd}\x1b[0m`);
   try {
-    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root });
+    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root, env: childEnv });
   } catch (err) {
     // In CI the job log needs repository-admin rights to read, so a failure
     // visible only there is invisible to everyone else. Name the suite in an
@@ -139,6 +148,26 @@ function run(cmd, opts = {}) {
     if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
     throw err;
   }
+}
+
+/**
+ * Run a command without blocking the event loop, buffering its output so two
+ * concurrent suites cannot interleave into an unreadable mess. The buffer is
+ * printed when the suite finishes, under its own heading.
+ */
+function runAsync(suite) {
+  return new Promise((resolve) => {
+    const child = spawn(suite.cmd, {
+      cwd: suite.cwd ?? root,
+      env: childEnv,
+      shell: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => resolve({ code, out }));
+  });
 }
 
 /** Run one suite, recording how long it took and how much memory it cost. */
@@ -159,6 +188,33 @@ function runMeasured(suite) {
     if (sampler) clearInterval(sampler);
     results.push({ name: suite.name, db: suite.db, ms: Date.now() - started, peakKb });
   }
+}
+
+/**
+ * Run the isolated suites concurrently, alongside whatever the main thread is
+ * doing. "Isolated" is not a guess: each suite is labelled by what it touches
+ * (see SUITES), and only those with no claim on the shared database or the live
+ * server on :3000 are in here. Ports do not collide either — csrf binds an
+ * ephemeral port, backups uses :3999, and migrations, config and pytest bind
+ * nothing.
+ */
+function startIsolatedPool(suites, concurrency = 3) {
+  const queue = [...suites];
+  const failures = [];
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    for (let suite = queue.shift(); suite; suite = queue.shift()) {
+      const started = Date.now();
+      const { code, out } = await runAsync(suite);
+      results.push({ name: suite.name, db: suite.db, ms: Date.now() - started, peakKb: null, parallel: true });
+      console.log(`\n\x1b[36m$ ${suite.cmd}\x1b[0m  (ran in parallel)`);
+      process.stdout.write(out.endsWith('\n') ? out : out + '\n');
+      if (code !== 0) {
+        failures.push(suite.name);
+        if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${suite.cmd}`);
+      }
+    }
+  });
+  return Promise.all(workers).then(() => failures);
 }
 
 function report() {
@@ -195,13 +251,37 @@ function report() {
 }
 
 try {
-  for (const suite of SUITES) {
-    if (suite.seed) run('npm run db:seed');
+  // The isolated suites start immediately and run beside the serial chain; the
+  // shared-database ones cannot, because each is preceded by a reseed that would
+  // pull the database out from under anything else using it.
+  const isolated = SUITES.filter((s) => s.db !== 'shared');
+  const serial = SUITES.filter((s) => s.db === 'shared');
+  const pool = startIsolatedPool(isolated);
+
+  let seedMs = 0;
+  let seeds = 0;
+  for (const suite of serial) {
+    if (suite.seed) {
+      const t = Date.now();
+      run('npm run db:seed');
+      seedMs += Date.now() - t;
+      seeds++;
+    }
     runMeasured(suite);
   }
 
+  const poolFailures = await pool;
+
   // Leave the demo DB pristine.
+  const t = Date.now();
   run('npm run db:seed');
+  seedMs += Date.now() - t;
+  seeds++;
+  results.push({ name: `(${seeds} reseeds)`, db: 'shared', ms: seedMs, peakKb: null, seedRow: true });
+
+  if (poolFailures.length) {
+    throw new Error(`parallel suite(s) failed: ${poolFailures.join(', ')}`);
+  }
   report();
   console.log(
     '\n\x1b[32m==== ALL SUITES PASSED (Migrations + Stage 1 + 2 + 3 + 5 + Auth + Logging + Validation + Config + Curriculum) ====\x1b[0m'
