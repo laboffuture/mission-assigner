@@ -297,10 +297,6 @@ jobs:
           AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CID }}
           AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
           MYSQL_CLIENT: mysql
-          # TEMPORARY: pinned to reproduce the order dependency this step found
-          # in run 36134412014. Remove once case 20 is fixed, so the step goes
-          # back to a fresh seed every run.
-          AUDIT_SHUFFLE_SEED: '2349910904'
         run: |
           # A random seed each run, unless AUDIT_SHUFFLE_SEED pins one — which is
           # how a reported failure gets reproduced instead of waited for.
