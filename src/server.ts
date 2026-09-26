@@ -181,7 +181,8 @@ if (getAuthProvider().mode === 'dev' && !isProduction()) {
       const [rows] = await pool.query<any[]>(`SELECT id, display_name, role FROM students WHERE id = ?`, [studentId]);
       const u = rows[0];
       if (!u) return sendError(req, res, 404, 'not_found', 'no such user');
-      issueSession(req, Number(u.id));
+      // The theme rides in the session exactly as the LTI launch will send it.
+      issueSession(req, Number(u.id), req.valid!.body.theme);
       rlog(req).warn({ userId: Number(u.id), role: u.role }, 'DEV login-as (no password) — insecure, dev only');
       res.json({ id: Number(u.id), display_name: u.display_name, role: u.role });
     } catch (err) {

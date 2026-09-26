@@ -32,6 +32,25 @@ const DEV_SECRET = 'dev-insecure-session-secret-change-me';
 
 export type SameSite = 'lax' | 'strict' | 'none';
 
+/**
+ * The LMS themes. The session carries which one the learner is using, because
+ * the LMS tells an LTI tool that at launch.
+ *
+ * It used to be a cookie of its own, set SameSite=None so it would survive inside
+ * the LMS's cross-site iframe. That cookie does not work: WebKit refuses to send
+ * a Secure cookie to an http origin at all (so every theme test failed on Safari
+ * and iPad), and Safari blocks third-party cookies in an iframe by default, so it
+ * would not have survived in the LMS either. The theme belongs to the session we
+ * already issue — one cookie to get right in Safari instead of two.
+ */
+export const THEMES = ['nebula', 'horizon'] as const;
+export type Theme = (typeof THEMES)[number];
+
+/** Narrow an untrusted value to a theme, or null. Anything odd falls back. */
+export function asTheme(value: unknown): Theme | null {
+  return typeof value === 'string' && (THEMES as readonly string[]).includes(value) ? (value as Theme) : null;
+}
+
 export interface CookieFlags {
   httpOnly: boolean;
   sameSite: SameSite;
@@ -79,9 +98,20 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 /** Tolerated clock difference for an iat slightly ahead of this server. */
 const CLOCK_SKEW_SECONDS = 60;
 
-/** Start a session for `uid`. The ONLY way a session should be created. */
-export function issueSession(req: Request, uid: number): void {
+/**
+ * Start a session for `uid`. The ONLY way a session should be created.
+ *
+ * `theme` is the LMS theme the learner is using. When the LTI launch lands it
+ * passes the launch's custom parameter through here, which is why it is a
+ * parameter of issuing rather than something set afterwards: the first HTML the
+ * learner is served is then already in the right theme, with no second request
+ * and no cookie of its own. Until then /api/dev/login-as carries it, which is
+ * the same session path the launch will use.
+ */
+export function issueSession(req: Request, uid: number, theme?: Theme | null): void {
   req.session = { uid, iat: nowSeconds() };
+  const valid = asTheme(theme);
+  if (valid) req.session.theme = valid;
 }
 
 /**
@@ -129,6 +159,8 @@ declare global {
       uid?: number;
       /** Issued-at, epoch seconds. Sessions without one are rejected. */
       iat?: number;
+      /** The LMS theme from the launch. Cosmetic: never used for authorisation. */
+      theme?: 'nebula' | 'horizon';
     }
   }
 }

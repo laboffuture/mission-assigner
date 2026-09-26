@@ -5,7 +5,7 @@ import { logger } from './logger.js';
 import { sendError, sendServerError } from './httpError.js';
 import { requireAuth, STAFF_ROLES, type Role } from './auth.js';
 import { isRateLimited, retryAfterSeconds, recordFailure, clearAttempts } from './rateLimit.js';
-import { issueSession } from './session.js';
+import { asTheme, issueSession } from './session.js';
 
 /**
  * Staff authentication routes (username + password → signed session cookie).
@@ -70,7 +70,15 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const [rows] = await pool.query<any[]>(`SELECT id, display_name, role FROM students WHERE id = ?`, [auth.userId]);
       const u = rows[0];
-      res.json({ id: auth.userId, role: auth.role, display_name: u?.display_name ?? null });
+      // theme: the web tier renders <html data-lof-theme> from this, so the first
+      // paint is already correct. Express stays the only thing that reads the
+      // session cookie — the web tier never decodes it.
+      res.json({
+        id: auth.userId,
+        role: auth.role,
+        display_name: u?.display_name ?? null,
+        theme: asTheme(req.session?.theme),
+      });
     } catch (err) {
       sendServerError(req, res, err, 'failed to load current user');
     }

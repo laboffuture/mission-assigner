@@ -544,11 +544,34 @@ iframe**, so it deliberately does not look like a site of its own.
 the page content (`components/PageNav.tsx`) as tabs, so a student still moves between the week
 board and their progress without one. Covered by `web/e2e/navigation.spec.ts`.
 
-**Theme.** The LMS tells us which theme the learner uses. `middleware.ts` accepts
-`?theme=nebula|horizon` on any URL, stores it in the `lof_theme` cookie, and `app/layout.tsx`
-renders `<html data-lof-theme>` on the SERVER — so the first paint is already correct and there
-is no flash of the wrong theme. Nebula (their default) when nothing is given. `?theme=horizon`
-is also how the tests and a reviewer switch themes by hand.
+**Theme — it travels in the session.** The LMS tells an LTI tool which theme the learner uses,
+as a launch custom parameter. That value goes into the signed session we already issue
+(`issueSession(req, uid, theme)` in `src/session.ts`), `GET /api/me` reports it, and
+`app/layout.tsx` renders `<html data-lof-theme>` on the SERVER — so the first paint is already
+correct with no flash of the wrong theme and no second request. Nebula (the LMS default) when
+nothing is given.
+
+`?theme=nebula|horizon` on any URL still works and is how the tests and a reviewer switch themes
+by hand: `middleware.ts` passes it to the render as a header and remembers it in a **first-party**
+`lof_theme` cookie so it survives navigation. Resolution order is query → that cookie → the
+session → nebula.
+
+**Why not a cookie of its own.** It was one, `SameSite=None; Secure`, chosen so it would survive
+the LMS's cross-site iframe. It did not work in either direction:
+
+- **WebKit refuses to send a `Secure` cookie to an `http` origin at all**, with no localhost
+  exception (Chromium has one). The theme therefore reverted on Safari and iPad, which is how
+  this was found — `navigation.spec.ts` failed on the WebKit projects and passed on Chromium.
+- **Safari blocks third-party cookies in an iframe by default** (ITP), so it would not have
+  survived the case it was written for either.
+
+The session has to work in both of those places regardless, so the theme rides in it: one cookie
+to get right in Safari instead of two. The session's own third-party status inside the LMS iframe
+is the LTI problem to solve when the launch lands — the Storage Access API or a top-level launch —
+and solving it for the session now covers the theme too.
+
+`web/e2e/navigation.spec.ts` holds this down on every browser project, including that no cookie
+the app needs is `Secure` over http — if the theme ever moves back onto a cookie, that fails.
 
 **Iframe height.** `components/FrameHeightReporter.tsx` posts the document height to the parent
 on mount, on resize and after each route change, so the LMS can size the iframe instead of us

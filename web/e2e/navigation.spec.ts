@@ -54,6 +54,52 @@ test('?theme=horizon renders horizon from the server, and nebula is the default'
   await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(7, 11, 37)');
 });
 
+/**
+ * The theme the LMS chose travels in the SESSION, not in a cookie of its own.
+ *
+ * This is the WebKit fix. The old `lof_theme` cookie was SameSite=None; Secure so
+ * it would survive the LMS's cross-site iframe: WebKit will not send a Secure
+ * cookie to an http origin at all, so the theme silently reverted on Safari and
+ * iPad, and Safari blocks third-party cookies in an iframe anyway, so it would
+ * not have survived the case it was written for either. The session already has
+ * to work in both places, so the theme rides in it.
+ *
+ * Runs on every project, which is the point: it is the engine difference that
+ * started this.
+ */
+test('the theme comes from the session, with no theme cookie and nothing Secure', async ({ page, context }) => {
+  await context.clearCookies();
+  await loginAs(page, 9, { theme: 'horizon' });
+
+  // The ONLY source of the theme here: no ?theme= in any URL below, and no
+  // lof_theme cookie in the jar.
+  const names = (await context.cookies()).map((c) => c.name);
+  expect(names).not.toContain('lof_theme');
+
+  await page.goto('/week');
+  await expect(page.locator('html')).toHaveAttribute('data-lof-theme', 'horizon');
+  await expect
+    .poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor))
+    .toBe('rgb(250, 250, 250)');
+
+  // ...and it survives navigation inside the tool, which is what actually broke.
+  await page.goto('/progress');
+  await expect(page.locator('html')).toHaveAttribute('data-lof-theme', 'horizon');
+  expect((await context.cookies()).map((c) => c.name)).not.toContain('lof_theme');
+
+  // Nothing the app needs is Secure over http, which is exactly what WebKit
+  // refused to send back. If this starts failing, the theme is on a cookie again.
+  const secure = (await context.cookies()).filter((c) => c.secure).map((c) => c.name);
+  expect(secure, `Secure cookies on an http origin: ${secure.join(', ')}`).toEqual([]);
+
+  // A session without a theme falls back to the LMS default rather than the last
+  // learner's theme.
+  await context.clearCookies();
+  await loginAs(page, 9);
+  await page.goto('/week');
+  await expect(page.locator('html')).toHaveAttribute('data-lof-theme', 'nebula');
+});
+
 /** Framed, the app tells the LMS how tall it is; unframed it stays quiet. */
 test('the iframe height message is posted only when framed', async ({ page }) => {
   await page.setContent(

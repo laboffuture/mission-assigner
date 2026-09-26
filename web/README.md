@@ -177,12 +177,106 @@ Cost on this machine, against the dev server: chromium 3.6 min, phone 3.4 min,
 webkit 5.8 min, iPad 8.4 min. Mobile emulation is the expensive part, not the
 engine. Use `--project=chromium` while working and let CI cover the rest.
 
-**CI runs them in two jobs, on purpose.** `e2e` is sharded Chromium and blocks the
-build. `e2e-crossbrowser` runs webkit, ipad and phone and only _reports_ — a
-difference between engines is a question about what the product should do on
-Safari, not a broken commit. Failures are not swallowed: each becomes an `::error`
-annotation on the run (readable without repository-admin rights) and the HTML
-report is uploaded. `npm run check:e2e-projects` keeps the two in step — it fails
+**CI runs them in two jobs.** `e2e` is sharded Chromium; `e2e-crossbrowser` runs
+webkit, ipad and phone. Both block the build. The second was reporting-only while
+the WebKit theme difference below was an open question about what the product
+should do on Safari; that question is answered and the job now fails the build
+like any other. Failures also become `::error` annotations on the run (readable
+without repository-admin rights) and the HTML report is uploaded.
+`npm run check:e2e-projects` keeps the two jobs in step with the config — it fails
+if the config declares a project no CI job runs, or if the blocking job stops
+naming the project it blocks on.
+
+#### The engine difference this found, and the fix
+
+`navigation.spec.ts` "?theme=horizon renders horizon from the server" passed on
+Chromium and failed on WebKit and iPad. It was neither a test bug nor a rendering
+bug: the theme was carried in a `lof_theme` cookie set `SameSite=None; Secure` so
+that it would survive the LMS's cross-site iframe, and **WebKit will not send a
+`Secure` cookie to an `http` origin at all** — no localhost exception, unlike
+Chromium. Verified directly at the time: with `?theme=` in the URL WebKit rendered
+the right theme, and on the next navigation, where the cookie was the only source,
+it fell back and `document.cookie` was empty.
+
+Safari also blocks third-party cookies in an iframe by default, so that cookie
+would not have survived the case it was written for either. The theme now travels
+in the **session** (see "Theme" in the root README): the LTI launch puts the LMS's
+value there, `/api/me` reports it, and the layout renders it. `?theme=` remains as
+the testing override, now on an ordinary first-party cookie.
+
+The spec that caught it passes on all four projects unchanged, and a second test
+asserts the session path with no theme cookie in the jar at all — plus that
+nothing the app needs is `Secure` over http, which is what WebKit refused to send.
+That is why `e2e-crossbrowser` blocks the build rather than reporting.
+
+## Staff screens
+
+Two, both under the same role gating as the API behind them, and both now
+reachable from the tabs at the top of the page (they were URL-only before):
+
+- **`/staff/assistance`** — the instructor assistance queue. Instructor/admin.
+- **`/staff/pilot-report`** — the weekly pilot report. Every staff role, because
+  the SME, management and instructors all read it; a student gets the role
+  refusal, and `/api/pilot-report` answers them `403`.
+
+`PilotReportView` renders the report's SHAPE, not a fixed list of metrics: the
+server sends each section's title, question, explanation, column headings and
+already-formatted rows (see "The weekly pilot report" in the root README). So a
+section added to the report appears on the page with no change here, and the page
+cannot word anything differently from the document that gets emailed. The download
+link points straight at `/api/pilot-report?format=html` rather than re-rendering
+the report in the web tier, for the same reason.
+
+Tables scroll sideways inside their own box on a phone instead of stretching the
+page (audit #34–#37 territory), and the scroll container is keyboard-reachable
+because axe requires that of scrollable regions. Verified: 0 axe violations on
+the report page, and no horizontal page scroll at 393px.
+
+## Tests
+
+```
+npm run typecheck
+npm run check:tokens
+npm run check:fonts   # nothing in web/ may fetch from Google
+npm run check:e2e-projects
+npm run e2e                          # all four browser projects (slow — see below)
+npm run e2e -- --project=chromium    # the quick loop
+```
+
+`e2e/` covers the student flow (week → mission → result → feedback → progress),
+empty states, submit resilience (network-drop retry with a reused
+Idempotency-Key; session-expiry redirect), keyboard-only completion, the staff
+screens (assistance queue; the pilot report and its emailable document), and the
+axe accessibility scans. Specs reseed the DB per file and are scoped to CommonJS
+(`e2e/package.json`) to avoid the Playwright ESM race.
+
+### Four browsers, and the two shapes a student actually holds
+
+Every spec runs on each of these (`playwright.config.ts`):
+
+| project    | engine   | viewport | why it is there                                      |
+| ---------- | -------- | -------- | ---------------------------------------------------- |
+| `chromium` | Chromium | 1280×720 | the reference. CI blocks on this one                 |
+| `webkit`   | WebKit   | 1280×720 | Safari, which no amount of Chromium testing covers   |
+| `ipad`     | WebKit   | 834×1194 | iPad Pro 11, with touch — a lab tablet               |
+| `phone`    | Chromium | 393×851  | Pixel 5, with touch — the narrowest thing we support |
+
+The device projects carry `isMobile` and `hasTouch` from their Playwright device
+descriptors, so clicks become taps and the layout is measured at the real width.
+iPad runs on WebKit because iPads do; the phone runs on Chromium because Android
+does.
+
+Cost on this machine, against the dev server: chromium 3.6 min, phone 3.4 min,
+webkit 5.8 min, iPad 8.4 min. Mobile emulation is the expensive part, not the
+engine. Use `--project=chromium` while working and let CI cover the rest.
+
+**CI runs them in two jobs.** `e2e` is sharded Chromium; `e2e-crossbrowser` runs
+webkit, ipad and phone. Both block the build. The second was reporting-only while
+the WebKit theme difference below was an open question about what the product
+should do on Safari; that question is answered and the job now fails the build
+like any other. Failures also become `::error` annotations on the run (readable
+without repository-admin rights) and the HTML report is uploaded.
+`npm run check:e2e-projects` keeps the two jobs in step with the config — it fails
 if the config declares a project no CI job runs, or if the blocking job stops
 naming the project it blocks on.
 

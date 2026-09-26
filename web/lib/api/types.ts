@@ -14,6 +14,11 @@ export interface Me {
   id: number;
   role: Role;
   display_name: string | null;
+  /**
+   * The LMS theme carried in the session (the LTI launch puts it there). null
+   * when the session has none — the layout then falls back to the LMS default.
+   */
+  theme: 'nebula' | 'horizon' | null;
 }
 
 /** Uniform list envelope for non-paginated lists. */

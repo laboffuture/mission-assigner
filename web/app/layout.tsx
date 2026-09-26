@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import localFont from 'next/font/local';
 // Order matters: their tokens define the --nebula-*/--lof-* variables, ours
 // alias them, globals.css consumes both. Loading theirs second would leave our
@@ -13,7 +13,8 @@ import '../styles/generated/lof-lms-tokens.css';
 import '../styles/tokens.css';
 import './globals.css';
 import { FrameHeightReporter } from '@/components/FrameHeightReporter';
-import { THEME_COOKIE, THEMES, type Theme } from '@/middleware';
+import { THEME_COOKIE, THEME_HEADER, THEMES, type Theme } from '@/middleware';
+import { sessionTheme } from '@/lib/session';
 
 // The three LMS families, from files IN THIS REPO.
 //
@@ -51,12 +52,26 @@ export const metadata: Metadata = {
   description: 'Your weekly missions',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+const asTheme = (v: string | null | undefined): Theme | null => (THEMES.includes(v as Theme) ? (v as Theme) : null);
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
   // Server-rendered theme: the first paint is already correct, so there is no
-  // flash of the default theme before a client script swaps it. Set from
-  // ?theme= by middleware.ts; nebula (the LMS default) otherwise.
-  const asked = cookies().get(THEME_COOKIE)?.value;
-  const theme: Theme = THEMES.includes(asked as Theme) ? (asked as Theme) : 'nebula';
+  // flash of the default theme before a client script swaps it.
+  //
+  // In order:
+  //   1. ?theme= on this request (middleware sets THEME_HEADER) — the override
+  //      used for testing, and the reason the next line exists at all.
+  //   2. the first-party cookie middleware wrote from that same override, so it
+  //      survives navigation while testing.
+  //   3. THE SESSION, which is where the LTI launch puts the LMS's own theme.
+  //      This is the mechanism that works inside the LMS iframe: no second
+  //      cookie for Safari to block as third-party.
+  //   4. nebula, the LMS default.
+  const theme: Theme =
+    asTheme(headers().get(THEME_HEADER)) ??
+    asTheme(cookies().get(THEME_COOKIE)?.value) ??
+    asTheme(await sessionTheme()) ??
+    'nebula';
 
   return (
     <html lang="en" data-lof-theme={theme} className={`${sora.variable} ${inter.variable} ${spaceMono.variable}`}>

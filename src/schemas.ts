@@ -28,6 +28,8 @@ export const resolveAssistanceBody = z.object({
  */
 export const loginAsBody = z.object({
   studentId: z.number('studentId must be a number').int('studentId must be an integer').positive(),
+  // The LMS theme, as the LTI launch will carry it. Optional, and cosmetic.
+  theme: z.enum(['nebula', 'horizon']).optional(),
 });
 
 export const submitBody = z.object({

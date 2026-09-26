@@ -15,8 +15,16 @@ export function seedDb(): void {
  * session cookie lands in the browser context and subsequent navigations are
  * authenticated — the same session path the LTI launch will use.
  */
-export async function loginAs(page: Page, studentId: number): Promise<void> {
-  const res = await page.request.post('/api/dev/login-as', { data: { studentId } });
+export async function loginAs(
+  page: Page,
+  studentId: number,
+  opts: { theme?: 'nebula' | 'horizon' } = {}
+): Promise<void> {
+  // `theme` goes INTO the session, which is where the LTI launch will put the
+  // LMS's own value — the point being that no separate cookie is involved.
+  const data: Record<string, unknown> = { studentId };
+  if (opts.theme) data.theme = opts.theme;
+  const res = await page.request.post('/api/dev/login-as', { data });
   if (!res.ok()) throw new Error(`login-as ${studentId} failed: ${res.status()}`);
 }
 
