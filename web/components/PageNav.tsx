@@ -1,12 +1,31 @@
 import Link from 'next/link';
-import type { Me } from '@/lib/api/types';
+import type { Me, Role } from '@/lib/api/types';
 import { SignOutButton } from './SignOutButton';
 
-type Section = 'week' | 'progress' | 'staff' | null;
+type Section = 'week' | 'progress' | 'staff' | 'assistance' | 'report' | null;
 
-const STUDENT_TABS: { href: string; label: string; section: Section }[] = [
+interface Tab {
+  href: string;
+  label: string;
+  section: Section;
+  /** Roles that may see the tab. Undefined = every staff role. */
+  roles?: readonly Role[];
+}
+
+const STUDENT_TABS: Tab[] = [
   { href: '/week', label: 'This week', section: 'week' },
   { href: '/progress', label: 'Progress', section: 'progress' },
+];
+
+/**
+ * Staff tabs. The assistance queue is an instructor tool (the API refuses other
+ * roles, so advertising it to an SME would be a link to a refusal), while the
+ * pilot report is for every staff role — SME, QC, management and instructors all
+ * read it. Both screens were otherwise reachable only by typing the URL.
+ */
+const STAFF_TABS: Tab[] = [
+  { href: '/staff/assistance', label: 'Assistance queue', section: 'assistance', roles: ['instructor', 'admin'] },
+  { href: '/staff/pilot-report', label: 'Pilot report', section: 'report' },
 ];
 
 /**
@@ -22,7 +41,7 @@ const STUDENT_TABS: { href: string; label: string; section: Section }[] = [
  * underline, so it is not signalled by colour alone.
  */
 export function PageNav({ me, current = null }: { me: Me; current?: Section }) {
-  const tabs = me.role === 'student' ? STUDENT_TABS : [];
+  const tabs = me.role === 'student' ? STUDENT_TABS : STAFF_TABS.filter((t) => !t.roles || t.roles.includes(me.role));
 
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">

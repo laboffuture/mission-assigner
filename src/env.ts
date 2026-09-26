@@ -75,6 +75,20 @@ const EnvSchema = z
     POOL_LOOKBACK_HOURS: z.coerce.number().int().min(0).default(0),
     PERCENT_SCOPE: z.enum(['credit', 'track']).default('credit'),
     REVISION_MIX_PERCENT: z.coerce.number().int().min(0).max(100).default(20),
+    // The weekly pilot report (src/pilotReport.ts). Validated here as well as at
+    // the point of use, so a typo is a refusal to boot rather than a 500 the
+    // first time someone opens the report.
+    REPORT_WEEKS: z.coerce.number().int().min(1).max(104).default(8),
+    REPORT_TIMEZONE: z.string().min(1).default('Asia/Kolkata'),
+    // "short=10,medium=25,long=45,heavy=90" — upper bound of each band, minutes.
+    // Parsed and range-checked in config.ts; the shape is checked here.
+    TIME_BAND_MINUTES: z
+      .string()
+      .regex(
+        /^(short|medium|long|heavy)=\d+(\.\d+)?(,(short|medium|long|heavy)=\d+(\.\d+)?)*$/,
+        'must look like "short=10,medium=25,long=45,heavy=90"'
+      )
+      .optional(),
     // Local MySQL install (no Docker): mysqldump path used by verify:migrations.
     MYSQLDUMP: z.string().optional(),
     SENTRY_DSN: z.union([z.string().url(), z.literal('')]).optional(),

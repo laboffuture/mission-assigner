@@ -43,6 +43,15 @@ export const feedbackBody = z.object({
     .default([]),
 });
 
+/**
+ * The weekly pilot report. `weeks` overrides the configured window; `format=html`
+ * asks for the emailable document instead of the JSON.
+ */
+export const pilotReportQuery = z.object({
+  weeks: posInt.max(104).optional(),
+  format: z.enum(['json', 'html']).optional(),
+});
+
 // Cursor-based pagination (Item 9): opaque cursor OR legacy limit/offset.
 export const listQuery = z.object({
   limit: posInt.max(100).optional(),

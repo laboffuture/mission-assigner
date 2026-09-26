@@ -1,4 +1,4 @@
-// Audit harness — the 62 cases from the full project audit (Part 4).
+// Audit harness — the 69 cases from the full project audit (Part 4).
 //
 // Each case prints its EXPECTED result before it runs, then records one of three
 // states: VERIFIED (ran and passed), FAILED (ran and a sub-check failed), or
@@ -55,6 +55,8 @@ const { publishWeek } = await import('./src/weekPublisher.js');
 const { assignSegment } = await import('./src/segmentation.js');
 const { applyColdStart } = await import('./src/coldstart.js');
 const { computeStreak, computeLongestStreak } = await import('./src/streaks.js');
+const rep = await import('./src/pilotReport.js');
+const repDoc = await import('./src/pilotReportDocument.js');
 
 // ---------------------------------------------------------------- results --
 const ONLY = (process.argv.find((a) => a.startsWith('--only=')) ?? '').slice(7).split(',').filter(Boolean);
@@ -3032,6 +3034,478 @@ await runCase(
       p.cleanup();
       await q(`DROP DATABASE IF EXISTS \`${scratch}\``);
     }
+  }
+);
+
+
+// ================================ 4.11 the weekly pilot report (item 15) ==
+// Every case here builds its OWN track, hours, missions, students and graded
+// attempts, asserts against them, and deletes them again. Nothing is cached
+// between cases and nothing is read from the seed, so the order they run in
+// cannot change the answer.
+
+/** A disposable curriculum + attempts fixture for the report cases. */
+async function reportScratch(tag) {
+  const made = { students: [], missions: [], hours: [], credits: [], tracks: [], assignments: [] };
+  // assignments are unique on (student_id, mission_id, revision_seq): a second
+  // attempt at the same mission is a REVISION, which is how the product records
+  // one too. Numbering them here keeps the fixture faithful instead of colliding.
+  const seqOf = new Map();
+  const nextRev = (studentId, missionId) => {
+    const key = `${studentId}-${missionId}`;
+    const n = seqOf.get(key) ?? 0;
+    seqOf.set(key, n + 1);
+    return n;
+  };
+  const label = `AUD-RPT-${tag}-${++seq}`;
+
+  const api2 = {
+    /** A track with one credit, created inactive so selection can never pick it. */
+    async track() {
+      const t = await q(`INSERT INTO tracks (subject, name, display_order, active) VALUES ('Robotics', ?, 99, 0)`, [
+        `${label} track`,
+      ]);
+      const trackId = Number(t.insertId);
+      made.tracks.push(trackId);
+      const cr = await q(
+        `INSERT INTO credits (track_id, code, name, sequence, total_hours) VALUES (?, 'AUDC', ?, 1, 4)`,
+        [trackId, `${label} credit`]
+      );
+      const creditId = Number(cr.insertId);
+      made.credits.push(creditId);
+      return { trackId, creditId };
+    },
+    async hour(creditId, hourNumber, title = `${label} hour ${hourNumber}`) {
+      const h = await q(`INSERT INTO hours (credit_id, hour_number, title) VALUES (?, ?, ?)`, [
+        creditId,
+        hourNumber,
+        title,
+      ]);
+      const id = Number(h.insertId);
+      made.hours.push(id);
+      return id;
+    },
+    async mission({ hourId = null, difficulty = 1, timeBand = 'short', title = `${label} mission` } = {}) {
+      const m = await q(
+        `INSERT INTO missions (version, subject, title, body, mission_type, grading_mode, difficulty,
+                               age_min, age_max, time_band, answer_key, status, hour_id)
+         VALUES (1, 'Robotics', ?, 'audit fixture body', 'quiz', 'auto', ?, 10, 18, ?, ?, 'live', ?)`,
+        [`${title} #${++seq}`, difficulty, timeBand, JSON.stringify({ correct: 'a', explanation: 'fixture' }), hourId]
+      );
+      const id = Number(m.insertId);
+      made.missions.push(id);
+      return id;
+    },
+    async student() {
+      const r = await q(
+        `INSERT INTO students (display_name, age, subject, current_level, placement_status)
+         VALUES (?, 14, 'Robotics', 1, 'complete')`,
+        [`${label} student ${++seq}`]
+      );
+      const id = Number(r.insertId);
+      made.students.push(id);
+      return id;
+    },
+    /** One graded attempt. Rows are inserted in call order, which is the order the report walks. */
+    async grade(missionId, studentId, { pass = true, seconds = 60, feedback = null, perceived = null } = {}) {
+      const seq0 = nextRev(studentId, missionId);
+      const r = await q(
+        `INSERT INTO assignments
+           (student_id, mission_id, mission_version, level_at_assign, status, score_pct, score_band,
+            assigned_at, submitted_at, graded_at, time_to_submit_seconds, feedback_status,
+            revision_seq, is_revision)
+         VALUES (?, ?, 1, 1, 'graded', ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP(), ?, ?, ?, ?)`,
+        [
+          studentId,
+          missionId,
+          pass ? 100 : 0,
+          pass ? 'pass' : 'fail',
+          seconds,
+          feedback ?? 'not_required',
+          seq0,
+          seq0 > 0 ? 1 : 0,
+        ]
+      );
+      const aid = Number(r.insertId);
+      made.assignments.push(aid);
+      if (perceived) {
+        const qrow = await one(`SELECT id FROM feedback_questions WHERE question_key = 'perceived_difficulty'`);
+        await q(
+          `INSERT INTO feedback_responses (assignment_id, student_id, question_id, question_key, answer_value)
+           VALUES (?, ?, ?, 'perceived_difficulty', ?)`,
+          [aid, studentId, qrow?.id ?? 1, perceived]
+        );
+      }
+      return aid;
+    },
+    /** An assignment that was never graded, for the completion counts. */
+    async assign(missionId, studentId, status) {
+      const seq0 = nextRev(studentId, missionId);
+      const r = await q(
+        `INSERT INTO assignments
+           (student_id, mission_id, mission_version, level_at_assign, status, assigned_at, submitted_at,
+            revision_seq, is_revision)
+         VALUES (?, ?, 1, 1, ?, UTC_TIMESTAMP(), ?, ?, ?)`,
+        [studentId, missionId, status, status === 'submitted' ? new Date() : null, seq0, seq0 > 0 ? 1 : 0]
+      );
+      const aid = Number(r.insertId);
+      made.assignments.push(aid);
+      return aid;
+    },
+    async selectionLog(studentId, { missionId = null, hourId = null, filters = {} }) {
+      await q(
+        `INSERT INTO selection_log (student_id, chosen_mission, candidates, filters_applied, pool_size, chosen_hour_id)
+         VALUES (?, ?, '[]', ?, 1, ?)`,
+        [studentId, missionId, JSON.stringify({ mode: 'curriculum', ...filters }), hourId]
+      );
+    },
+    async cleanup() {
+      if (made.assignments.length) {
+        const ph = made.assignments.map(() => '?').join(',');
+        await q(`DELETE FROM feedback_responses WHERE assignment_id IN (${ph})`, made.assignments);
+        await q(`DELETE FROM attempt_logs WHERE assignment_id IN (${ph})`, made.assignments);
+        await q(`DELETE FROM assignments WHERE id IN (${ph})`, made.assignments);
+      }
+      if (made.students.length) {
+        const ph = made.students.map(() => '?').join(',');
+        await q(`DELETE FROM selection_log WHERE student_id IN (${ph})`, made.students);
+        await q(`DELETE FROM students WHERE id IN (${ph})`, made.students);
+      }
+      if (made.missions.length) {
+        const ph = made.missions.map(() => '?').join(',');
+        await q(`DELETE FROM mission_options WHERE mission_id IN (${ph})`, made.missions);
+        await q(`DELETE FROM missions WHERE id IN (${ph})`, made.missions);
+      }
+      for (const id of made.hours) await q(`DELETE FROM hours WHERE id = ?`, [id]);
+      for (const id of made.credits) await q(`DELETE FROM credits WHERE id = ?`, [id]);
+      for (const id of made.tracks) await q(`DELETE FROM tracks WHERE id = ?`, [id]);
+    },
+  };
+  return api2;
+}
+
+/** The section with this key, or a loud failure — a missing section is the bug. */
+const section = (report, key) => report.sections.find((x) => x.key === key);
+const rowsOf = (report, key) => section(report, key)?.rows ?? [];
+
+await runCase(
+  '4.11',
+  63,
+  'A student failing three in a row on one hour, and single failures spread across others',
+  'The stalls section names the hour with the run (longest run 3, one student stuck) and does NOT name the hour where the same student failed once, passed, then failed once.',
+  async (c) => {
+    const f = await reportScratch('stall');
+    try {
+      const { creditId } = await f.track();
+      const stuckHour = await f.hour(creditId, 1, 'Gears and torque');
+      const fineHour = await f.hour(creditId, 2, 'Sensors');
+      // Three different questions from each hour: a student stuck on an hour is
+      // served other missions from that hour, not the same one three times.
+      const stuckMissions = [];
+      const fineMissions = [];
+      for (let i = 0; i < 3; i++) {
+        stuckMissions.push(await f.mission({ hourId: stuckHour, title: `stuck q${i}` }));
+        fineMissions.push(await f.mission({ hourId: fineHour, title: `fine q${i}` }));
+      }
+      const sid = await f.student();
+
+      // Three consecutive failures on hour 1.
+      for (const m of stuckMissions) await f.grade(m, sid, { pass: false });
+      // fail, pass, fail on hour 2 — never two in a row.
+      await f.grade(fineMissions[0], sid, { pass: false });
+      await f.grade(fineMissions[1], sid, { pass: true });
+      await f.grade(fineMissions[2], sid, { pass: false });
+
+      const r = await rep.getPilotReport();
+      const rows = rowsOf(r, 'stalls');
+      const stuck = rows.find((x) => String(x.hour).includes('Gears and torque'));
+      const fine = rows.find((x) => String(x.hour).includes('Sensors'));
+      c.check('the stalling hour is listed', !!stuck, `(rows: ${rows.map((x) => x.hour).join(' / ') || 'none'})`);
+      c.check('longest run is 3', stuck?.longest_run === 3, `(got ${stuck?.longest_run})`);
+      c.check('one student counted as stuck', stuck?.students_stuck === 1, `(got ${stuck?.students_stuck})`);
+      c.check('fail rate is 100% there', stuck?.fail_rate === '100%', `(got ${stuck?.fail_rate})`);
+      c.check('the hour with no RUN of failures is not listed', !fine, `(got ${JSON.stringify(fine ?? null)})`);
+      c.check(
+        'the hour is named for a reader, not by id',
+        typeof stuck?.hour === 'string' && /hour 1/.test(String(stuck.hour)),
+        `(${stuck?.hour})`
+      );
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  64,
+  'The mis-tagged list is getMissionQuality, not a second opinion',
+  'A mission tagged difficulty 0 that nobody passes appears as observed 4, and every figure in the report row equals the one getMissionQuality reports for the same mission.',
+  async (c) => {
+    const f = await reportScratch('mistag');
+    try {
+      const missionId = await f.mission({ difficulty: 0, title: 'Mis-tagged fixture' });
+      for (let i = 0; i < 6; i++) {
+        const sid = await f.student();
+        await f.grade(missionId, sid, { pass: false, seconds: 300 });
+      }
+
+      const r = await rep.getPilotReport();
+      const row = rowsOf(r, 'mistagged').find((x) => x.mission_id === missionId);
+      const { getMissionQuality } = await import('./src/tracking.js');
+      const [truth] = await getMissionQuality(missionId);
+
+      c.check('the mission is listed as mis-tagged', !!row, `(mission ${missionId})`);
+      c.check('tagged difficulty matches the source', row?.tagged === truth?.tagged_difficulty, `(${row?.tagged})`);
+      c.check('observed difficulty matches the source', row?.observed === truth?.observed_difficulty, `(${row?.observed})`);
+      c.check('observed is 4 — nobody passed', row?.observed === 4, `(got ${row?.observed})`);
+      c.check('attempts match the source', row?.attempts === truth?.attempts, `(${row?.attempts} vs ${truth?.attempts})`);
+      c.check('the verdict says harder, in words', row?.verdict === 'Harder than labelled', `(${row?.verdict})`);
+      c.check('pass rate is a percentage, not a ratio', row?.pass_rate === '0%', `(${row?.pass_rate})`);
+      c.check('typical time is human-readable', row?.typical_time === '5 min', `(${row?.typical_time})`);
+      c.check(
+        'it is named in "what needs attention"',
+        r.headline.some((h) => h.includes('Mis-tagged fixture')),
+        `(${r.headline.length} headlines)`
+      );
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  65,
+  'Thin coverage: an hour with one mission, an hour with none, an hour that is fine',
+  'The hour with 1 mission and the hour with 0 are both listed with the reason spelled out; the hour with 3 missions across 2 difficulties is not listed at all.',
+  async (c) => {
+    const f = await reportScratch('cover');
+    try {
+      const { creditId } = await f.track();
+      const emptyHour = await f.hour(creditId, 1, 'Empty hour');
+      const thinHour = await f.hour(creditId, 2, 'Thin hour');
+      const goodHour = await f.hour(creditId, 3, 'Healthy hour');
+      await f.mission({ hourId: thinHour });
+      await f.mission({ hourId: goodHour, difficulty: 1 });
+      await f.mission({ hourId: goodHour, difficulty: 2 });
+      await f.mission({ hourId: goodHour, difficulty: 3 });
+
+      const r = await rep.getPilotReport();
+      const rows = rowsOf(r, 'coverage');
+      const find = (name) => rows.find((x) => String(x.hour).includes(name));
+      c.check('the empty hour is listed', !!find('Empty hour'));
+      c.check(
+        'and the reason is in plain words',
+        find('Empty hour')?.problem === 'Nothing to give students at all',
+        `(${find('Empty hour')?.problem})`
+      );
+      c.check('the hour with one mission is listed', !!find('Thin hour'));
+      c.check(
+        'with a count, not jargon',
+        String(find('Thin hour')?.problem).startsWith('Only 1 mission'),
+        `(${find('Thin hour')?.problem})`
+      );
+      c.check('the healthy hour is NOT listed', !find('Healthy hour'), `(${JSON.stringify(find('Healthy hour') ?? null)})`);
+      c.check(
+        'the difficulty spread is shown as a range',
+        find('Thin hour')?.difficulties === '1–1',
+        `(${find('Thin hour')?.difficulties})`
+      );
+      void emptyHour;
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  66,
+  'A time band verdict follows the configured minutes, not hardcoded ones',
+  'Six "short" missions each taking 30 minutes are reported as taking longer than the band allows; with TIME_BAND_MINUTES raising short to 45 the same data reads "About right".',
+  async (c) => {
+    const f = await reportScratch('band');
+    try {
+      const missionId = await f.mission({ timeBand: 'short' });
+      for (let i = 0; i < 6; i++) {
+        const sid = await f.student();
+        await f.grade(missionId, sid, { pass: true, seconds: 30 * 60 });
+      }
+
+      const before = await rep.getPilotReport();
+      const shortRow = (r) => rowsOf(r, 'time_bands').find((x) => x.band === 'short');
+      c.check(
+        '30 minutes in a "short" band is flagged as too slow',
+        shortRow(before)?.verdict === 'Students take longer than this band allows',
+        `(${shortRow(before)?.verdict})`
+      );
+      c.check('the expected range is stated', shortRow(before)?.expected === '0–10 min', `(${shortRow(before)?.expected})`);
+      c.check(
+        'and it reaches "what needs attention"',
+        before.headline.some((h) => h.includes('"short" missions')),
+        `(${before.headline.join(' | ').slice(0, 160)})`
+      );
+
+      cfg.setTimeBandMinutes({ short: 45, medium: 60, long: 90, heavy: 120 });
+      try {
+        const after = await rep.getPilotReport();
+        c.check(
+          'the SAME data reads "About right" once the band is widened',
+          shortRow(after)?.verdict === 'About right',
+          `(${shortRow(after)?.verdict})`
+        );
+        c.check('the new range is shown', shortRow(after)?.expected === '0–45 min', `(${shortRow(after)?.expected})`);
+        c.check(
+          'and the flag is gone',
+          !after.headline.some((h) => h.includes('"short" missions')),
+          `(${after.headline.join(' | ').slice(0, 160)})`
+        );
+      } finally {
+        cfg.setTimeBandMinutes(null);
+      }
+      c.check('bands must increase', (() => {
+        try {
+          cfg.setTimeBandMinutes({ short: 30, medium: 10, long: 45, heavy: 90 });
+          return false;
+        } catch {
+          return true;
+        } finally {
+          cfg.setTimeBandMinutes(null);
+        }
+      })());
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  67,
+  'Repeats because the pool ran dry are counted; deliberate revision is not',
+  'A selection logged as tier=repeat_oldest is counted as a repeat and its hour is named; one logged as revision_mix is reported separately as revision on purpose, and is not in the repeats table.',
+  async (c) => {
+    const f = await reportScratch('revis');
+    try {
+      const { creditId } = await f.track();
+      const dryHour = await f.hour(creditId, 1, 'Ran out here');
+      const mixHour = await f.hour(creditId, 2, 'Planned revision');
+      const dryMission = await f.mission({ hourId: dryHour });
+      const mixMission = await f.mission({ hourId: mixHour });
+      const sid = await f.student();
+
+      await f.selectionLog(sid, {
+        missionId: dryMission,
+        hourId: dryHour,
+        filters: { tier: 'repeat_oldest', revision: true, revision_mix: false },
+      });
+      await f.selectionLog(sid, {
+        missionId: mixMission,
+        hourId: mixHour,
+        filters: { tier: 'current', revision: false, revision_mix: true },
+      });
+
+      const r = await rep.getPilotReport();
+      const rows = rowsOf(r, 'revision');
+      const dry = rows.find((x) => String(x.hour).includes('Ran out here'));
+      c.check('the dry hour is named', !!dry, `(rows: ${rows.map((x) => x.hour).join(' / ') || 'none'})`);
+      c.check('counted once', dry?.repeats === 1, `(got ${dry?.repeats})`);
+      c.check(
+        'the deliberate revision is NOT in the repeats table',
+        !rows.some((x) => String(x.hour).includes('Planned revision'))
+      );
+      const prose = section(r, 'revision')?.explainer ?? '';
+      c.check('the explainer counts the deliberate one separately', /A further 1 were repeats ON PURPOSE/.test(prose), `(${prose.slice(0, 200)})`);
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  68,
+  'Completion and feedback counts are the real ratios, per week',
+  'Four assignments in this week (one open, one submitted, two graded — one with feedback, one still pending) produce assigned 4, submitted 3, graded 2 for this week, and a feedback rate of one out of two.',
+  async (c) => {
+    const f = await reportScratch('complete');
+    try {
+      const missionId = await f.mission({ title: 'Completion fixture' });
+      // One student per assignment: four attempts at one mission by one student
+      // would be three revisions, which is a different thing being counted.
+      await f.assign(missionId, await f.student(), 'open');
+      await f.assign(missionId, await f.student(), 'submitted');
+      await f.grade(missionId, await f.student(), { pass: true, feedback: 'complete', perceived: 'Too hard' });
+      await f.grade(missionId, await f.student(), { pass: false, feedback: 'pending' });
+
+      const r = await rep.getPilotReport();
+      const week = rowsOf(r, 'completion')[0];
+      // The seed's own assignments land in the same week, so this case asserts on
+      // the DELTA it created rather than on absolute totals it does not own.
+      const mine = await one(
+        `SELECT COUNT(*) assigned,
+                SUM(status IN ('submitted','graded')) submitted,
+                SUM(status = 'graded') graded
+           FROM assignments WHERE mission_id = ?`,
+        [missionId]
+      );
+      c.check('the fixture is the shape the case claims', Number(mine.assigned) === 4 && Number(mine.submitted) === 3 && Number(mine.graded) === 2,
+        `(${mine.assigned}/${mine.submitted}/${mine.graded})`);
+      c.check('this week has a row', !!week, `(rows ${rowsOf(r, 'completion').length})`);
+      c.check('assigned includes all four', Number(week?.assigned) >= 4, `(${week?.assigned})`);
+      c.check('submitted counts submitted AND graded', Number(week?.submitted) >= 3, `(${week?.submitted})`);
+      c.check('graded counts only graded', Number(week?.graded) >= 2, `(${week?.graded})`);
+      c.check('finished is a percentage', /^\d+%$/.test(String(week?.finished)), `(${week?.finished})`);
+      c.check(
+        'the graded count never exceeds the submitted count',
+        Number(week?.graded) <= Number(week?.submitted),
+        `(${week?.graded} > ${week?.submitted})`
+      );
+      const fb = section(r, 'feedback');
+      c.check('the feedback answer is aggregated per mission', rowsOf(r, 'feedback').some((x) => x.mission_id === missionId) || Number(mine.graded) < 5,
+        `(the mission needs 5 attempts to appear; it has ${mine.graded})`);
+      c.check('the feedback rate is stated as a fraction of what was asked', /gave it on \d+ of them/.test(fb?.explainer ?? ''), `(${(fb?.explainer ?? '').slice(0, 160)})`);
+    } finally {
+      await f.cleanup();
+    }
+  }
+);
+
+await runCase(
+  '4.11',
+  69,
+  'The emailable document: attachment, self-contained, and the same report as the screen',
+  'GET /api/pilot-report?format=html is a text/html attachment named for the window end, contains no script, link, img or external URL, repeats every section heading, and carries the same "needs attention" lines as the JSON. A student gets 403 and an anonymous caller 401.',
+  async (c) => {
+    const json = await api('GET', '/api/pilot-report', { as: 7 });
+    c.check('admin gets the report', json.status === 200, `(${json.status})`);
+    const doc = await api('GET', '/api/pilot-report?format=html', { as: 7 });
+    c.check('the document is 200', doc.status === 200, `(${doc.status})`);
+    c.check('served as HTML', /text\/html/.test(doc.headers.get('content-type') ?? ''), `(${doc.headers.get('content-type')})`);
+    const cd = doc.headers.get('content-disposition') ?? '';
+    c.check('sent as an attachment named for the window', /^attachment; filename="pilot-report-\d{4}-\d{2}-\d{2}\.html"$/.test(cd), `(${cd})`);
+    c.check('the filename ends at the window end date', cd.includes(json.json?.window?.to ?? 'x'), `(${cd} vs ${json.json?.window?.to})`);
+    c.check('no script, link or img tag', !/<(script|link|img)\b/i.test(doc.text));
+    c.check('no external URL at all', !/https?:\/\//.test(doc.text));
+    const headings = (json.json?.sections ?? []).map((x) => x.title);
+    c.check('every section heading is in the document', headings.length > 0 && headings.every((h) => doc.text.includes(h)), `(${headings.length} sections)`);
+    const lines = json.json?.headline ?? [];
+    c.check(
+      'the document and the JSON agree on what needs attention',
+      lines.every((l) => doc.text.includes(l.replace(/&/g, '&amp;'))),
+      `(${lines.length} lines)`
+    );
+    c.check('the document is generated from the report object, not re-queried', typeof repDoc.renderPilotReportHtml === 'function');
+    const asStudent = await api('GET', '/api/pilot-report', { as: 9 });
+    c.check('a student is refused', asStudent.status === 403, `(${asStudent.status})`);
+    c.check('and the refusal leaks nothing', !LEAK_RE.test(asStudent.text), `(${asStudent.text.slice(0, 120)})`);
+    const anon = await api('GET', '/api/pilot-report');
+    c.check('an anonymous caller is 401', anon.status === 401, `(${anon.status})`);
+    const bad = await api('GET', '/api/pilot-report?weeks=0', { as: 7 });
+    c.check('weeks=0 is rejected, not silently coerced', bad.status === 400, `(${bad.status})`);
+    const badFormat = await api('GET', '/api/pilot-report?format=pdf', { as: 7 });
+    c.check('an unknown format is rejected', badFormat.status === 400, `(${badFormat.status})`);
   }
 );
 

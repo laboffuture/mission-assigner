@@ -161,6 +161,7 @@ XP is in the header, and the student's segment is shown.
 | `CSRF_ENFORCED` | `false` (default) / `true`. Enforce the double-submit CSRF token on mutations. Flip to `true` together with `SESSION_SAMESITE=none` — see CSRF. |
 | `COLD_START_STRATEGY` | how a brand-new student is placed — see below |
 | `FEEDBACK_GATES_UNLOCK` | whether feedback is required before the next slot unlocks — see below |
+| `REPORT_WEEKS` / `REPORT_TIMEZONE` / `TIME_BAND_MINUTES` | the weekly pilot report's window, the zone its weeks are cut in, and the minutes each time band is assumed to mean — see The weekly pilot report |
 
 ## Authentication & authorisation
 
@@ -658,6 +659,7 @@ are **not** worked around by overriding their tokens.
 | GET  | `/api/mission-quality` | SME report across all qualifying missions |
 | GET  | `/api/mission-quality/:missionId` | single mission detail |
 | GET  | `/api/attempts/:assignmentId` | attempt-log audit trail for one assignment |
+| GET  | `/api/pilot-report` | the weekly pilot report, JSON (any staff role). `?weeks=` overrides the window; `?format=html` returns the emailable document as an attachment |
 | GET  | `/quality` | the SME mission-quality view (internal, not for students) |
 
 A student may only read their **own** progress and submissions: the caller
@@ -675,6 +677,58 @@ optional `?limit=`, max 100) to fetch the next page.
 `/api/dev/users`) also return **`{ items: [...] }`** — no bare arrays — so a
 single client data layer handles every list the same way. Confirmed by
 `npm run verify:api-shape`.
+
+## The weekly pilot report
+
+`/staff/pilot-report` (any staff role) and `GET /api/pilot-report`. Audit item 15.
+
+Everything it reads was already being captured — `time_to_submit_seconds`,
+`selection_log`, `feedback_responses`, `assignments`, `hours` — and nothing read
+it. A pilot that produces no evidence has to be run again.
+
+It answers seven questions, each its own section:
+
+| Section | Question | How it is decided |
+|---|---|---|
+| How much of the work gets finished | completion per week | assigned / submitted / graded, bucketed by the Monday of `assigned_at` in `REPORT_TIMEZONE` |
+| Where students get stuck | which hours produce consecutive failures | runs of **2+ failures in a row on the same hour** by one student; a run resets when the hour changes, so two failures on two hours is not a stall |
+| Missions labelled with the wrong difficulty | observed vs tagged difficulty | **`getMissionQuality` verbatim** (`src/tracking.ts`), filtered to `mismatch` — the report and `/api/mission-quality` cannot disagree |
+| Hours without enough material | thin coverage | fewer than 3 live missions, or fewer than 2 difficulties among them |
+| What students say about the work | feedback completion + perceived difficulty | completion is of the assignments that ASKED for feedback; the per-mission median comes from `getMissionQuality`, the spread from `feedback_responses` |
+| Whether the time bands are honest | time taken vs the mission's band | median `time_to_submit_seconds` against `TIME_BAND_MINUTES` |
+| Repeats handed out because the content ran out | revision rate | `selection_log.filters_applied.tier = 'repeat_oldest'` only — a `revision_mix` repeat is planned revision and is reported separately, not as a problem |
+
+Three things about it are deliberate:
+
+- **The prose lives with the numbers.** Each section carries its own title, the
+  question it answers, an explanation written for someone who has never seen the
+  schema, and values already formatted for reading (`62%`, `18 min`, `Too hard`).
+  The audience is the SME and management, and a reader should never have to divide
+  two columns in their head.
+- **One object, two renderings.** The staff page and the emailable document render
+  the same `PilotReport`. The document is a single self-contained HTML file — no
+  script, stylesheet, image or font request — because it has to survive being
+  attached to an email, opened offline and printed to PDF. `?format=html` sends it
+  as `attachment; filename="pilot-report-<end date>.html"`. What gets emailed
+  therefore cannot say something different from the screen it came from, which is
+  asserted by audit case 69.
+- **A finding needs 5 observations.** Below that a row is noise and is not
+  reported, so a quiet pilot produces a short report rather than a confident wrong
+  one.
+
+**The time bands are an assumption, not a measurement.** Nothing in the product
+defined a band in minutes before this; `TIME_BAND_MINUTES` (default
+`short=10,medium=25,long=45,heavy=90`) is a starting guess, the report says so
+where it uses it, and a confirmed set of figures from the SME needs no code
+change. Audit case 66 proves it: the same 30-minute attempts read "take longer
+than this band allows" at the default and "About right" once `short` is raised to
+45.
+
+**In legacy selection mode** (`SELECTION_MODE=legacy`, which is the pilot today)
+the hour-level sections fill in only for missions that carry an `hour_id`, and
+repeats cannot happen at all — legacy selection excludes anything the student has
+already seen. The report says this in its own notes rather than showing empty
+tables without explanation.
 
 ## Safety guarantees
 

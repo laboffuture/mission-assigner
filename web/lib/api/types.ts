@@ -367,3 +367,39 @@ export interface AssignmentReview {
   score_band: ScoreBand;
   submitted_at: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Weekly pilot report — GET /api/pilot-report (src/pilotReport.ts)
+// ---------------------------------------------------------------------------
+// The report is deliberately self-describing: every section carries its own
+// title, question, explanation and column headings, and every value arrives
+// pre-formatted for reading ("62%", "18 min"). So the page below renders a shape,
+// not a fixed set of known metrics — adding a section to the report puts it on
+// the page with no web change at all, and the emailed document and the screen
+// cannot drift apart.
+export interface ReportColumn {
+  key: string;
+  label: string;
+  numeric?: boolean;
+}
+
+export interface ReportSection {
+  key: string;
+  title: string;
+  question: string;
+  explainer: string;
+  columns: ReportColumn[];
+  rows: Record<string, string | number | null>[];
+  empty: string;
+  flags: string[];
+}
+
+export interface PilotReport {
+  generated_at: string;
+  timezone: string;
+  window: { weeks: number; from: string; to: string };
+  selection_mode: string;
+  headline: string[];
+  notes: string[];
+  sections: ReportSection[];
+}

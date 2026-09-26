@@ -314,7 +314,12 @@ export interface MissionQualityRow {
   mismatch: boolean;
 }
 
-const MIN_ATTEMPTS = 5;
+/**
+ * A mission needs this many graded attempts before its pass rate means anything.
+ * Exported because the pilot report states the threshold in prose, and a number
+ * quoted in two places is a number that ends up wrong in one of them.
+ */
+export const MIN_ATTEMPTS = 5;
 
 /** Map a pass rate to an observed difficulty band (see spec). */
 export function observedDifficulty(passRate: number): number {

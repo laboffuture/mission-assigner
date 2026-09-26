@@ -116,6 +116,29 @@ point — either we adjust _our usage_ (which token sits on which background) or
 raise the specific pair with the LMS team as a palette problem. The axe suite is
 what surfaces it.
 
+## Staff screens
+
+Two, both under the same role gating as the API behind them, and both now
+reachable from the tabs at the top of the page (they were URL-only before):
+
+- **`/staff/assistance`** — the instructor assistance queue. Instructor/admin.
+- **`/staff/pilot-report`** — the weekly pilot report. Every staff role, because
+  the SME, management and instructors all read it; a student gets the role
+  refusal, and `/api/pilot-report` answers them `403`.
+
+`PilotReportView` renders the report's SHAPE, not a fixed list of metrics: the
+server sends each section's title, question, explanation, column headings and
+already-formatted rows (see "The weekly pilot report" in the root README). So a
+section added to the report appears on the page with no change here, and the page
+cannot word anything differently from the document that gets emailed. The download
+link points straight at `/api/pilot-report?format=html` rather than re-rendering
+the report in the web tier, for the same reason.
+
+Tables scroll sideways inside their own box on a phone instead of stretching the
+page (audit #34–#37 territory), and the scroll container is keyboard-reachable
+because axe requires that of scrollable regions. Verified: 0 axe violations on
+the report page, and no horizontal page scroll at 393px.
+
 ## Tests
 
 ```
@@ -129,7 +152,8 @@ npm run e2e -- --project=chromium    # the quick loop
 
 `e2e/` covers the student flow (week → mission → result → feedback → progress),
 empty states, submit resilience (network-drop retry with a reused
-Idempotency-Key; session-expiry redirect), keyboard-only completion, and the
+Idempotency-Key; session-expiry redirect), keyboard-only completion, the staff
+screens (assistance queue; the pilot report and its emailable document), and the
 axe accessibility scans. Specs reseed the DB per file and are scoped to CommonJS
 (`e2e/package.json`) to avoid the Playwright ESM race.
 

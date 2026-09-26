@@ -22,7 +22,7 @@ export default async function AssistancePage() {
   return (
     <>
       <PageShell>
-        <PageNav me={me} />
+        <PageNav me={me} current="assistance" />
         <div className="mb-4">
           <h1 className="text-xl font-bold">Assistance queue</h1>
           <Muted className="mt-1">Students who stalled and need a hand. Oldest first.</Muted>

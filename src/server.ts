@@ -29,6 +29,8 @@ import {
   getAssignmentReview,
   logAttempt,
 } from './tracking.js';
+import { getPilotReport } from './pilotReport.js';
+import { renderPilotReportHtml, pilotReportFilename } from './pilotReportDocument.js';
 import {
   feedbackGatesUnlock,
   setFeedbackGatesUnlock,
@@ -77,6 +79,7 @@ import {
   loginAsBody,
   feedbackBody,
   listQuery,
+  pilotReportQuery,
   idParams,
   resolveAssistanceBody,
 } from './schemas.js';
@@ -984,6 +987,39 @@ app.get(
       res.json(report[0] ?? { mission_id: missionId, insufficient_data: true });
     } catch (err) {
       sendServerError(req, res, err, 'failed to build mission-quality report');
+    }
+  }
+);
+
+/**
+ * GET /api/pilot-report — the weekly pilot report (audit item 15).
+ *
+ * Two forms of the same object: JSON for the staff page, and `?format=html` for
+ * the self-contained document that gets emailed (sent as an attachment, because
+ * a browser rendering it inline is not what "email this to the SME" needs).
+ *
+ * Gated to every staff role, not just SME/QC: the audience is the SME AND
+ * management, instructors are the ones who act on a stall, and the report is
+ * cohort-level — no student is named in it. Students are refused.
+ */
+app.get(
+  '/api/pilot-report',
+  requireAuth,
+  requireRole(...STAFF_ROLES),
+  validate({ query: pilotReportQuery }),
+  async (req, res) => {
+    try {
+      const report = await getPilotReport({ weeks: req.valid!.query.weeks });
+      if (req.valid!.query.format === 'html') {
+        res
+          .type('html')
+          .set('Content-Disposition', `attachment; filename="${pilotReportFilename(report)}"`)
+          .send(renderPilotReportHtml(report));
+        return;
+      }
+      res.json(report);
+    } catch (err) {
+      sendServerError(req, res, err, 'failed to build the pilot report');
     }
   }
 );
