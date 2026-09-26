@@ -197,9 +197,29 @@ function xpFor(event, difficulty) {
   return Number((exact ?? fallback)?.points ?? 0);
 }
 
+/**
+ * Anything memoised FROM the database is stale the moment the database is
+ * rebuilt. Case 45 reseeds mid-suite, which truncates every table: an id cached
+ * before it points at nothing afterwards — or worse, at a different row, because
+ * TRUNCATE restarts AUTO_INCREMENT. Each fixture registers its own reset here,
+ * beside where it is declared, and reseed() runs them all.
+ *
+ * This is the root cause of two order dependencies the shuffled audit found:
+ * case 20 (revision fixture) and case 8 (completed-week fixture). Both passed in
+ * file order, where case 45 happens to run later, and failed when a shuffle put
+ * the reseed in between.
+ */
+const invalidateOnReseed = [];
+
 async function reseed() {
   const r = spawnSync('npm', ['run', 'db:seed'], { cwd: ROOT, shell: true, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`db:seed failed: ${(r.stdout + r.stderr).slice(-400)}`);
+  for (const drop of invalidateOnReseed) drop();
+  // Re-read what the suite derived from the old rows. The fixture track is
+  // recreated by the seed, so its id has to be looked up again rather than
+  // assumed to have survived.
+  if (trackId != null) trackId = await cur.findTrack('Robotics', 'Test Track Alpha');
+  if (xpRules.length) await loadXpRules();
 }
 
 // --------------------------------------------------------------- fixtures --
@@ -473,6 +493,9 @@ trackId = await cur.findTrack('Robotics', 'Test Track Alpha');
  * empty. Either way it is built at most once per run.
  */
 let fullWeekStudent = null;
+invalidateOnReseed.push(() => {
+  fullWeekStudent = null;
+});
 /**
  * The newest assistance event, raised the real way (a student stalls three
  * times) when the database has none. Cases that act on an event used to take
@@ -1186,6 +1209,9 @@ await runCase(
 );
 
 let revisionFixture = null;
+invalidateOnReseed.push(() => {
+  revisionFixture = null;
+});
 /**
  * Is the memoised fixture still REAL? Case 45 reseeds the database, which
  * truncates students and assignments. In file order it runs after the cases
@@ -2432,6 +2458,9 @@ await runCase(
 // =================================================== 4.9 UI and themes ==
 const SCREENS = ['login', 'week', 'mission', 'feedback', 'progress'];
 let uiFix = null;
+invalidateOnReseed.push(() => {
+  uiFix = null;
+});
 async function uiFixture() {
   if (uiFix) return uiFix;
   await hook('feedback-gating', { enabled: false });

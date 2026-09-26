@@ -8,7 +8,7 @@
 //
 // Requires: MySQL up, and the dev server running on :3000 WITH ENABLE_TEST_HOOKS=1.
 // Run:  npm run verify:all
-import { execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -137,17 +137,27 @@ const childEnv = {
   NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=${HEAP_MB}`.trim(),
 };
 
+/**
+ * Run a command to completion, streaming its output, WITHOUT blocking the event
+ * loop. execSync blocked it, which starved the parallel pool: its children ran
+ * but their completion was not observed until the serial chain finished, so three
+ * suites each reported an identical 112.3s. Same visible behaviour, real
+ * concurrency.
+ */
 function run(cmd, opts = {}) {
   console.log(`\n\x1b[36m$ ${cmd}\x1b[0m`);
-  try {
-    execSync(cmd, { stdio: 'inherit', cwd: opts.cwd ?? root, env: childEnv });
-  } catch (err) {
-    // In CI the job log needs repository-admin rights to read, so a failure
-    // visible only there is invisible to everyone else. Name the suite in an
-    // annotation, which anyone can see on the run.
-    if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
-    throw err;
-  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, { cwd: opts.cwd ?? root, env: childEnv, shell: true, stdio: 'inherit' });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) return resolve();
+      // In CI the job log needs repository-admin rights to read, so a failure
+      // visible only there is invisible to everyone else. Name the suite in an
+      // annotation, which anyone can see on the run.
+      if (process.env.GITHUB_ACTIONS) console.log(`::error title=Suite failed::${cmd}`);
+      reject(new Error(`${cmd} exited ${code}`));
+    });
+  });
 }
 
 /**
@@ -171,7 +181,7 @@ function runAsync(suite) {
 }
 
 /** Run one suite, recording how long it took and how much memory it cost. */
-function runMeasured(suite) {
+async function runMeasured(suite) {
   let peakKb = rssTotalKb();
   const sampler =
     peakKb == null
@@ -182,7 +192,7 @@ function runMeasured(suite) {
         }, MEASURE_MS);
   const started = Date.now();
   try {
-    run(suite.cmd, { cwd: suite.cwd });
+    await run(suite.cmd, { cwd: suite.cwd });
     return true;
   } finally {
     if (sampler) clearInterval(sampler);
@@ -217,21 +227,30 @@ function startIsolatedPool(suites, concurrency = 3) {
   return Promise.all(workers).then(() => failures);
 }
 
+const runStartedAt = Date.now();
+
 function report() {
   if (results.length === 0) return;
-  const total = results.reduce((n, r) => n + r.ms, 0);
+  // WALL time is the number that matters, and it is not the sum of the rows:
+  // the isolated suites overlap the serial chain, so summing double-counts them.
+  const wall = Date.now() - runStartedAt;
+  const total = results.reduce((n, r) => n + (r.parallel ? 0 : r.ms), 0);
   const peak = results.reduce((n, r) => Math.max(n, r.peakKb ?? 0), 0);
   const rows = [...results].sort((a, b) => b.ms - a.ms);
   console.log('\n==== suite cost (slowest first) ====');
   console.log(`${'suite'.padEnd(22)}${'db'.padEnd(8)}${'seconds'.padStart(8)}${'peak MB'.padStart(10)}`);
   for (const r of rows) {
     const mb = r.peakKb == null ? '     n/a' : (r.peakKb / 1024).toFixed(0).padStart(8);
-    console.log(`${r.name.padEnd(22)}${r.db.padEnd(8)}${(r.ms / 1000).toFixed(1).padStart(8)}${mb.padStart(10)}`);
+    const mark = r.parallel ? ' |' : '  ';
+    console.log(
+      `${r.name.padEnd(22)}${r.db.padEnd(8)}${(r.ms / 1000).toFixed(1).padStart(8)}${mb.padStart(10)}${mark}`
+    );
   }
   console.log(
-    `\n${'TOTAL'.padEnd(22)}${''.padEnd(8)}${(total / 1000).toFixed(1).padStart(8)}` +
-      `${(peak ? (peak / 1024).toFixed(0) : 'n/a').padStart(10)}  (peak is the highest single sample, not a sum)`
+    `\nWALL ${(wall / 1000).toFixed(1)}s  |  serial work ${(total / 1000).toFixed(1)}s  |  ` +
+      `peak ${peak ? (peak / 1024).toFixed(0) + 'MB' : 'n/a'} (highest single sample, not a sum)`
   );
+  console.log('  rows marked | ran in parallel with the serial chain, so they cost no wall time of their own');
   if (peak === 0) console.log('  (memory not sampled: /proc is Linux-only)');
   // Job logs need repository-admin rights to read, so the numbers would be
   // invisible to anyone who cannot open them. An annotation is public to anyone
@@ -240,11 +259,12 @@ function report() {
     const line = rows
       .map(
         (r) =>
-          `${r.name} ${(r.ms / 1000).toFixed(1)}s/${r.peakKb == null ? 'n/a' : (r.peakKb / 1024).toFixed(0) + 'MB'}`
+          `${r.name}${r.parallel ? '|' : ''} ${(r.ms / 1000).toFixed(1)}s/` +
+          `${r.peakKb == null ? 'n/a' : (r.peakKb / 1024).toFixed(0) + 'MB'}`
       )
       .join('; ');
     console.log(
-      `::notice title=Suite cost::total ${(total / 1000).toFixed(1)}s, peak ` +
+      `::notice title=Suite cost::WALL ${(wall / 1000).toFixed(1)}s, serial work ${(total / 1000).toFixed(1)}s, peak ` +
         `${peak ? (peak / 1024).toFixed(0) + 'MB' : 'n/a'} — ${line}`
     );
   }
@@ -263,18 +283,18 @@ try {
   for (const suite of serial) {
     if (suite.seed) {
       const t = Date.now();
-      run('npm run db:seed');
+      await run('npm run db:seed');
       seedMs += Date.now() - t;
       seeds++;
     }
-    runMeasured(suite);
+    await runMeasured(suite);
   }
 
   const poolFailures = await pool;
 
   // Leave the demo DB pristine.
   const t = Date.now();
-  run('npm run db:seed');
+  await run('npm run db:seed');
   seedMs += Date.now() - t;
   seeds++;
   results.push({ name: `(${seeds} reseeds)`, db: 'shared', ms: seedMs, peakKb: null, seedRow: true });
