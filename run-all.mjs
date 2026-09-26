@@ -177,6 +177,21 @@ function report() {
       `${(peak ? (peak / 1024).toFixed(0) : 'n/a').padStart(10)}  (peak is the highest single sample, not a sum)`
   );
   if (peak === 0) console.log('  (memory not sampled: /proc is Linux-only)');
+  // Job logs need repository-admin rights to read, so the numbers would be
+  // invisible to anyone who cannot open them. An annotation is public to anyone
+  // who can see the run.
+  if (process.env.GITHUB_ACTIONS) {
+    const line = rows
+      .map(
+        (r) =>
+          `${r.name} ${(r.ms / 1000).toFixed(1)}s/${r.peakKb == null ? 'n/a' : (r.peakKb / 1024).toFixed(0) + 'MB'}`
+      )
+      .join('; ');
+    console.log(
+      `::notice title=Suite cost::total ${(total / 1000).toFixed(1)}s, peak ` +
+        `${peak ? (peak / 1024).toFixed(0) + 'MB' : 'n/a'} — ${line}`
+    );
+  }
 }
 
 try {
