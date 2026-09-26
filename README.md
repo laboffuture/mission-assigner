@@ -35,7 +35,7 @@ hides another. Every job fails on any failure — nothing is advisory.
 | `api` | root tree: `typecheck`, `lint`, `format:check`, `check:tokens`, `db:migrate`, then **all** suites via `npm run verify:all` (Node harnesses + Stage 2 pytest) against a MySQL 8 service container |
 | `web-static` | web tree: `typecheck`, `lint` (`next lint --max-warnings 0`), `format:check`, `check:tokens`, `next build` |
 | `e2e` | the full Playwright suite — every student journey across ids of every length, and the axe accessibility specs. `npx playwright install` runs on **every** run: after a machine move the pinned browser was missing and the suite was silently unrunnable |
-| `audit` | the 62-case audit harness (`npm run verify:audit`); cases 43/44 stop and restart the MySQL service container |
+| `audit` | the audit harness (`npm run verify:audit`), run twice — file order, then shuffled with a fresh seed that is annotated on the run. Cases 43/44 stop and restart the MySQL service container. The case COUNT lives in the harness, not here: a number written down in two places is a number that goes stale in one of them (this row said 62 while the harness ran 69) |
 
 `check:tokens` lives in `web/` because it scans the web components; the root
 `npm run check:tokens` delegates to it so every gate can be run from the root.

@@ -10,7 +10,7 @@ on:
 #                 the whole regression suite (verify:all, incl. pytest).
 #   web-static  - web tree: typecheck, lint, format, check:tokens, next build.
 #   e2e         - the full Playwright suite (journeys across every id length, a11y).
-#   audit       - the 62-case audit harness (verify-audit.mjs).
+#   audit       - the audit harness (verify-audit.mjs), in file order and then shuffled.
 # Every job fails on any failure; nothing here is allowed to be advisory.
 
 env:
@@ -414,7 +414,7 @@ jobs:
           echo "stack did not start"; cat /tmp/server.log /tmp/web.log; exit 1
 
       # Cases 43/44 stop and restart MySQL; here that is the service container.
-      - name: Audit harness (62 cases)
+      - name: Audit harness (every case, file order)
         env:
           AUDIT_MYSQL_STOP_CMD: docker stop ${{ env.MYSQL_CID }}
           AUDIT_MYSQL_START_CMD: docker start ${{ env.MYSQL_CID }}
