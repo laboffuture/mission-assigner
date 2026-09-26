@@ -133,8 +133,21 @@ jobs:
       - name: Token check
         run: npm run check:tokens
 
-      - name: Build
-        run: npm run build
+      - name: Font check (nothing may fetch from Google)
+        run: npm run check:fonts
+
+      # The proof, not the promise: build with Google unreachable. next/font/google
+      # fails hard when it cannot fetch, so if anything still reaches for it this
+      # step fails - which is what a deploy would do on a server that cannot reach
+      # Google, as one CI stack build already did.
+      - name: Build with fonts.googleapis.com blackholed
+        run: |
+          echo "127.0.0.1 fonts.googleapis.com fonts.gstatic.com" | sudo tee -a /etc/hosts > /dev/null
+          echo "blocked:"; getent hosts fonts.googleapis.com fonts.gstatic.com || true
+          if ! npm run build; then
+            echo "::error title=Fonts::the web build needs Google to be reachable — vendor the font files"
+            exit 1
+          fi
 
   e2e:
     runs-on: ubuntu-latest

@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { cookies } from 'next/headers';
-import { Sora, Inter, Space_Mono } from 'next/font/google';
+import localFont from 'next/font/local';
 // Order matters: their tokens define the --nebula-*/--lof-* variables, ours
 // alias them, globals.css consumes both. Loading theirs second would leave our
 // aliases pointing at undefined variables.
 //
 // The generated copy is their file with only the render-blocking Google Fonts
-// @import removed — the same three families are loaded below by next/font,
+// @import removed — the same three families are loaded below from vendored files,
 // self-hosted and preloaded. See scripts/generate-lms-tokens.mjs.
 import '../styles/generated/lof-lms-tokens.css';
 import '../styles/tokens.css';
@@ -15,13 +15,36 @@ import './globals.css';
 import { FrameHeightReporter } from '@/components/FrameHeightReporter';
 import { THEME_COOKIE, THEMES, type Theme } from '@/middleware';
 
-// The three LMS families, self-hosted by Next: no request to Google on load, no
-// render-blocking stylesheet, and `display: swap` so text paints immediately.
-// Each exposes a CSS variable that styles/tokens.css puts in front of their
-// font token, keeping their value as the fallback.
-const sora = Sora({ subsets: ['latin'], weight: ['400', '500', '600', '700', '800'], variable: '--font-display' });
-const inter = Inter({ subsets: ['latin'], weight: ['300', '400', '500', '600', '700'], variable: '--font-body' });
-const spaceMono = Space_Mono({ subsets: ['latin'], weight: ['400', '700'], variable: '--font-mono' });
+// The three LMS families, from files IN THIS REPO.
+//
+// next/font/google self-hosts at runtime but downloads from fonts.googleapis.com
+// at BUILD time, so `docker compose build` could fail because Google was
+// unreachable — and once it did. A deploy to our own server must not depend on
+// Google being up, so the woff2 files are vendored (web/scripts/vendor-fonts.mjs
+// fetched them; nothing in the build fetches anything) and served from here.
+//
+// Sora and Inter are variable fonts: one file covers the whole weight range.
+// Space Mono has no variable cut, so its two weights are separate files.
+// `display: swap` still means text paints immediately, and each family exposes
+// the same CSS variable styles/tokens.css already expects.
+const sora = localFont({
+  src: [{ path: './fonts/sora-latin-variable.woff2', weight: '400 800', style: 'normal' }],
+  variable: '--font-display',
+  display: 'swap',
+});
+const inter = localFont({
+  src: [{ path: './fonts/inter-latin-variable.woff2', weight: '300 700', style: 'normal' }],
+  variable: '--font-body',
+  display: 'swap',
+});
+const spaceMono = localFont({
+  src: [
+    { path: './fonts/space-mono-latin-400.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/space-mono-latin-700.woff2', weight: '700', style: 'normal' },
+  ],
+  variable: '--font-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Mission Hub',
