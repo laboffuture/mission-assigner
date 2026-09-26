@@ -29,12 +29,14 @@ The whole stack is one `docker compose` file on one machine:
 | Ports open | 80, 443 | Caddy needs 80 to obtain certificates |
 | DNS | an A record for the site name | LTI requires HTTPS on a real hostname |
 
-**Why 4 GB and not 2.** Not because of the test suite — that figure was wrong twice. Measured
-in CI, sampling every Node, Python and tsx process: **316 MB run serially, which is the
-default, and 1115 MB when CI runs its pool of two independent suites concurrently** (`SUITE_POOL`).
-An earlier reading of 1.44–2.0 GB was taken on the development machine and counted MySQL, two
-dev servers and a browser alongside the harnesses, so it described that desktop rather than
-this workload. None of those numbers is what sizes the server.
+**Why 4 GB and not 2.** Not because of the test suite — that figure was wrong twice. Sampling
+every Node, Python and tsx process: **1119 MB in CI**, where two independent suites run
+concurrently (`SUITE_POOL=2`; read twice, 1115 MB and 1119 MB), and **316 MB run serially**,
+which is the default everywhere else. The serial figure was taken on the development machine,
+not in CI — CI never runs serially, so there is no CI reading of it to quote. An earlier reading
+of 1.44–2.0 GB was taken on that same machine and counted MySQL, two dev servers and a browser
+alongside the harnesses, so it described the desktop rather than this workload. None of these
+numbers is what sizes the server.
 
 The sizing stands on what the SERVER does, which is a different thing:
 
