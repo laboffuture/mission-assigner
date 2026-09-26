@@ -95,6 +95,10 @@ jobs:
           echo "API did not start"; cat /tmp/server.log; exit 1
 
       - name: Run all suites
+        env:
+          # A 16GB runner can afford the 1.1GB a pool of two costs, and saves ~28s
+          # of a 178s job. The default is serial, for machines that cannot.
+          SUITE_POOL: '2'
         run: npm run verify:all
 
       - name: API log (on failure)

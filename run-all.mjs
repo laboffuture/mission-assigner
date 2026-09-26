@@ -208,12 +208,19 @@ async function runMeasured(suite) {
  * ephemeral port, backups uses :3999, and migrations, config and pytest bind
  * nothing.
  *
- * Two at a time, not three. Three saved 28s of a 178s job and took the suite's
- * peak memory from 316MB to 1265MB - four concurrent harnesses each spawning
- * servers - and memory headroom is what has actually been killing processes
- * here. Override with SUITE_POOL if a machine can afford more.
+ * SERIAL BY DEFAULT, and parallel only where there is memory to spend.
+ *
+ * Measured: serial 136.5s / 316MB peak; a pool of two 108.0s / 1115MB; a pool of
+ * three 108.3s / 1265MB. Nearly all of the time saving comes from the first
+ * parallel worker, and so does nearly all of the memory - backups and migrations
+ * each spawn servers and dumps of their own. Dropping three to two recovered 12%
+ * of the memory and none of the time, so the trade is really binary.
+ *
+ * This machine kills processes under memory pressure, so the default is 1 (no
+ * pool). CI sets SUITE_POOL=2, where a 16GB runner can afford 1.1GB and the 28
+ * seconds are worth having.
  */
-function startIsolatedPool(suites, concurrency = Number(process.env.SUITE_POOL) || 2) {
+function startIsolatedPool(suites, concurrency = Number(process.env.SUITE_POOL) || 1) {
   const queue = [...suites];
   const failures = [];
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
