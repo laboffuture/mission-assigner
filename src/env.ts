@@ -89,6 +89,9 @@ const EnvSchema = z
         'must look like "short=10,medium=25,long=45,heavy=90"'
       )
       .optional(),
+    // Databases that db:seed and migrate down refuse to touch (comma separated).
+    // Unset means the built-in list in src/destructiveGuard.ts.
+    PROTECTED_DB_NAMES: z.string().optional(),
     // Local MySQL install (no Docker): mysqldump path used by verify:migrations.
     MYSQLDUMP: z.string().optional(),
     SENTRY_DSN: z.union([z.string().url(), z.literal('')]).optional(),

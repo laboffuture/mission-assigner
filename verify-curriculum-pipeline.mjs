@@ -1,7 +1,9 @@
 // Curriculum pipeline acceptance harness — criteria 12, 13 and 14, end to end.
 // Runs the real Stage 2 CLI (mock LLM, no API key) against MySQL with throwaway
 // input/log directories, then checks what landed in the database.
-// Requires MySQL, a fresh `npm run db:seed` (Tesla's Track loaded) and pipeline/.venv.
+// Requires MySQL, a fresh `npm run db:seed` and pipeline/.venv. Runs entirely in
+// the TEST database (DB_NAME, default mission_demo) against its own fixture
+// track — never the pilot database that holds real SME curriculum.
 // Run: npm run verify:curriculum-pipeline
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
@@ -74,6 +76,12 @@ const env = {
   PIPELINE_CURRICULUM_FILE: curriculumFile,
   LLM_PROVIDER: 'mock',
   PYTHONIOENCODING: 'utf-8',
+  // PINNED, not inherited. The child is python, and src/db.py loads pipeline/.env
+  // at import — which now names the PILOT database, where real curriculum lives.
+  // load_dotenv() does not override an existing variable, so passing this
+  // explicitly is what keeps this harness in the test database. Without it the
+  // harness would be one unset variable away from truncating pilot content.
+  DB_NAME: process.env.DB_NAME ?? 'mission_demo',
 };
 function pipeline(...args) {
   const r = spawnSync(venvPy, ['-m', 'src.main', ...args], { cwd: pipelineDir, env, encoding: 'utf8' });

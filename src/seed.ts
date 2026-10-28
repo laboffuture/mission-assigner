@@ -8,7 +8,7 @@ import { loadCurriculum, findHour, setPosition } from './curriculum.js';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import type { PoolConnection } from 'mysql2/promise';
-import { refuseDestructiveInProduction } from './destructiveGuard.js';
+import { refuseDestructiveInProduction, refuseDestructiveOnProtectedDatabase } from './destructiveGuard.js';
 
 // FIXTURE curriculum, never real content: the suite asserts its exact shape
 // (24/24/30/30/24 hours), so real SME material must live on its own track.
@@ -48,8 +48,10 @@ function mondayOf(d: Date): string {
 }
 
 async function main() {
-  // Seeding TRUNCATES every table. Refuse under production before any query.
+  // Seeding TRUNCATES every table. Refuse under production, and refuse against a
+  // database that holds real content, before any query.
   refuseDestructiveInProduction('seed the database (it truncates every table)');
+  refuseDestructiveOnProtectedDatabase('seed the database (it truncates every table)');
   const conn = await pool.getConnection();
   try {
     // Wipe in FK-safe order (Stage 3 tables first, then Stage 1).

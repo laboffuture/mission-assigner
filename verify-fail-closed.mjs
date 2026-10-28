@@ -436,6 +436,52 @@ console.log('\n[17] A SECOND production instance on the same database refuses to
   third.stop();
 }
 
+// ========================================= the protected pilot database ==
+// Real curriculum lives in its own database (mission_pilot) because db:seed
+// truncates `tracks`: the dev database's copy of Tesla's Track was deleted by
+// the audit harness reseeding sixteen times a run, and the SME chunks were left
+// tagged with hour ids that no longer existed. Protection is by DB_NAME, which
+// is how it actually goes wrong — the right command, the wrong database.
+console.log('\n[18] db:seed refuses a protected database, whatever NODE_ENV says');
+{
+  await q(
+    `INSERT INTO \`${SCRATCH}\`.students (id, display_name, age, subject, current_level, placement_status)
+     VALUES (502, 'Pilot Content Row', 14, 'Robotics', 1, 'complete')
+     ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`
+  );
+  const alive = async () => Number((await q(`SELECT COUNT(*) n FROM \`${SCRATCH}\`.students WHERE id = 502`))[0].n);
+  check('the row to protect is there', (await alive()) === 1);
+
+  // No NODE_ENV=production here: this refusal is about the database, not the mode.
+  const r = node(['src/seed.ts'], { PROTECTED_DB_NAMES: SCRATCH });
+  check('exits non-zero', r.code !== 0, `(exit ${r.code})`);
+  check(
+    'names the database and the override flag',
+    r.out.includes(SCRATCH) && r.out.includes(OVERRIDE),
+    `(${r.out.replace(/\s+/g, ' ').slice(-200)})`
+  );
+  check('and points at the test database instead', /mission_demo/.test(r.out));
+  check('nothing was truncated (the row survives)', (await alive()) === 1);
+
+  const named = node(['src/seed.ts'], { PROTECTED_DB_NAMES: 'some_other_database' });
+  check('a database NOT on the list still seeds', named.code === 0, `(exit ${named.code})`);
+  check('it really ran (the row is gone)', (await alive()) === 0);
+}
+
+console.log('\n[19] The override flag beats the protection, loudly');
+{
+  await q(
+    `INSERT INTO \`${SCRATCH}\`.students (id, display_name, age, subject, current_level, placement_status)
+     VALUES (503, 'Pilot Content Row 2', 14, 'Robotics', 1, 'complete')`
+  );
+  const alive = async () => Number((await q(`SELECT COUNT(*) n FROM \`${SCRATCH}\`.students WHERE id = 503`))[0].n);
+  const r = node(['src/seed.ts', OVERRIDE], { PROTECTED_DB_NAMES: SCRATCH });
+  check('exits 0', r.code === 0, `(exit ${r.code})`);
+  check('says so rather than going quiet', /WARNING/.test(r.out) && r.out.includes(SCRATCH));
+  check('it really ran (the row is gone)', (await alive()) === 0);
+}
+
+
 await q(`DROP DATABASE IF EXISTS \`${SCRATCH}\``);
 await prodDb.drop();
 await root.end();

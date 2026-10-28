@@ -18,6 +18,15 @@ through `import-review`, promotes a mission to `live`.
 
 ---
 
+
+**Which database.** `pipeline/.env` names `mission_pilot`, which holds real SME
+curriculum and nothing else. It is NOT the test database: `db:seed` and
+`migrate down` refuse to touch it by name (see "Two databases" in the root
+README), and every harness pins `DB_NAME` so it stays out. Bring it up to date
+with `DB_NAME=mission_pilot npm run db:migrate`, then
+`DB_NAME=mission_pilot npm run curriculum:load -- curriculum/<track>.json`, before
+the first ingest.
+
 ## Setup
 
 Requires **Python 3.11+** and a running MySQL 8 (the same instance the Node app

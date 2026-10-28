@@ -518,10 +518,45 @@ Seed data adds Test Track Alpha with missions on every C1 hour except hour 23
 and two students: *Ananya Rao* at C1 hour 7 and *Kabir Mehta* at C1 hour 24. Tests:
 `npm run verify:curriculum` and `npm run verify:curriculum-pipeline`.
 
-Note for the development machine: `npm run db:seed` truncates `tracks`, so it
-removes real curriculum too. Re-load it with `npm run curriculum:load` after
-seeding. The seed refuses to run under `NODE_ENV=production`, so a real deployment
-is never affected.
+### Two databases: the test one and the pilot one
+
+Real SME curriculum lives in **its own database**, `mission_pilot`. The test
+database, `mission_demo`, is rebuilt constantly — `npm run db:seed` truncates
+`tracks`, and the audit harness reseeds sixteen times in a single run — so real
+curriculum cannot live there. It was tried: Tesla's Track was loaded into
+`mission_demo`, a reseed deleted it, and 25 ingested SME chunks were left tagged
+with hour ids that no longer existed. Nothing complained, because
+`content_chunks.hour_id` is the one hour reference with no foreign key.
+
+| | `mission_demo` | `mission_pilot` |
+|---|---|---|
+| Holds | fixtures: Test Track Alpha, seeded students, generated test missions | real SME curriculum and the missions drafted from it |
+| Rebuilt by | `db:seed`, constantly | nothing — only migrations and the pipeline write to it |
+| Used by | the app, every `verify:*` harness, the audit, e2e | `pipeline/` only (`pipeline/.env` names it) |
+
+**`db:seed` and `migrate down` refuse to run against it**, by name, whatever
+`NODE_ENV` says — `PROTECTED_DB_NAMES` (default `mission_pilot`), enforced in
+`src/destructiveGuard.ts` and proved by `verify-fail-closed` [18] and [19]. The
+override flag is the same long one the production guard uses. `migrate up` is not
+guarded: it is how the pilot database gets its schema.
+
+Harnesses pin `DB_NAME` explicitly when they spawn the pipeline rather than
+inheriting it, because the child is python and `src/db.py` loads `pipeline/.env`
+at import — which names the pilot database.
+
+**Order for pilot content** (each step needs the one before it):
+
+```bash
+DB_NAME=mission_pilot npm run db:migrate                                  # schema (creates the DB)
+DB_NAME=mission_pilot npm run curriculum:load -- curriculum/teslas-track.json
+cd pipeline && python -m src.main ingest    --file <doc>                  # chunks + hour tags
+python -m src.main generate --file <doc>                                  # drafts on disk
+python -m src.main validate                                              # reject what fails the rules
+python -m src.main import                                                # missions, status='draft'
+```
+
+`pipeline/.env` already points at `mission_pilot`, so the pipeline commands need
+no `DB_NAME`. Only SME review (`import-review`) ever promotes a draft to `live`.
 
 ## Deployment
 
