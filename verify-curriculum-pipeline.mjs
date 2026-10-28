@@ -8,7 +8,7 @@
 import 'dotenv/config';
 import mysql from 'mysql2/promise';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,7 @@ function check(name, cond, detail = '') {
 // only seven hours, which must be refused whole.
 const GOOD = 'tesla-c1-a.md'; // C1 hours 1..9, all present
 const BROKEN = 'tesla-c1-b.md'; // C1 hours 10..17 declared, only 10..16 in the file
+const OTHER = 'tesla-c1-c.md'; // C1 hours 18..24 — valid, and must survive a scoped run
 const TOPICS = ['Chassis', 'Wheels', 'Motors', 'Batteries', 'Switches', 'Sensors', 'Wiring', 'Testing', 'Showcase'];
 
 function hourFile(title, firstHour, lastHour) {
@@ -64,6 +65,7 @@ writeFileSync(
     files: {
       [GOOD]: { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours: [1, 9] },
       [BROKEN]: { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours: [10, 17] },
+      [OTHER]: { subject: 'Robotics', track: 'Test Track Alpha', credit: 'C1', hours: [18, 24] },
     },
     legacy_files: [],
   })
@@ -100,10 +102,11 @@ async function cleanup() {
   );
   if (Number(t.n) === 0) return;
   await db.query(
-    `DELETE m FROM missions m JOIN content_chunks cc ON cc.id = m.source_chunk_id WHERE cc.source_file IN (?, ?)`,
-    [GOOD, BROKEN]
+    `DELETE m FROM missions m JOIN content_chunks cc ON cc.id = m.source_chunk_id
+      WHERE cc.source_file IN (?, ?, ?)`,
+    [GOOD, BROKEN, OTHER]
   );
-  await db.query(`DELETE FROM content_chunks WHERE source_file IN (?, ?)`, [GOOD, BROKEN]);
+  await db.query(`DELETE FROM content_chunks WHERE source_file IN (?, ?, ?)`, [GOOD, BROKEN, OTHER]);
 }
 await cleanup();
 
@@ -183,6 +186,87 @@ try {
     `(${(cov.out.match(/Hour 2[23]: \d+\s*(GAP)?/g) ?? []).join(' | ')})`
   );
   check('a seeded hour with missions is not a gap', /Hour 7: 5(?!\s+GAP)/.test(cov.out));
+
+  // -------------------------------------------------------------------------
+  // input/ holds more than the document being worked on — sample-cs.md is a
+  // legacy fixture the tests and the no-hour path depend on, so it cannot just be
+  // moved away — and an unscoped generate would spend real money drafting
+  // missions for it.
+  console.log('\n[15] --file scopes a run to one document and leaves the others alone');
+  writeFileSync(join(inputDir, OTHER), hourFile('C1: Arm, hours 18-24', 18, 24));
+  const full = pipeline('ingest');
+  check('an unscoped ingest still reads every file', full.code !== 0 && full.out.includes(OTHER), `(exit=${full.code})`);
+
+  const hashes = async (file) =>
+    Object.fromEntries(
+      (await db.query(`SELECT chunk_ref, content_hash FROM content_chunks WHERE source_file = ?`, [file]))[0].map(
+        (r) => [r.chunk_ref, r.content_hash]
+      )
+    );
+  const otherBefore = await hashes(OTHER);
+  const goodBefore = await hashes(GOOD);
+  check('both valid files are in the database', Object.keys(otherBefore).length === 7 && Object.keys(goodBefore).length === 9,
+    `(other=${Object.keys(otherBefore).length}, good=${Object.keys(goodBefore).length})`);
+
+  // Change BOTH documents, then ingest only one. The other's stored hashes must
+  // not move — which is the sharpest form of "never touched".
+  writeFileSync(join(inputDir, GOOD), hourFile('C1: Rolling robot, hours 1-9', 1, 9) + '\n\nA further sentence for the good file.');
+  writeFileSync(join(inputDir, OTHER), hourFile('C1: Arm, hours 18-24', 18, 24) + '\n\nA further sentence for the other file.');
+  const scoped = pipeline('ingest', '--file', GOOD);
+  check('a scoped ingest exits 0 even though a broken file sits beside it', scoped.code === 0, `(exit=${scoped.code}) ${scoped.out.slice(-200)}`);
+  check(
+    'it says which document it is limited to',
+    scoped.out.includes(`--file ${GOOD}: reading ONLY this document`),
+    `(${scoped.out.replace(/\s+/g, ' ').slice(0, 200)})`
+  );
+  check('the rejected file is not even read', !scoped.out.includes(BROKEN));
+
+  const goodAfter = await hashes(GOOD);
+  const otherAfter = await hashes(OTHER);
+  check(
+    'the scoped file WAS re-hashed (its content changed)',
+    Object.keys(goodAfter).some((ref) => goodAfter[ref] !== goodBefore[ref])
+  );
+  check(
+    'the other file was not touched at all, though its content changed too',
+    JSON.stringify(otherAfter) === JSON.stringify(otherBefore),
+    `(${Object.keys(otherAfter).filter((r) => otherAfter[r] !== otherBefore[r]).join(', ')})`
+  );
+
+  // ...and the same for generate, which is the one that costs money.
+  const queueFile = join(logsDir, 'pending_generation.json');
+  const queued = JSON.parse(readFileSync(queueFile, 'utf8'));
+  check('the scoped ingest queued only its own chunks', queued.every((c) => c.source_file === GOOD) && queued.length > 0,
+    `(files=${[...new Set(queued.map((c) => c.source_file))].join(', ')})`);
+
+  // Queue both files' chunks, then generate for one.
+  const bothQueue = [...queued.map((c) => ({ ...c })), ...Object.keys(otherBefore).map((ref) => ({
+    ...queued[0], chunk_ref: ref, source_file: OTHER,
+  }))];
+  writeFileSync(queueFile, JSON.stringify(bothQueue, null, 2));
+  const draftsBefore = new Set(readdirSync(join(logsDir, 'drafts')));
+  const gen = pipeline('generate', '--file', OTHER);
+  check('a scoped generate exits 0', gen.code === 0, `(exit=${gen.code}) ${gen.out.slice(-300)}`);
+  check(
+    'it reports the subset it will call for',
+    new RegExp(`--file ${OTHER}: ${Object.keys(otherBefore).length} of ${bothQueue.length} queued`).test(gen.out),
+    `(${gen.out.replace(/\s+/g, ' ').slice(0, 260)})`
+  );
+  const added = readdirSync(join(logsDir, 'drafts')).filter((f) => !draftsBefore.has(f));
+  check(
+    'every draft the scoped run added is from the scoped file',
+    added.length === Object.keys(otherBefore).length && added.every((f) => f.startsWith('C1_Arm')),
+    `(added ${added.length}: ${added.slice(0, 3).join(', ')})`
+  );
+
+  const missing = pipeline('generate', '--file', 'not-a-document.md');
+  check(
+    'an unmatched --file is a loud failure, not a silent no-op',
+    missing.code !== 0 && /matched none of the \d+ queued/.test(missing.out),
+    `(exit=${missing.code}) ${missing.out.replace(/\s+/g, ' ').slice(-160)}`
+  );
+  check('…and it names what was queued', missing.out.includes('not-a-document.md') && missing.out.includes(OTHER),
+    `(${missing.out.replace(/\s+/g, ' ').slice(-200)})`);
 } finally {
   await cleanup();
   await db.end();

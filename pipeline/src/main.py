@@ -1,7 +1,7 @@
 """Stage 2 pipeline CLI.
 
-  python -m src.main ingest [--dry-run]
-  python -m src.main generate [--dry-run]
+  python -m src.main ingest [--file NAME] [--dry-run]
+  python -m src.main generate [--file NAME] [--limit N] [--dry-run]
   python -m src.main validate [--dry-run]
   python -m src.main import [--dry-run]
   python -m src.main run [--dry-run]
@@ -12,11 +12,18 @@
 ingest computes the new/changed/unchanged delta and writes the new+changed
 chunks to a working queue (logs/pending_generation.json). generate consumes that
 queue, so the stages can be run independently.
+
+--file scopes a run to ONE input document, by file name. input/ holds more than
+the document being worked on - sample-cs.md is a legacy fixture the tests and the
+no-hour path depend on, so it cannot simply be moved away - and an unscoped
+generate would spend real money drafting missions for it. A scoped run reads,
+upserts and queues nothing from any other file.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import db, reader, chunker, generator, validator, importer, export_review, import_review, curriculum
@@ -52,6 +59,13 @@ def _check_schema():
 
 # Kept so the older name still resolves at the call sites below.
 _ensure_schema = _check_schema
+
+
+def _only_file(args) -> str | None:
+    """The --file value as a bare file name, or None. A path is accepted and
+    reduced to its name, because that is what source_file holds."""
+    raw = getattr(args, "file", None)
+    return os.path.basename(raw.strip()) if raw and raw.strip() else None
 
 
 def _group_by_file(sections: list[dict]) -> dict[str, list[dict]]:
@@ -94,14 +108,25 @@ def cmd_ingest(args) -> list[dict]:
     _ensure_schema()
     levels = db.load_levels()
     config = db.load_curriculum_config()
+    only = _only_file(args)
     print(f"Ingesting documents from {db.INPUT_DIR} ...")
-    sections = reader.read_input_dir(db.INPUT_DIR)
+    if only is not None:
+        print(f"  --file {only}: reading ONLY this document; chunks from every other file are left as they are.")
+    sections = reader.read_input_dir(db.INPUT_DIR, only=only)
+
+    grouped = _group_by_file(sections)
+    if only is not None and only not in grouped:
+        present = sorted(p.name for p in db.INPUT_DIR.iterdir() if p.is_file())
+        sys.exit(
+            f"FATAL: --file {only!r} matched none of the documents in {db.INPUT_DIR}. "
+            f"Found: {', '.join(present) or '(none)'}"
+        )
 
     chunks: list[dict] = []
     failures: list[tuple[str, str]] = []
     conn = db.get_connection()
     try:
-        for file_name, file_sections in _group_by_file(sections).items():
+        for file_name, file_sections in grouped.items():
             try:
                 chunks.extend(chunks_for_file(file_name, file_sections, config, conn, levels["subject"]))
             except (curriculum.CurriculumError, chunker.HourBoundaryError) as e:
@@ -137,6 +162,22 @@ def _load_queue() -> list[dict]:
 def cmd_generate(args, queue: list[dict] | None = None):
     if queue is None:
         queue = _load_queue()
+    # --file BEFORE --limit, so `--file X --limit 2` means the first two chunks OF
+    # X rather than two chunks of whatever happens to be at the top of the queue.
+    only = _only_file(args)
+    if only is not None:
+        queued_files = sorted({os.path.basename(c.get("source_file") or "") for c in queue})
+        before = len(queue)
+        queue = [c for c in queue if os.path.basename(c.get("source_file") or "") == only]
+        if not queue:
+            sys.exit(
+                f"FATAL: --file {only!r} matched none of the {before} queued chunk(s). "
+                f"Queued files: {', '.join(queued_files) or '(none)'}"
+            )
+        print(
+            f"  --file {only}: {len(queue)} of {before} queued chunk(s). "
+            f"The rest stay queued and no API call is made for them."
+        )
     limit = getattr(args, "limit", None)
     if limit and limit > 0:
         queue = queue[:limit]
@@ -327,8 +368,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--dry-run", action="store_true", help="print actions without writing")
         return sp
 
-    add("ingest", "read input/, chunk, hash, report the delta")
+    scoped_help = "only this input document, by file name (input/ holds more than one)"
+    ing = add("ingest", "read input/, chunk, hash, report the delta")
+    ing.add_argument("--file", default=None, help=scoped_help)
     gen = add("generate", "LLM-draft missions for queued chunks")
+    gen.add_argument("--file", default=None, help=scoped_help)
     gen.add_argument("--limit", type=int, default=None,
                      help="only generate for the first N queued chunks (cheap smoke run)")
     add("validate", "run validation, report pass/fail counts")

@@ -166,12 +166,21 @@ def read_document(path: Path) -> list[dict]:
     raise ValueError(f"Unsupported file type: {path.name}")
 
 
-def read_input_dir(input_dir: Path) -> list[dict]:
-    """Read every supported document in input_dir. Returns a flat section list."""
+def read_input_dir(input_dir: Path, only: str | None = None) -> list[dict]:
+    """Read the supported documents in input_dir. Returns a flat section list.
+
+    `only` limits the read to one file NAME. It filters here rather than after
+    reading so a scoped run genuinely does not open its siblings: a document that
+    is huge, locked by Word, or malformed enough to raise in the reader must not
+    be able to break a run that is not about it.
+    """
     sections: list[dict] = []
     files = sorted(p for p in input_dir.iterdir() if p.suffix.lower() in SUPPORTED)
+    if only is not None:
+        files = [p for p in files if p.name == only]
     if not files:
-        print(f"  No supported documents found in {input_dir}")
+        where = f"{input_dir} matching {only!r}" if only is not None else str(input_dir)
+        print(f"  No supported documents found in {where}")
         return sections
     for path in files:
         print(f"  Reading {path.name} ...")

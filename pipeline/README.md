@@ -149,8 +149,8 @@ Before trusting the mock, spend a few cents confirming the real model behaves:
 
 ```bash
 # in pipeline/.env: LLM_PROVIDER=anthropic and a real ANTHROPIC_API_KEY
-python -m src.main ingest
-python -m src.main generate --limit 2   # only the first 2 chunks
+python -m src.main ingest    --file Project_Session_Content_Hours_0-25.docx
+python -m src.main generate  --file Project_Session_Content_Hours_0-25.docx --limit 2
 ```
 
 `generate` logs input/output token counts each run, so the smoke run also gives
@@ -235,6 +235,7 @@ Every command accepts `--dry-run` to print what it would do without writing.
 |---------|--------------|
 | `python -m src.main ingest` | read `input/`, split into chunks, hash them, report `new / changed / unchanged`, and queue new+changed chunks for generation |
 | `python -m src.main generate` | make one LLM call per queued chunk, log every request/response to `logs/`, stage drafts |
+| `--file NAME` (on `ingest` and `generate`) | scope the run to ONE document. `input/` holds more than the document being worked on — `sample-cs.md` is a legacy fixture the tests and the no-hour path depend on, so it cannot just be moved away — and an unscoped `generate` would spend real money drafting missions for it. A scoped `ingest` does not even open its siblings, so a document that is huge, locked by Word or malformed cannot break a run that is not about it. An unmatched name is a loud failure, never a silent no-op. `--file` applies before `--limit`, so `--file X --limit 2` means the first two chunks of X |
 | `python -m src.main validate` | run all validation checks, report pass/fail with reasons |
 | `python -m src.main import` | write validated drafts as `status='draft'` |
 | `python -m src.main run` | ingest + generate + validate + import in one go |
