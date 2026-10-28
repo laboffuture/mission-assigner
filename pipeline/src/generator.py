@@ -150,6 +150,15 @@ def _is_transient(e: Exception) -> bool:
     return code in (429, 500, 502, 503, 504)
 
 
+class ModelMismatch(Exception):
+    """The API answered as a different model than the one we asked for.
+
+    This aborts the whole run rather than failing one chunk. A silent
+    substitution would put missions of unknown provenance into the bank, and the
+    point of recording which model wrote what is that it is true.
+    """
+
+
 class TransientError(Exception):
     """Raised by the mock/hostile backends to simulate a retryable API failure."""
     def __init__(self, message, status_code=429):
@@ -267,6 +276,7 @@ class AnthropicClient:
         from anthropic import Anthropic
 
         self.model = model
+        self.reported_model = None
         self.client = Anthropic(api_key=key)
 
     def draft(self, system, turns, chunk):
@@ -277,6 +287,14 @@ class AnthropicClient:
             messages=turns,
             **_sampling_kwargs("anthropic", self.model),
         )
+        # What answered, not what we asked for. Recorded in every draft, and a
+        # mismatch stops the run.
+        self.reported_model = getattr(msg, "model", None)
+        if self.reported_model and self.reported_model != self.model:
+            raise ModelMismatch(
+                f"requested model {self.model!r} but the API answered as {self.reported_model!r}. "
+                f"Nothing further has been generated."
+            )
         text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
         usage = {
             "input_tokens": getattr(msg.usage, "input_tokens", 0),
@@ -578,6 +596,9 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
     # than whatever the environment said afterwards.
     provider = (os.getenv("LLM_PROVIDER") or "mock").strip().lower()
     model = getattr(client, "model", None)
+    # Before the first call, so a run that is about to spend money on the wrong
+    # model is obvious in the first line of output rather than in the bill.
+    print(f"  provider {provider}, model {model}")
     db.LOGS_DIR.mkdir(parents=True, exist_ok=True)
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
     # NOTHING is deleted up front. This used to clear the whole directory so the
@@ -620,6 +641,10 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
         # 1. call with transient-error retries
         try:
             raw, usage = _call_with_retries(client, system, turns, chunk)
+        except ModelMismatch:
+            # Not a chunk failure: stop, keeping the drafts already written.
+            print(f"  chunk '{ref}': ABORTING THE RUN — the API answered as a different model.")
+            raise
         except Exception as e:  # noqa: BLE001
             failures.append({"chunk_ref": ref, "error": f"api error: {type(e).__name__}: {e}"})
             print(f"  chunk '{ref}': FAILED (api error: {type(e).__name__}). Skipped.")
@@ -665,6 +690,9 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
             # text; together that is the whole provenance of a mission.
             "provider": provider,
             "model": model,
+            # What the API said it was. Equal to `model` on a healthy run; the run
+            # aborts if they differ, so a draft can never carry a mismatch.
+            "model_reported": getattr(client, "reported_model", None),
             "generated_at": _now_iso(),
             "missions": parsed["missions"],
         }, indent=2), encoding="utf-8")
