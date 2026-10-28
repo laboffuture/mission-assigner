@@ -312,6 +312,108 @@ try {
     check('the same queue with real hour ids generates fine', ok.code === 0, `(exit=${ok.code}) ${ok.out.slice(-200)}`);
     check('and says so', /all \d+ hour tag\(s\) in the queue resolve/.test(ok.out), `(${ok.out.replace(/\s+/g, ' ').slice(0, 200)})`);
   }
+
+  // -------------------------------------------------------------------------
+  // Row ids are not stable facts. The drafts for hour 1 of the SME document were
+  // made against a database whose `hours` were later rebuilt by a reseed, so they
+  // carry chunk_id 505 and hour_id 133 - rows that exist nowhere now. Importing
+  // by those ids would fail on the missions.hour_id foreign key, or, with
+  // different numbers, attach missions to whatever row inherited the id. So a
+  // draft finds its chunk by (source_file, chunk_ref), and content_hash proves it
+  // was written from the text that chunk holds now.
+  console.log('\n[17] A draft with stale ids imports; a draft whose content moved on is refused');
+  {
+    const validatedDir = join(logsDir, 'validated');
+    const [[chunkRow]] = await db.query(
+      `SELECT id, chunk_ref, content_hash, hour_id FROM content_chunks WHERE source_file = ? ORDER BY id LIMIT 1`,
+      [GOOD]
+    );
+    check('a stored chunk to aim at', !!chunkRow && chunkRow.hour_id != null, `(${JSON.stringify(chunkRow ?? null)})`);
+
+    const draft = (overrides) => ({
+      // Deliberately wrong, and deliberately ids that do not exist anywhere.
+      chunk_id: 999999,
+      hour_id: 888888,
+      chunk_ref: chunkRow.chunk_ref,
+      source_file: GOOD,
+      content_hash: chunkRow.content_hash,
+      subject: 'Robotics',
+      missions: [
+        {
+          title: 'Stale-id draft',
+          body: 'What does the controller do first?',
+          difficulty: 1,
+          tags: ['loops'],
+          options: [
+            { key: 'a', text: 'Boot' },
+            { key: 'b', text: 'Sleep' },
+            { key: 'c', text: 'Stop' },
+            { key: 'd', text: 'Reset' },
+          ],
+          correct: 'a',
+          explanation: 'It boots first.',
+          source_quote: 'x',
+        },
+      ],
+      ...overrides,
+    });
+
+    // Only our draft in the validated directory, so the counts are ours.
+    rmSync(validatedDir, { recursive: true, force: true });
+    mkdirSync(validatedDir, { recursive: true });
+    writeFileSync(join(validatedDir, 'stale-ids.json'), JSON.stringify(draft({}), null, 2));
+
+    await db.query(`DELETE FROM missions WHERE source_chunk_id = ?`, [chunkRow.id]);
+    const ok = pipeline('import');
+    check('a draft with stale chunk_id and hour_id imports', ok.code === 0, `(exit=${ok.code}) ${ok.out.slice(-300)}`);
+    check('…and says it ignored them', /ignoring stale ids/.test(ok.out), `(${ok.out.replace(/\s+/g, ' ').slice(-240)})`);
+
+    const [imported] = await db.query(
+      `SELECT source_chunk_id, hour_id, source_chunk_hash, status FROM missions WHERE title = 'Stale-id draft'`
+    );
+    check('the mission was written', imported.length === 1, `(n=${imported.length})`);
+    check(
+      'it carries the chunk id the DATABASE has, not the draft\'s 999999',
+      Number(imported[0]?.source_chunk_id) === Number(chunkRow.id),
+      `(${imported[0]?.source_chunk_id} vs ${chunkRow.id})`
+    );
+    check(
+      'and the hour id from that chunk, not the draft\'s 888888',
+      Number(imported[0]?.hour_id) === Number(chunkRow.hour_id),
+      `(${imported[0]?.hour_id} vs ${chunkRow.hour_id})`
+    );
+    check('as a draft, never live', imported[0]?.status === 'draft', `(${imported[0]?.status})`);
+
+    // ...and a draft whose text has moved on is refused, with a message.
+    rmSync(validatedDir, { recursive: true, force: true });
+    mkdirSync(validatedDir, { recursive: true });
+    writeFileSync(
+      join(validatedDir, 'moved-on.json'),
+      JSON.stringify(draft({ content_hash: 'a'.repeat(64), missions: [{ ...draft({}).missions[0], title: 'Moved-on draft' }] }), null, 2)
+    );
+    const refused = pipeline('import');
+    check('a mismatched content_hash is refused', refused.code !== 0, `(exit=${refused.code})`);
+    check('…naming the draft file', refused.out.includes('moved-on.json'), `(${refused.out.replace(/\s+/g, ' ').slice(-240)})`);
+    check(
+      '…saying the document changed and to regenerate',
+      /different text than the chunk now holds/.test(refused.out) && /regenerate/.test(refused.out)
+    );
+    const [notWritten] = await db.query(`SELECT id FROM missions WHERE title = 'Moved-on draft'`);
+    check('and nothing was written for it', notWritten.length === 0, `(n=${notWritten.length})`);
+
+    // A chunk_ref that matches nothing names the fix.
+    rmSync(validatedDir, { recursive: true, force: true });
+    mkdirSync(validatedDir, { recursive: true });
+    writeFileSync(join(validatedDir, 'no-such-chunk.json'), JSON.stringify(draft({ chunk_ref: 'Not a chunk anybody ingested' }), null, 2));
+    const missing = pipeline('import');
+    check('an unmatched chunk_ref is refused', missing.code !== 0, `(exit=${missing.code})`);
+    check('…and names the ingest command that would fix it', /ingest --file/.test(missing.out),
+      `(${missing.out.replace(/\s+/g, ' ').slice(-240)})`);
+
+    rmSync(validatedDir, { recursive: true, force: true });
+    await db.query(`DELETE FROM missions WHERE title IN ('Stale-id draft', 'Moved-on draft')`);
+  }
+
 } finally {
   await cleanup();
   await db.end();

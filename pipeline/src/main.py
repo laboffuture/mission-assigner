@@ -259,10 +259,22 @@ def cmd_validate(args):
     return validator.validate_drafts(dry_run=args.dry_run)
 
 
+class ImportRefused(Exception):
+    """One or more validated drafts could not be matched to a stored chunk.
+    Raised AFTER the good drafts are imported, so the command exits non-zero
+    without throwing away work - the same rule as ingest and generate."""
+
+
 def cmd_import(args):
     _ensure_schema()
     print("Importing validated drafts into the mission bank ...")
-    return importer.import_validated(dry_run=args.dry_run)
+    res = importer.import_validated(dry_run=args.dry_run)
+    if res.get("refused"):
+        raise ImportRefused(
+            f"{len(res['refused'])} draft(s) were not imported: "
+            + ", ".join(r["draft"] for r in res["refused"])
+        )
+    return res
 
 
 def cmd_run(args):
