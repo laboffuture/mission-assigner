@@ -28,8 +28,72 @@ from datetime import datetime, timezone
 from . import db
 
 DRAFTS_DIR = db.LOGS_DIR / "drafts"
-MAX_TOKENS = 8192
 MAX_TRANSIENT_RETRIES = 3
+
+# Output cap per call. 3 to 5 missions measured ~1,100 output tokens on Gemini,
+# so 2,200 is twice what the work needs: enough headroom for a long chunk,
+# little enough that a runaway cannot burn the credit. A response cut off by this
+# cap is REPORTED, never retried with a bigger one - silently raising the cap is
+# how a cost control becomes decoration.
+#
+# It applies to every provider because the job is the same size everywhere. With
+# thinking off (below) nothing but the reply counts against it.
+def max_output_tokens() -> int:
+    raw = (os.getenv("LLM_MAX_OUTPUT_TOKENS") or "2200").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        raise ValueError(f"LLM_MAX_OUTPUT_TOKENS must be a whole number (got {raw!r})") from None
+    if n <= 0:
+        raise ValueError(f"LLM_MAX_OUTPUT_TOKENS must be greater than 0 (got {n})")
+    return n
+
+
+# Kept as a module attribute so the existing call sites and tests keep working;
+# the function above is the source of truth.
+MAX_TOKENS = max_output_tokens()
+
+
+# --- thinking and effort (Anthropic) -----------------------------------------
+# Extraction from a supplied chunk needs no reasoning, so thinking is OFF and
+# effort is the lowest the docs allow with it.
+#
+# On claude-sonnet-5-5, thinking: {"type": "disabled"} is a 400. The documented
+# off-switch is {"type": "between_tools"} - "the lowest thinking setting on this
+# model" - accepted at effort `high` or BELOW, with no other field inside
+# `thinking`. So: effort "low" + between_tools.
+#   https://platform.claude.com/docs/en/api/migration-2026-10-21
+#   model-migration guide, "Migrating to Claude Sonnet 5.5", breaking change 1
+#
+# between_tools is Claude Sonnet 5.5 only - every other model 400s on it - which
+# is why this is configuration rather than a model allowlist: LLM_THINKING=adaptive
+# drops the field and lets the model think, the documented alternative (adaptive
+# at low effort) if the drafts come back weaker than Gemini's.
+_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def anthropic_effort() -> str:
+    level = (os.getenv("LLM_EFFORT") or "low").strip().lower()
+    if level not in _EFFORT_LEVELS:
+        raise ValueError(f"LLM_EFFORT must be one of {', '.join(_EFFORT_LEVELS)} (got {level!r})")
+    return level
+
+
+def anthropic_thinking_off() -> bool:
+    mode = (os.getenv("LLM_THINKING") or "off").strip().lower()
+    if mode not in ("off", "adaptive"):
+        raise ValueError(f"LLM_THINKING must be 'off' or 'adaptive' (got {mode!r})")
+    return mode == "off"
+
+
+def anthropic_request_extras() -> dict:
+    """The thinking/effort half of an Anthropic request, reported before the run."""
+    extras: dict = {"output_config": {"effort": anthropic_effort()}}
+    if anthropic_thinking_off():
+        # No other key inside `thinking`: display/budget_tokens alongside
+        # between_tools is a 400.
+        extras["thinking"] = {"type": "between_tools"}
+    return extras
 
 # A provider that refuses us tells us how long to wait. Waiting less is a wasted
 # call: the free Gemini tier allows 5 requests a minute and answers a 429 with
@@ -148,6 +212,10 @@ def _is_transient(e: Exception) -> bool:
         return True
     code = getattr(e, "status_code", None) or getattr(e, "code", None)
     return code in (429, 500, 502, 503, 504)
+
+
+class OutputTruncated(Exception):
+    """The reply hit max_tokens. Reported, never retried with a bigger cap."""
 
 
 class ModelMismatch(Exception):
@@ -280,11 +348,13 @@ class AnthropicClient:
         self.client = Anthropic(api_key=key)
 
     def draft(self, system, turns, chunk):
+        cap = max_output_tokens()
         msg = self.client.messages.create(
             model=self.model,
-            max_tokens=MAX_TOKENS,
+            max_tokens=cap,
             system=system,
             messages=turns,
+            **anthropic_request_extras(),
             **_sampling_kwargs("anthropic", self.model),
         )
         # What answered, not what we asked for. Recorded in every draft, and a
@@ -300,6 +370,11 @@ class AnthropicClient:
             "input_tokens": getattr(msg.usage, "input_tokens", 0),
             "output_tokens": getattr(msg.usage, "output_tokens", 0),
         }
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise OutputTruncated(
+                f"the reply hit the {cap}-token cap (LLM_MAX_OUTPUT_TOKENS) and is incomplete. "
+                f"Raise the cap deliberately if the chunk really needs more; it is not retried."
+            )
         return text, usage
 
 
@@ -570,7 +645,7 @@ def _existing_draft(sref: str):
         return None
 
 
-def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False):
+def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False, token_ceiling: int | None = None):
     """Generate drafts. Returns {'drafted': [...], 'skipped': [...], 'failures': [...], 'usage': {...}}.
 
     A chunk whose draft is already on disk AND was made from the same content hash
@@ -579,6 +654,12 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
     makes this safe - if the SME edits that hour, the chunk's hash changes and the
     draft is regenerated whether anyone remembers to ask for it or not.
     `regenerate=True` replaces everything.
+
+    `token_ceiling` is a whole-run budget in tokens (input + output). It is
+    checked between chunks: when the next chunk would be the one to cross it, the
+    run stops CLEANLY - every draft already written stays, and the chunks not
+    attempted are reported. A ceiling is set from the smoke run's measured average
+    rather than guessed, which is why it is a parameter and not a constant.
     """
     levels = db.load_levels()
     tags = db.load_tags()
@@ -609,11 +690,23 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
     pre_existing = {f.name for f in DRAFTS_DIR.glob("*.json")}
 
     drafted, failures, skipped = [], [], []
+    not_attempted: list[str] = []
     total_in = total_out = 0
+    if token_ceiling:
+        print(f"  Run ceiling: {token_ceiling:,} tokens (input + output). The run stops cleanly at it.")
 
     for chunk in chunks_to_generate:
         ref = chunk["chunk_ref"]
         sref = safe_ref(ref)
+
+        # Checked between chunks, so a stop never lands mid-draft.
+        if token_ceiling and (total_in + total_out) >= token_ceiling:
+            not_attempted = [c["chunk_ref"] for c in chunks_to_generate[chunks_to_generate.index(chunk):]]
+            print(
+                f"  STOPPING: {total_in + total_out:,} tokens used of the {token_ceiling:,} ceiling. "
+                f"{len(not_attempted)} chunk(s) not attempted. Drafts already written are kept."
+            )
+            break
 
         if not regenerate:
             prev = _existing_draft(sref)
@@ -645,6 +738,12 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
             # Not a chunk failure: stop, keeping the drafts already written.
             print(f"  chunk '{ref}': ABORTING THE RUN — the API answered as a different model.")
             raise
+        except OutputTruncated as e:
+            # A cost control that quietly retries at a bigger cap is not a cost
+            # control. The chunk fails, named, and the run carries on.
+            failures.append({"chunk_ref": ref, "error": f"output truncated: {e}"})
+            print(f"  chunk '{ref}': FAILED (reply cut off by the output cap). Not retried.")
+            continue
         except Exception as e:  # noqa: BLE001
             failures.append({"chunk_ref": ref, "error": f"api error: {type(e).__name__}: {e}"})
             print(f"  chunk '{ref}': FAILED (api error: {type(e).__name__}). Skipped.")
@@ -711,5 +810,19 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
 
     usage = {"input_tokens": total_in, "output_tokens": total_out}
     if total_out:
-        print(f"  Token usage this run: {total_in} in, {total_out} out.")
-    return {"drafted": drafted, "skipped": skipped, "failures": failures, "usage": usage}
+        per_chunk = (total_in + total_out) / max(len(drafted), 1)
+        print(
+            f"  Token usage this run: {total_in} in, {total_out} out "
+            f"({total_in + total_out:,} total, {per_chunk:,.0f} per drafted chunk)."
+        )
+    if not_attempted:
+        print(f"  Not attempted ({len(not_attempted)}):")
+        for ref in not_attempted:
+            print(f"    - {ref}")
+    return {
+        "drafted": drafted,
+        "skipped": skipped,
+        "failures": failures,
+        "not_attempted": not_attempted,
+        "usage": usage,
+    }

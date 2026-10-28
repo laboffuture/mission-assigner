@@ -141,6 +141,24 @@ validator rejects any mission whose `source_quote` is not present verbatim in
 the source chunk. `tests/test_provider_params.py` pins the capability table and
 asserts the exact kwargs each client sends.
 
+**Spending controls.** Three knobs, defaulted to the cheapest settings the docs
+allow for this job:
+
+| Variable | Default | Why |
+| --- | --- | --- |
+| `LLM_MAX_OUTPUT_TOKENS` | `2200` | Per-call output cap. 3-5 missions measured ~1,100 output tokens on Gemini, so this is twice what the work needs. A reply cut off by it is REPORTED as a chunk failure and **never retried with a bigger cap** - silently raising a cost control is how it becomes decoration. |
+| `LLM_EFFORT` | `low` | `output_config.effort`. The lowest level the docs allow with thinking off. |
+| `LLM_THINKING` | `off` | `off` sends `thinking: {"type": "between_tools"}` - the documented lowest thinking setting on `claude-sonnet-5-5`, where `{"type": "disabled"}` is a 400. It is accepted at effort `high` or below and takes no other field. `adaptive` omits `thinking` entirely, which is the documented alternative (adaptive thinking at low effort) if the drafts come back weaker. |
+
+`between_tools` is `claude-sonnet-5-5` only; every other model rejects it, which
+is why this is configuration rather than a model allowlist. Extraction from a
+supplied chunk needs no reasoning, which is why thinking is off at all.
+
+`generate --token-ceiling N` adds a whole-run budget in tokens (input + output),
+checked between chunks: when the next chunk would cross it the run stops
+**cleanly**, keeping every draft already written and listing the chunks it did not
+attempt. Set it from a measured smoke-run average, not a guess.
+
 **SDK pins.** `anthropic==2.3.0`. From 2.0.0 the SDK sends API version
 `2026-10-21`, under which a Messages request carrying `temperature`, `top_p` or
 `top_k` returns a 400 on **every** model — the default value included — and the

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from src import generator
 from src.generator import (
     AnthropicClient,
     GoogleClient,
@@ -98,7 +99,7 @@ def test_anthropic_sends_no_sampling_parameter_whatever_the_model(model):
     for gone in ("temperature", "top_p", "top_k"):
         assert gone not in rec.kwargs, f"{gone} is a 400 on API version 2026-10-21"
     # The parameters that still exist are still sent.
-    assert rec.kwargs["max_tokens"] == 8192
+    assert rec.kwargs["max_tokens"] == generator.max_output_tokens()
     assert rec.kwargs["model"] == model
     assert rec.kwargs["system"] == "sys"
     assert rec.kwargs["messages"] == [{"role": "user", "content": "x"}]
@@ -144,7 +145,7 @@ def test_openai_gpt4o_keeps_temperature_and_max_tokens():
     rec = _Recorder()
     _openai_client("gpt-4o", rec).draft("sys", [{"role": "user", "content": "x"}], {})
     assert rec.kwargs["temperature"] == 0
-    assert rec.kwargs["max_tokens"] == 8192
+    assert rec.kwargs["max_tokens"] == generator.max_output_tokens()
     assert "max_completion_tokens" not in rec.kwargs
 
 
@@ -152,7 +153,7 @@ def test_openai_reasoning_model_omits_temperature_and_renames_token_cap():
     rec = _Recorder()
     _openai_client("o3-mini", rec).draft("sys", [{"role": "user", "content": "x"}], {})
     assert "temperature" not in rec.kwargs
-    assert rec.kwargs["max_completion_tokens"] == 8192
+    assert rec.kwargs["max_completion_tokens"] == generator.max_output_tokens()
     assert "max_tokens" not in rec.kwargs
 
 
