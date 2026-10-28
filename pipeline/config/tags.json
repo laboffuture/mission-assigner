@@ -1,4 +1,78 @@
 {
-  "tags": ["loops", "recursion", "sorting", "strings", "data-structures",
-           "algorithms", "functions", "variables", "conditionals", "complexity"]
+  "_note": [
+    "Tag vocabulary PER SUBJECT. One place: the ALLOWED TAGS line in the generation",
+    "prompt and the validator's accept/reject rule both read the mission's own",
+    "subject's list from here, so the two can never disagree.",
+    "",
+    "A subject with no entry below REFUSES generation, naming the subject. There is",
+    "deliberately no fallback: Robotics missions were about to be forced to wear",
+    "computer science tags (loops, recursion, sorting) because this file held one",
+    "global list, and a silent fallback is how that would have shipped."
+  ],
+
+  "subjects": {
+    "Computer Science": {
+      "_note": "Unchanged — the original list. sample-cs.md behaves exactly as before.",
+      "tags": [
+        "loops",
+        "recursion",
+        "sorting",
+        "strings",
+        "data-structures",
+        "algorithms",
+        "functions",
+        "variables",
+        "conditionals",
+        "complexity"
+      ]
+    },
+
+    "Robotics": {
+      "provisional": true,
+      "_note": [
+        "PROVISIONAL — the SME owns the final vocabulary and may replace this list.",
+        "Derived from the SME's own document (Project_Session_Content_Hours_0-25.docx,",
+        "25 chunks / 50,856 characters): every tag is a term the document itself uses,",
+        "and `evidence` names the term and an hour it appears in, so each one traces",
+        "back to the source text. Broad enough for other Robotics credits to reuse:",
+        "nothing here is specific to the Cosmic Pulse Tracker.",
+        "",
+        "Three candidates with plenty of hits were left out as not assessable in a",
+        "multiple-choice question about the subject: teamwork (the trainer/learner",
+        "framing), documentation (the logbook activity) and iteration."
+      ],
+      "tags": [
+        "sensors",
+        "microcontroller",
+        "circuits",
+        "wiring",
+        "power-and-ground",
+        "components",
+        "code-upload",
+        "debugging",
+        "measurement",
+        "signals",
+        "calibration",
+        "assembly",
+        "testing",
+        "safety"
+      ],
+      "evidence": {
+        "sensors": { "term": "sensor", "hour": 2, "note": "MAX30102 pulse sensor, photodetector" },
+        "microcontroller": { "term": "ESP32", "hour": 2, "note": "\"the brain of the tracker\", dev module" },
+        "circuits": { "term": "Breadboard", "hour": 2, "note": "also short circuit, complete loop" },
+        "wiring": { "term": "pins", "hour": 2, "note": "jumper wires, connections" },
+        "power-and-ground": { "term": "Ground (GND)", "hour": 2, "note": "\"the return path for electricity\"" },
+        "components": { "term": "Component Verification", "hour": 2, "note": "resistor, LED, buzzer, OLED" },
+        "code-upload": { "term": "uploading code", "hour": 2, "note": "program sent to the ESP32 over USB" },
+        "debugging": { "term": "Debug", "hour": 4, "note": "hour title: \"Output Check & Debug\"" },
+        "measurement": { "term": "BPM (beats per minute)", "hour": 2, "note": "also SpO2, calculate" },
+        "signals": { "term": "infrared", "hour": 2, "note": "\"turns light into an electrical signal\"" },
+        "calibration": { "term": "Threshold", "hour": 6, "note": "tuning the detection threshold" },
+        "assembly": { "term": "Assembly", "hour": 3, "note": "hour title: \"Assembly (Part 1)\"" },
+        "testing": { "term": "Output Check", "hour": 4, "note": "hour title; also Material Audit, hour 2" },
+        "safety": { "term": "burn it out", "hour": 2, "note": "the resistor protecting the LED" }
+      }
+    }
+  }
 }

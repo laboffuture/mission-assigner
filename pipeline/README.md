@@ -141,6 +141,19 @@ validator rejects any mission whose `source_quote` is not present verbatim in
 the source chunk. `tests/test_provider_params.py` pins the capability table and
 asserts the exact kwargs each client sends.
 
+**Tag vocabulary is per subject.** `config/tags.json` keyed by subject: the
+prompt's ALLOWED TAGS line and the validator's accept/reject rule both call
+`db.load_tags(subject)`, so the two cannot disagree about what a legal tag is. It
+held one global computer-science list, which would have forced `loops` and
+`recursion` onto 25 hours of Robotics missions — and the validator rejects a tag
+outside the list, so the model had no legal tag describing its own material.
+
+A subject with no vocabulary **refuses**, naming the subject; there is no
+fallback, because a fallback is precisely how that happens. The Robotics list is
+marked `provisional` — the SME owns it — and every tag carries `evidence`: the
+term as the SME's document uses it and an hour it appears in. Coverage spans every
+subject (`db.all_tags()`), since the bank holds them all.
+
 **Spending controls.** Three knobs, defaulted to the cheapest settings the docs
 allow for this job:
 

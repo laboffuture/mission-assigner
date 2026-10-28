@@ -44,8 +44,56 @@ def load_levels() -> dict:
     return load_json_config("levels.json")
 
 
-def load_tags() -> list[str]:
-    return load_json_config("tags.json")["tags"]
+class UnknownSubjectTags(Exception):
+    """No tag vocabulary for a subject. Refused, never defaulted."""
+
+
+def load_tags(subject: str | None = None) -> list[str]:
+    """The tag vocabulary for `subject`.
+
+    ONE place: the prompt's ALLOWED TAGS line and the validator's accept/reject
+    rule both call this with the mission's own subject, so the two cannot
+    disagree about what a legal tag is.
+
+    A subject with no vocabulary raises. There is deliberately no fallback -
+    Robotics missions were about to be tagged `loops` and `recursion` because
+    this returned one global list.
+
+    The older flat shape ({"tags": [...]}) is still read as "these tags, whatever
+    the subject", which is what the test harnesses write.
+    """
+    cfg = load_json_config("tags.json")
+    if "tags" in cfg:  # legacy flat shape
+        return cfg["tags"]
+    subjects = cfg.get("subjects") or {}
+    if subject is None:
+        raise UnknownSubjectTags(
+            "load_tags() needs a subject: config/tags.json defines a vocabulary per subject "
+            f"({', '.join(sorted(subjects)) or 'none'})."
+        )
+    entry = subjects.get(subject)
+    if entry is None:
+        raise UnknownSubjectTags(
+            f"no tag vocabulary for subject {subject!r} in config/tags.json. "
+            f"Defined subjects: {', '.join(sorted(subjects)) or 'none'}. "
+            f"Add one (the Robotics entry shows the shape) - this is not defaulted, because a "
+            f"default is how one subject's missions end up wearing another subject's tags."
+        )
+    return entry["tags"]
+
+
+def all_tags() -> list[str]:
+    """Every subject's tags, de-duplicated, in order. For reports that span the
+    whole mission bank (coverage), which is not about one subject."""
+    cfg = load_json_config("tags.json")
+    if "tags" in cfg:
+        return cfg["tags"]
+    seen: list[str] = []
+    for entry in (cfg.get("subjects") or {}).values():
+        for t in entry["tags"]:
+            if t not in seen:
+                seen.append(t)
+    return seen
 
 
 def load_active_template() -> dict:

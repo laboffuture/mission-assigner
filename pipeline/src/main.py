@@ -316,7 +316,8 @@ def evaluate_coverage(grid: dict, levels: list[dict], tags: list[str], minimum: 
 def cmd_coverage(args):
     _ensure_schema()
     levels = db.load_levels()["levels"]
-    tags = db.load_tags()
+    # The bank holds every subject, so coverage spans every subject's tags.
+    tags = db.all_tags()
 
     conn = db.get_connection()
     try:

@@ -108,7 +108,7 @@ def test_a_run_that_fails_leaves_existing_drafts_intact(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "_log", lambda *a, **k: None)
     monkeypatch.setattr(generator, "get_client", lambda: _AlwaysRefuses())
     monkeypatch.setattr(generator.db, "load_levels", lambda: {"subject": "Robotics", "levels": []})
-    monkeypatch.setattr(generator.db, "load_tags", lambda: ["loops"])
+    monkeypatch.setattr(generator.db, "load_tags", lambda subject=None: ["loops"])
     monkeypatch.setattr(generator.db, "load_active_template", lambda: {"type": "quiz", "instructions": "i"})
 
     res = generator.generate(

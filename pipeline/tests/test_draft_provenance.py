@@ -46,7 +46,7 @@ def staged(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "_log", lambda name, text: logged.__setitem__(name, text))
     monkeypatch.setattr(generator, "get_client", lambda: _Client())
     monkeypatch.setattr(generator.db, "load_levels", lambda: {"subject": "Robotics", "levels": []})
-    monkeypatch.setattr(generator.db, "load_tags", lambda: ["loops"])
+    monkeypatch.setattr(generator.db, "load_tags", lambda subject=None: ["loops"])
     monkeypatch.setattr(generator.db, "load_active_template", lambda: {"type": "quiz", "instructions": "i"})
     monkeypatch.setenv("LLM_PROVIDER", "anthropic")
     return drafts, logged

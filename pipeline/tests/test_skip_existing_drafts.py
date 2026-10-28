@@ -52,7 +52,7 @@ def staged(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "_log", lambda *a, **k: None)
     monkeypatch.setattr(generator, "get_client", lambda: client)
     monkeypatch.setattr(generator.db, "load_levels", lambda: {"subject": "Robotics", "levels": []})
-    monkeypatch.setattr(generator.db, "load_tags", lambda: ["loops"])
+    monkeypatch.setattr(generator.db, "load_tags", lambda subject=None: ["loops"])
     monkeypatch.setattr(generator.db, "load_active_template", lambda: {"type": "quiz", "instructions": "i"})
     return drafts, client
 

@@ -465,7 +465,10 @@ def _mock_missions(chunk: dict) -> list[dict]:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", body) if len(s.strip()) >= 25]
     if not sentences:
         sentences = [body.strip()[:200]]
-    tags_vocab = db.load_tags()
+    # Same rule as generate() and the validator: the chunk's subject, else
+    # levels.json's. A chunk that names no subject is the legacy path, and this
+    # fake's tag choice is cosmetic either way.
+    tags_vocab = db.load_tags(chunk.get("subject") or db.load_levels().get("subject"))
     lower = (chunk["heading"] + " " + body).lower()
     matched = [t for t in tags_vocab if t.replace("-", " ") in lower or t in lower]
     tag = matched[0] if matched else tags_vocab[0]
@@ -690,7 +693,6 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
     rather than guessed, which is why it is a parameter and not a constant.
     """
     levels = db.load_levels()
-    tags = db.load_tags()
     template = db.load_active_template()
 
     if dry_run:
@@ -753,6 +755,14 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
                 print(f"  chunk '{ref}': existing draft has no usable content hash — regenerating.")
 
         stamp = _now()
+        # Per chunk: a run can hold two subjects, and each chunk's missions must
+        # be offered its own subject's vocabulary.
+        try:
+            tags = db.load_tags(chunk.get("subject") or levels.get("subject"))
+        except db.UnknownSubjectTags as e:
+            failures.append({"chunk_ref": ref, "error": str(e)})
+            print(f"  chunk '{ref}': FAILED (no tag vocabulary). Skipped.")
+            continue
         system, user = build_prompts(chunk, levels, tags, template)
         turns = [{"role": "user", "content": user}]
         _log(f"{sref}.{stamp}.request.json",

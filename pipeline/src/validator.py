@@ -108,7 +108,7 @@ def _log_rejected_quote(chunk_ref: str, index: int, quote: str):
 def validate_drafts(dry_run: bool = False) -> dict:
     """Validate every staged draft. Writes passing missions to logs/validated/.
     Returns {'passed': int, 'failed': int, 'rejections': [...]}"""
-    tags_vocab = db.load_tags()
+    levels = db.load_levels()
     VALIDATED_DIR.mkdir(parents=True, exist_ok=True)
     if not dry_run:
         for old in VALIDATED_DIR.glob("*.json"):
@@ -128,6 +128,16 @@ def validate_drafts(dry_run: bool = False) -> dict:
             body = _chunk_body(cur, record.get("chunk_id"))
             if body is None:
                 print(f"  WARNING: chunk_id {record.get('chunk_id')} for {record['chunk_ref']} not found; skipping.")
+                continue
+
+            # The mission's OWN subject's vocabulary - the same call the prompt
+            # made, so a tag the prompt offered cannot be rejected here.
+            try:
+                tags_vocab = db.load_tags(record.get("subject") or levels.get("subject"))
+            except db.UnknownSubjectTags as e:
+                print(f"  REJECT [{record['chunk_ref']}] {e}")
+                rejections.append({"chunk_ref": record["chunk_ref"], "index": None, "reason": str(e)})
+                failed += len(record["missions"])
                 continue
 
             kept = []
