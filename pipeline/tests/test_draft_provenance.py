@@ -105,10 +105,12 @@ def test_the_backfilled_gemini_draft_is_marked_as_such():
     """Hour 1's reviewed draft is on disk from the Gemini run. Its provider and
     model were backfilled by hand because nothing recorded them at the time, and
     it says so: `provenance: backfilled` means inferred, not observed."""
-    drafts = generator.DRAFTS_DIR
-    existing = sorted(drafts.glob("*.json")) if drafts.exists() else []
+    # Both directories: hour 1's draft was MOVED to drafts_archive/ when the tag
+    # vocabulary changed, and a check that silently stops running is not a check.
+    dirs = [generator.DRAFTS_DIR, generator.DRAFTS_DIR.parent / "drafts_archive"]
+    existing = sorted(f for d in dirs if d.exists() for f in d.glob("*.json"))
     if not existing:
-        pytest.skip("no staged drafts on this machine")
+        pytest.skip("no staged or archived drafts on this machine")
     for f in existing:
         d = json.loads(f.read_text(encoding="utf-8"))
         assert d.get("provider"), f"{f.name} has no provider"

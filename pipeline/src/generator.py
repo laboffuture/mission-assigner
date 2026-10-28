@@ -345,11 +345,12 @@ class AnthropicClient:
 
         self.model = model
         self.reported_model = None
+        self.last_rate_limits: dict = {}
         self.client = Anthropic(api_key=key)
 
     def draft(self, system, turns, chunk):
         cap = max_output_tokens()
-        msg = self.client.messages.create(
+        kwargs = dict(
             model=self.model,
             max_tokens=cap,
             system=system,
@@ -357,6 +358,21 @@ class AnthropicClient:
             **anthropic_request_extras(),
             **_sampling_kwargs("anthropic", self.model),
         )
+        # Through with_raw_response, so the anthropic-ratelimit-* headers can be
+        # read: the pace this pipeline runs at should come from the limits the
+        # account actually has, not from a number somebody guessed. The parsed
+        # message is identical either way. A stub without with_raw_response (the
+        # unit tests) falls back to the plain call.
+        raw = getattr(self.client.messages, "with_raw_response", None)
+        if raw is not None:
+            response = raw.create(**kwargs)
+            self.last_rate_limits = {
+                k: v for k, v in dict(getattr(response, "headers", {}) or {}).items()
+                if k.lower().startswith("anthropic-ratelimit")
+            }
+            msg = response.parse()
+        else:
+            msg = self.client.messages.create(**kwargs)
         # What answered, not what we asked for. Recorded in every draft, and a
         # mismatch stops the run.
         self.reported_model = getattr(msg, "model", None)
@@ -721,6 +737,7 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
 
     drafted, failures, skipped = [], [], []
     not_attempted: list[str] = []
+    reported_limits = False
     total_in = total_out = 0
     if token_ceiling:
         print(f"  Run ceiling: {token_ceiling:,} tokens (input + output). The run stops cleanly at it.")
@@ -789,6 +806,11 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
         _log(f"{sref}.{stamp}.response.attempt1.txt", raw)
         total_in += usage.get("input_tokens", 0)
         total_out += usage.get("output_tokens", 0)
+        if not reported_limits and getattr(client, "last_rate_limits", None):
+            reported_limits = True
+            print("  Rate limits this account actually has (from the first response):")
+            for k in sorted(client.last_rate_limits):
+                print(f"    {k}: {client.last_rate_limits[k]}")
 
         # 2. parse, with ONE repair attempt feeding the error back
         parsed, err = _try_parse(raw)
