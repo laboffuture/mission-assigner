@@ -49,6 +49,18 @@ pip install -r requirements.txt
 cp .env.example .env      # then edit .env
 ```
 
+**Provenance.** Every staged draft records `provider`, `model`, `generated_at` and
+`content_hash` — who made it, with what, when, and from which text — and the
+request log in `logs/` records the provider and model too, so a draft can be
+checked against the call that produced it. Two providers will have drafted this
+curriculum by the time the SME reviews it (hour 1 came from Gemini before the
+Claude credit arrived), and comparing their approval rates blind needs that.
+
+Hour 1's draft carries `provenance: backfilled` with a `provenance_note`: nothing
+recorded the model at the time, so its `model` is the configured value rather than
+an observed one. `backfilled` means inferred — treat it as weaker evidence than a
+draft written after this.
+
 **Run the Node migrations first.** The pipeline does not create schema; it
 checks for it. Every object it needs (`content_chunks`, and
 `source_chunk_id` / `generated_at` / `review_notes` / `source_chunk_hash` plus

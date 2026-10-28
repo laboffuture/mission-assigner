@@ -115,6 +115,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
+def _now_iso() -> str:
+    """Readable UTC timestamp for a draft's provenance (the compact _now() form is
+    for file names, where colons are not allowed)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _strip_fences(text: str) -> str:
     """Remove ```json fences if a model adds them despite instructions."""
     t = (text or "").strip()
@@ -567,6 +573,12 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
         return {"drafted": [c["chunk_ref"] for c in chunks_to_generate], "failures": [], "usage": {}}
 
     client = get_client()
+    # Provenance. Two providers will have drafted this curriculum by the time the
+    # SME reviews it, and comparing their approval rates needs to know which made
+    # which. The model comes from the client, so it is the id actually used rather
+    # than whatever the environment said afterwards.
+    provider = (os.getenv("LLM_PROVIDER") or "mock").strip().lower()
+    model = getattr(client, "model", None)
     db.LOGS_DIR.mkdir(parents=True, exist_ok=True)
     DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
     # NOTHING is deleted up front. This used to clear the whole directory so the
@@ -603,7 +615,8 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
         system, user = build_prompts(chunk, levels, tags, template)
         turns = [{"role": "user", "content": user}]
         _log(f"{sref}.{stamp}.request.json",
-             json.dumps({"chunk_ref": ref, "system": system, "turns": turns}, indent=2))
+             json.dumps({"chunk_ref": ref, "provider": provider, "model": model,
+                         "system": system, "turns": turns}, indent=2))
 
         # 1. call with transient-error retries
         try:
@@ -649,6 +662,11 @@ def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False
             "content_hash": chunk.get("content_hash"),
             "subject": chunk.get("subject"),
             "hour_id": chunk.get("hour_id"),
+            # Who made it, with what, and when. content_hash above says from WHAT
+            # text; together that is the whole provenance of a mission.
+            "provider": provider,
+            "model": model,
+            "generated_at": _now_iso(),
             "missions": parsed["missions"],
         }, indent=2), encoding="utf-8")
         drafted.append(ref)
