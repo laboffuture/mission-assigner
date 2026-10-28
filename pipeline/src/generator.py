@@ -570,8 +570,14 @@ def get_client():
 
 # --- prompt ------------------------------------------------------------------
 def build_prompts(chunk, levels, tags, template):
+    # The subject comes from the CURRICULUM, through the chunk: a tracked file's
+    # chunks carry their track's subject (Robotics here), and a legacy file's
+    # carry levels.json's (Computer Science). It used to say "computer-science"
+    # for everything, which was simply a wrong fact in the prompt for every
+    # Robotics chunk. Nothing else about the wording changes.
+    subject = (chunk.get("subject") or levels.get("subject") or "").strip()
     system = (
-        "You are a computer-science assessment author. You write multiple-choice "
+        f"You are a {subject} assessment author. You write multiple-choice "
         "quiz questions strictly grounded in the source material you are given. "
         "You never invent facts that are not in the source. You output STRICT JSON "
         "only - no markdown, no code fences, no commentary."
