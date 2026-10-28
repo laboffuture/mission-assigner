@@ -1,7 +1,7 @@
 """Stage 2 pipeline CLI.
 
   python -m src.main ingest [--file NAME] [--dry-run]
-  python -m src.main generate [--file NAME] [--limit N] [--dry-run]
+  python -m src.main generate [--file NAME] [--limit N] [--regenerate] [--dry-run]
   python -m src.main validate [--dry-run]
   python -m src.main import [--dry-run]
   python -m src.main run [--dry-run]
@@ -234,7 +234,7 @@ def cmd_generate(args, queue: list[dict] | None = None):
     # Before any API call: a tag that points at nothing is loud, never silent.
     _assert_hours_resolve(queue)
     print(f"Generating drafts for {len(queue)} chunk(s) ...")
-    res = generator.generate(queue, dry_run=args.dry_run)
+    res = generator.generate(queue, dry_run=args.dry_run, regenerate=getattr(args, "regenerate", False))
     if res["failures"]:
         print(f"  {len(res['failures'])} chunk(s) FAILED generation:")
         for f in res["failures"]:
@@ -423,6 +423,8 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--file", default=None, help=scoped_help)
     gen.add_argument("--limit", type=int, default=None,
                      help="only generate for the first N queued chunks (cheap smoke run)")
+    gen.add_argument("--regenerate", action="store_true",
+                     help="replace drafts that already match their chunk's content (default: skip them)")
     add("validate", "run validation, report pass/fail counts")
     add("import", "write validated drafts to the database")
     add("run", "ingest + generate + validate + import")

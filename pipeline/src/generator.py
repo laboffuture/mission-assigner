@@ -531,8 +531,32 @@ def _log(name: str, content: str):
     (db.LOGS_DIR / name).write_text(content, encoding="utf-8")
 
 
-def generate(chunks_to_generate, dry_run: bool = False):
-    """Generate drafts. Returns {'drafted': [...], 'failures': [...], 'usage': {...}}."""
+def _existing_draft(sref: str):
+    """The staged draft for this chunk_ref, or None if there is not a usable one.
+
+    A draft that cannot be read, or has no content_hash to compare, counts as not
+    usable: regenerating costs money, but shipping a mission nobody can trace back
+    to the text it came from costs more.
+    """
+    path = DRAFTS_DIR / f"{sref}.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def generate(chunks_to_generate, dry_run: bool = False, regenerate: bool = False):
+    """Generate drafts. Returns {'drafted': [...], 'skipped': [...], 'failures': [...], 'usage': {...}}.
+
+    A chunk whose draft is already on disk AND was made from the same content hash
+    is skipped: hour 1's three drafts were reviewed by hand, and a re-run must not
+    quietly replace them with different questions. The hash is the condition that
+    makes this safe - if the SME edits that hour, the chunk's hash changes and the
+    draft is regenerated whether anyone remembers to ask for it or not.
+    `regenerate=True` replaces everything.
+    """
     levels = db.load_levels()
     tags = db.load_tags()
     template = db.load_active_template()
@@ -552,12 +576,29 @@ def generate(chunks_to_generate, dry_run: bool = False):
     # only its OWN draft, on success, and a failed chunk keeps whatever it had.
     pre_existing = {f.name for f in DRAFTS_DIR.glob("*.json")}
 
-    drafted, failures = [], []
+    drafted, failures, skipped = [], [], []
     total_in = total_out = 0
 
     for chunk in chunks_to_generate:
         ref = chunk["chunk_ref"]
         sref = safe_ref(ref)
+
+        if not regenerate:
+            prev = _existing_draft(sref)
+            prev_hash = (prev or {}).get("content_hash")
+            if prev is not None and prev_hash and prev_hash == chunk.get("content_hash"):
+                skipped.append(ref)
+                n = len(prev.get("missions") or [])
+                print(
+                    f"  chunk '{ref}': SKIPPED — {n} draft mission(s) already on disk from this exact "
+                    f"content (hash {str(prev_hash)[:12]}). --regenerate to replace them."
+                )
+                continue
+            if prev is not None and prev_hash and prev_hash != chunk.get("content_hash"):
+                print(f"  chunk '{ref}': the content changed since its draft was made — regenerating.")
+            elif prev is not None:
+                print(f"  chunk '{ref}': existing draft has no usable content hash — regenerating.")
+
         stamp = _now()
         system, user = build_prompts(chunk, levels, tags, template)
         turns = [{"role": "user", "content": user}]
@@ -618,8 +659,12 @@ def generate(chunks_to_generate, dry_run: bool = False):
     now_present = {f.name for f in DRAFTS_DIR.glob("*.json")}
     kept = len(now_present & pre_existing - {safe_ref(r) + ".json" for r in drafted})
     print(f"  Drafts staged: {len(now_present)} ({len(drafted)} from this run, {kept} kept from earlier runs).")
+    if skipped:
+        print(f"  Skipped {len(skipped)} chunk(s) whose drafts already match their content:")
+        for ref in skipped:
+            print(f"    - {ref}")
 
     usage = {"input_tokens": total_in, "output_tokens": total_out}
     if total_out:
         print(f"  Token usage this run: {total_in} in, {total_out} out.")
-    return {"drafted": drafted, "failures": failures, "usage": usage}
+    return {"drafted": drafted, "skipped": skipped, "failures": failures, "usage": usage}
