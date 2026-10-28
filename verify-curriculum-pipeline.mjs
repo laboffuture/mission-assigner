@@ -267,6 +267,51 @@ try {
   );
   check('…and it names what was queued', missing.out.includes('not-a-document.md') && missing.out.includes(OTHER),
     `(${missing.out.replace(/\s+/g, ' ').slice(-200)})`);
+
+  // -------------------------------------------------------------------------
+  // The failure that went unnoticed for a month: db:seed rebuilds `hours` with
+  // fresh ids, content_chunks.hour_id has no foreign key, and 25 chunks sat
+  // pointing at hour ids that were long gone. Nothing complained until an import
+  // would have hit the missions.hour_id foreign key — after the drafts were paid
+  // for. So generate checks the tags before it spends anything.
+  console.log('\n[16] A queued chunk tagged with an hour that no longer exists stops the run');
+  {
+    const good = JSON.parse(readFileSync(queueFile, 'utf8')).filter((c) => c.source_file === GOOD);
+    check('the queue has tagged chunks to work with', good.length > 0 && good.every((c) => c.hour_id != null));
+
+    const dangled = good.map((c, i) => (i === 0 ? { ...c, hour_id: 99999999 } : c));
+    writeFileSync(queueFile, JSON.stringify(dangled, null, 2));
+    const draftBytes = () =>
+      Object.fromEntries(
+        readdirSync(join(logsDir, 'drafts')).map((f) => [f, readFileSync(join(logsDir, 'drafts', f), 'utf8')])
+      );
+    const before = draftBytes();
+
+    const r = pipeline('generate');
+    check('exits non-zero', r.code !== 0, `(exit=${r.code})`);
+    check(
+      'names the chunk that is wrong',
+      /no longer exist/.test(r.out) && r.out.includes(dangled[0].chunk_ref),
+      `(${r.out.replace(/\s+/g, ' ').slice(-300)})`
+    );
+    check('…and the hour id that does not exist', r.out.includes('99999999'));
+    check('…and which database it looked in', r.out.includes(process.env.DB_NAME ?? 'mission_demo'));
+    check('…and the fix, in the order it has to be done', /curriculum:load/.test(r.out) && /ingest --file/.test(r.out));
+    check('says plainly that nothing was charged', /nothing has been charged/i.test(r.out));
+    // Not "no new file": the draft for this chunk_ref already exists, so a run
+    // that went ahead would OVERWRITE it. Compare the bytes.
+    check(
+      'and not one draft was written or overwritten — not even for the chunks that were fine',
+      JSON.stringify(draftBytes()) === JSON.stringify(before)
+    );
+
+    // The same queue with the tag intact goes through, so the refusal is about
+    // the dangling id and nothing else.
+    writeFileSync(queueFile, JSON.stringify(good, null, 2));
+    const ok = pipeline('generate');
+    check('the same queue with real hour ids generates fine', ok.code === 0, `(exit=${ok.code}) ${ok.out.slice(-200)}`);
+    check('and says so', /all \d+ hour tag\(s\) in the queue resolve/.test(ok.out), `(${ok.out.replace(/\s+/g, ' ').slice(0, 200)})`);
+  }
 } finally {
   await cleanup();
   await db.end();

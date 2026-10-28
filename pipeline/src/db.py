@@ -78,6 +78,13 @@ def load_curriculum_config() -> dict:
 
 
 # --- Database ----------------------------------------------------------------
+def db_name() -> str:
+    """The database get_connection() will open. Exported so a message can name it:
+    the pilot content and the test fixtures live in different databases, and
+    "hour_id does not exist" is only answerable if you know which one was read."""
+    return os.getenv("DB_NAME", "mission_demo")
+
+
 def get_connection():
     return mysql.connector.connect(
         host=os.getenv("DB_HOST", "127.0.0.1"),

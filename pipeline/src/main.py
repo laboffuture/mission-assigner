@@ -152,6 +152,52 @@ def cmd_ingest(args) -> list[dict]:
     return queue
 
 
+def _assert_hours_resolve(queue: list[dict]) -> None:
+    """Every tagged chunk's hour_id must still point at a real hours row.
+
+    This is the failure that went unnoticed for a month. `db:seed` truncates
+    `tracks`, so it rebuilds `hours` with fresh ids; content_chunks.hour_id is the
+    one hour reference with no foreign key, so 25 ingested chunks sat pointing at
+    hour ids 133-157 long after those rows were gone. Nothing complained. The
+    chunks looked tagged, coverage attributed nothing, and an import would have
+    failed on the missions.hour_id foreign key AFTER the drafts had been paid for.
+
+    So: check before spending. A legacy chunk's hour_id is NULL on purpose and is
+    not a dangling tag.
+    """
+    wanted = sorted({int(c["hour_id"]) for c in queue if c.get("hour_id") is not None})
+    if not wanted:
+        return
+    conn = db.get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"SELECT id FROM hours WHERE id IN ({','.join(['%s'] * len(wanted))})",
+            wanted,
+        )
+        found = {int(r[0]) for r in cur.fetchall()}
+        cur.close()
+    finally:
+        conn.close()
+
+    missing = set(wanted) - found
+    if not missing:
+        print(f"  [hours] all {len(wanted)} hour tag(s) in the queue resolve to real hours.")
+        return
+
+    bad = [c for c in queue if c.get("hour_id") is not None and int(c["hour_id"]) in missing]
+    shown = "\n".join(f"    - {c['chunk_ref']} (hour_id {c['hour_id']})" for c in bad[:10])
+    more = f"\n    ... and {len(bad) - 10} more" if len(bad) > 10 else ""
+    sys.exit(
+        f"FATAL: {len(bad)} queued chunk(s) are tagged with hour ids that no longer exist in "
+        f"database '{db.db_name()}':\n{shown}{more}\n"
+        f"  Nothing has been generated and nothing has been charged.\n"
+        f"  Fix: reload the curriculum, then re-ingest so the chunks pick up the new hour ids:\n"
+        f"    DB_NAME={db.db_name()} npm run curriculum:load -- curriculum/<track>.json\n"
+        f"    python -m src.main ingest --file <document>"
+    )
+
+
 def _load_queue() -> list[dict]:
     if not QUEUE_FILE.exists():
         print("  No generation queue found. Run `ingest` first.")
@@ -185,6 +231,8 @@ def cmd_generate(args, queue: list[dict] | None = None):
     if not queue:
         print("  Nothing to generate.")
         return {"drafted": [], "failures": []}
+    # Before any API call: a tag that points at nothing is loud, never silent.
+    _assert_hours_resolve(queue)
     print(f"Generating drafts for {len(queue)} chunk(s) ...")
     res = generator.generate(queue, dry_run=args.dry_run)
     if res["failures"]:
