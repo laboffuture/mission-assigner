@@ -550,15 +550,37 @@ class HostileClient:
         return json.dumps(good), _est_usage("x" * 400)
 
 
+# Real providers cost money and their model line-ups change. A built-in default
+# is a guess about which model exists today, written when the code was written -
+# this file shipped `claude-opus-4-8`, `gpt-4o` and `gemini-2.0-flash`, and a
+# retired Gemini default has already cost us a run. So a real provider with no
+# LLM_MODEL stops, naming the variable. The local fakes keep their defaults:
+# nothing is spent and no model line-up is involved.
+_PAID_PROVIDERS = ("anthropic", "openai", "google")
+
+
+def _require_model(provider: str, model: str) -> str:
+    if model.strip():
+        return model.strip()
+    sys.exit(
+        f"FATAL: LLM_PROVIDER={provider} but LLM_MODEL is not set. Set it in pipeline/.env to the "
+        f"exact model id you intend to pay for - this pipeline does not guess a default for a paid "
+        f"provider, because a guessed id is either a model that no longer exists or one you did not "
+        f"choose. Nothing has been generated."
+    )
+
+
 def get_client():
     provider = os.getenv("LLM_PROVIDER", "mock").lower()
     model = os.getenv("LLM_MODEL", "")
+    if provider in _PAID_PROVIDERS:
+        model = _require_model(provider, model)
     if provider == "anthropic":
-        return AnthropicClient(model or "claude-opus-4-8")
+        return AnthropicClient(model)
     if provider == "openai":
-        return OpenAIClient(model or "gpt-4o")
+        return OpenAIClient(model)
     if provider == "google":
-        return GoogleClient(model or "gemini-2.0-flash")
+        return GoogleClient(model)
     if provider == "mock":
         print("  NOTE: LLM_PROVIDER=mock - deterministic test missions, no API calls.")
         return MockClient(model or "mock-1")
