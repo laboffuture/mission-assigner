@@ -141,6 +141,18 @@ validator rejects any mission whose `source_quote` is not present verbatim in
 the source chunk. `tests/test_provider_params.py` pins the capability table and
 asserts the exact kwargs each client sends.
 
+**SDK pins.** `anthropic==2.3.0`. From 2.0.0 the SDK sends API version
+`2026-10-21`, under which a Messages request carrying `temperature`, `top_p` or
+`top_k` returns a 400 on **every** model — the default value included — and the
+three parameters are gone from the SDK's own signatures, so passing one raises a
+`TypeError` before any request is made. `generator.accepts_temperature` therefore
+returns `False` for the `anthropic` provider unconditionally. Gemini and the
+OpenAI `gpt-4` family still take `temperature: 0`, which is where the
+determinism note in that module still applies.
+[Migration guide](https://platform.claude.com/docs/en/api/migration-2026-10-21).
+The SDK needs Python >= 3.10 (the venv is 3.12) and brings `httpx2` with it; from
+2.0.0 it is Apache-2.0 licensed rather than MIT.
+
 **`mock` provider:** an offline, deterministic backend for testing the pipeline
 without an API key. It drafts missions whose `source_quote` is a real sentence
 lifted verbatim from the chunk, so validation behaves exactly as it would for a

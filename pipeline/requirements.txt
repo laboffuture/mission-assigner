@@ -5,7 +5,10 @@ pypdf==5.1.0
 python-dotenv==1.0.1
 openpyxl==3.1.5
 # LLM clients — all installed so LLM_PROVIDER can switch without a reinstall.
-anthropic==0.39.0
+# anthropic 2.x sends API version 2026-10-21, which REJECTS temperature/top_p/top_k
+# on every model (the SDK removed the parameters too). See the sampling note in
+# src/generator.py. Requires Python >= 3.10; httpx2 arrives with it.
+anthropic==2.3.0
 openai==1.54.4
 google-genai==1.9.0
 # Test-only

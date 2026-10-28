@@ -190,26 +190,25 @@ def _call_with_retries(client, system, turns, chunk):
 # --- provider sampling capability --------------------------------------------
 # Newer models do not merely reject temperature=0 — they removed the sampling
 # parameters (temperature/top_p/top_k) altogether, so *any* value returns a 400.
-# That covers Anthropic's Opus 4.7/4.8, Opus 5, Sonnet 5 and the Fable/Mythos 5
-# family, and OpenAI's reasoning models (o1/o3/o4, gpt-5). Lowering the value
-# does not help; the parameter has to be omitted.
+# Lowering the value does not help; the parameter has to be omitted.
 #
-# So this is an allowlist of the older models that both accept temperature and
-# need it for deterministic drafting, and anything else omits it. An allowlist
-# is the safe direction: a model released after this code was written omits the
-# parameter and works, where a denylist would send it and hard-fail with a 400.
+# ANTHROPIC: no model, ever. The SDK pin is anthropic 2.3.0, and from 2.0.0 the
+# SDK sends API version 2026-10-21, under which a Messages request carrying
+# temperature, top_p or top_k returns a 400 on EVERY model, default value
+# included — and the parameters are gone from the SDK's own signatures, so
+# passing one is a TypeError before any request is made. There used to be an
+# allowlist here for the Claude 4.5/4.6 line, which that API version made wrong;
+# what it cost is temperature=0 on models this pipeline does not use.
+#   https://platform.claude.com/docs/en/api/migration-2026-10-21
+#
+# OpenAI's reasoning models (o1/o3/o4, gpt-5) reject it; the gpt-4 family takes
+# it. Gemini takes it on every current model, which is where the determinism
+# below still applies.
 #
 # Determinism note: on an omitting model the request runs at the provider's
 # default temperature, so drafts are no longer bit-reproducible. The validator
 # is what guarantees correctness (every source_quote must appear verbatim in the
 # source), not sampling determinism — see validator.py.
-
-_ANTHROPIC_SAMPLING_OK = (
-    "claude-opus-4-6", "claude-opus-4-5",
-    "claude-sonnet-4-6", "claude-sonnet-4-5",
-    "claude-haiku-4-5",
-    "claude-3", "claude-2",
-)
 
 # OpenAI reasoning models reject temperature; the gpt-4 family accepts it.
 _OPENAI_SAMPLING_REJECT_PREFIXES = ("o1", "o3", "o4", "gpt-5")
@@ -219,7 +218,7 @@ def accepts_temperature(provider: str, model: str) -> bool:
     """Whether this provider/model pair accepts a temperature parameter."""
     m = (model or "").lower()
     if provider == "anthropic":
-        return m.startswith(_ANTHROPIC_SAMPLING_OK)
+        return False  # removed from the API version this SDK sends; see above
     if provider == "openai":
         return not m.startswith(_OPENAI_SAMPLING_REJECT_PREFIXES)
     if provider == "google":

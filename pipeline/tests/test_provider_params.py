@@ -4,6 +4,14 @@ Newer models removed the sampling parameters entirely, so sending temperature at
 any value returns a 400. These tests pin which models get the parameter and
 which do not, and assert the actual kwargs each provider client sends by
 substituting a recording stub for the vendor SDK client. No network, no API key.
+
+The Anthropic cases used to assert the opposite for the Claude 4.5/4.6 line,
+which accepted temperature=0 on API version 2023-06-01. anthropic 2.x sends
+2026-10-21, where temperature/top_p/top_k are rejected on EVERY model and are
+gone from the SDK's signatures, so those assertions described behaviour that can
+no longer happen. They now assert the rule that replaced them, and keep checking
+that the parameters which DO still exist are sent (max_tokens, system, messages).
+  https://platform.claude.com/docs/en/api/migration-2026-10-21
 """
 from __future__ import annotations
 
@@ -21,25 +29,18 @@ from src.generator import (
 # --- capability table --------------------------------------------------------
 
 @pytest.mark.parametrize("model", [
-    "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5",
-    "claude-sonnet-5", "claude-fable-5-1", "claude-mythos-5-1",
-])
-def test_anthropic_new_models_reject_temperature(model):
-    assert accepts_temperature("anthropic", model) is False
-
-
-@pytest.mark.parametrize("model", [
+    # The models we might actually call...
+    "claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5", "claude-opus-5",
+    "claude-opus-4-7", "claude-opus-4-8", "claude-fable-5-1", "claude-mythos-5-1",
+    # ...and the 4.5/4.6 line, which accepted temperature=0 on the API version the
+    # old SDK sent. On 2026-10-21 it is a 400 for these too.
     "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5",
     "claude-opus-4-5", "claude-3-5-sonnet-20241022",
+    # ...and anything released after this was written.
+    "claude-opus-9", "",
 ])
-def test_anthropic_older_models_accept_temperature(model):
-    assert accepts_temperature("anthropic", model) is True
-
-
-def test_unknown_future_anthropic_model_omits_rather_than_400s():
-    # An allowlist means a model released after this code omits the parameter
-    # and still works, instead of hard-failing with a 400.
-    assert accepts_temperature("anthropic", "claude-opus-9") is False
+def test_no_anthropic_model_takes_a_sampling_parameter(model):
+    assert accepts_temperature("anthropic", model) is False
 
 
 @pytest.mark.parametrize("model,expected", [
@@ -87,17 +88,36 @@ def _anthropic_client(model, rec):
     return c
 
 
-def test_anthropic_omits_temperature_on_opus_4_8():
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-4-8", "claude-opus-4-6"])
+def test_anthropic_sends_no_sampling_parameter_whatever_the_model(model):
+    """Including claude-opus-4-6, which this test file used to assert got
+    temperature=0. Passing it to anthropic 2.x is a TypeError, and the API
+    rejects it on every model."""
     rec = _Recorder()
-    _anthropic_client("claude-opus-4-8", rec).draft("sys", [{"role": "user", "content": "x"}], {})
-    assert "temperature" not in rec.kwargs
+    _anthropic_client(model, rec).draft("sys", [{"role": "user", "content": "x"}], {})
+    for gone in ("temperature", "top_p", "top_k"):
+        assert gone not in rec.kwargs, f"{gone} is a 400 on API version 2026-10-21"
+    # The parameters that still exist are still sent.
     assert rec.kwargs["max_tokens"] == 8192
+    assert rec.kwargs["model"] == model
+    assert rec.kwargs["system"] == "sys"
+    assert rec.kwargs["messages"] == [{"role": "user", "content": "x"}]
 
 
-def test_anthropic_sends_temperature_zero_on_opus_4_6():
-    rec = _Recorder()
-    _anthropic_client("claude-opus-4-6", rec).draft("sys", [{"role": "user", "content": "x"}], {})
-    assert rec.kwargs["temperature"] == 0
+def test_the_installed_anthropic_sdk_matches_the_pin():
+    """A pin nobody installed is a pin that lies. 2.0.0 is where the SDK starts
+    sending API version 2026-10-21, which is what the sampling rule above depends
+    on - so the floor is part of the contract, not housekeeping."""
+    import importlib.metadata
+    import pathlib
+    import re
+
+    installed = importlib.metadata.version("anthropic")
+    req = (pathlib.Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
+    pinned = re.search(r"^anthropic==(\S+)$", req, re.M)
+    assert pinned, "requirements.txt does not pin anthropic exactly"
+    assert installed == pinned.group(1), f"installed {installed}, pinned {pinned.group(1)}"
+    assert int(installed.split(".")[0]) >= 2, "below 2.0.0 the SDK sends API version 2023-06-01"
 
 
 def _openai_client(model, rec):
